@@ -48,6 +48,7 @@ class NativeDocumentEquivalenceTest {
                     ) -> "xaga"
                     release == "5.10.101-android12-9-00001-gf4c0e37dbcde-ab8596533" -> "yunluo"
                     release == "5.10.168-android12-9-00001-g81e7418c6466-ab10486262" -> "rubens"
+                    release == "5.10.236-android12-9-00020-gf997514b333d-ab13743839" -> "tanzanite"
                     release.startsWith("5.10.") -> "diting"
                     release == "6.6.89-android15-8-g5a0ffb447c1d-ab13771415-4k" -> "dew"
                     else -> null

@@ -85,9 +85,15 @@ fn every_sidecar_device_cut_matches_the_cli() {
     };
     let binary = env!("CARGO_BIN_EXE_ghostlock-extract");
     let corpus = collect_all(Path::new(&image_dir));
-    for release in [
-        "5.10.198-android12-9-00085-g226a9632f13d-ab11136126",
-        "5.10.209-android12-9-00019-g4ea09a298bb4-ab12292661",
+    for (release, devices) in [
+        (
+            "5.10.198-android12-9-00085-g226a9632f13d-ab11136126",
+            &["diting", "yunluo", "rubens", "matisse", "xaga"][..],
+        ),
+        (
+            "5.10.209-android12-9-00019-g4ea09a298bb4-ab12292661",
+            &["diting", "yunluo", "rubens", "matisse", "xaga", "tanzanite"][..],
+        ),
     ] {
         let Some(meta) = corpus.iter().find(|meta| meta.release == release) else {
             eprintln!("skip {release}: not in the corpus");
@@ -95,13 +101,7 @@ fn every_sidecar_device_cut_matches_the_cli() {
         };
         assert_eq!(
             meta.devices,
-            vec![
-                "diting".to_string(),
-                "yunluo".to_string(),
-                "rubens".to_string(),
-                "matisse".to_string(),
-                "xaga".to_string(),
-            ],
+            devices.iter().map(|name| name.to_string()).collect::<Vec<_>>(),
             "{release}: device sidecar sets"
         );
         let golden: serde_json::Value = serde_json::from_str(
