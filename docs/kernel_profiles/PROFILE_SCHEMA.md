@@ -100,6 +100,7 @@ offset { init_task = 34464384, init_cred = 34538824 }
 | `fallback` | object | Fallback declaration (`to` plus an optional `route` branch); see section 3 |
 | geometry | object/int | Grouped by namespace: `task_struct` / `cred` / `offset` / `kernelsnitch`. Omit unused route-specific fields entirely — don't write `0` or placeholders. `null` only appears in templates and in-progress edits |
 | `execution` | object | Advisory tuning. General values come from `execution-tuning.conf`, per-route values from `execution-<route>.conf`; the resolver loads both as presets, device profiles don't `include` them. Write only differences |
+| `timer_98260` | object | Optional timer-route capability block (section 4.9); absent = a native-only profile |
 
 ## 3. Route mechanism
 
@@ -295,6 +296,59 @@ states its value source (`w1_value_source=scratch` for W1/W1p, `init_cred` for W
 leaf writes). The page-based credential copy/fill and the fops sentinel remain on the page path; a
 profile without either anchor behaves exactly as before. Both keys are optional and do not change
 `schema_version` (`1`, or `2` for a per-device-maps profile); a missing key means the page path.
+
+### 4.9 The timer route's capability block (`timer_98260`)
+
+An optional top-level block for the Shizuku-delivered timer tool (CVE-2026-98260). It is a
+Kotlin-side sibling of the native route, not a `route` branch: the native exploit never runs the
+timer tool, and the native wire never carries this block (the same profile with and without it
+produces a byte-identical native document). A profile without the block is native-only and the
+timer route is unavailable.
+
+```hocon
+timer_98260 {
+  version = 1
+  timer_site_lower_21bit = 507136
+  timer_object_size = 264
+  cred_request_size = 168
+  cred_alloc_size = 192
+  cred_uid_offset = 4
+  timer_node_offset = 120
+  page_alloc_gfp_offset = 20
+  page_alloc_gfp_size = 4
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `version` | int | Always `1`; the block evolves without touching `schema_version` |
+| `timer_site_lower_21bit` | int | `do_timer_create`'s `kmem_cache_alloc(posix_timers_cache)` return site, masked to 21 bits as the trace scanner compares it |
+| `timer_object_size`, `cred_request_size`, `cred_alloc_size` | int | SLUB sizes: `posix_timers_cache` object size, `cred_jar` request, `cred_jar` allocation |
+| `cred_uid_offset` | int | `cred.uid` offset |
+| `timer_node_offset` | int | `k_itimer.it.cpu.node` offset (optional; default `0x78`) |
+| `static_timer_site`, `task_alloc_site_lower_21bit`, `task_alloc_size`, `task_cred_offset`, six data symbols | fake only | The fake-path constants; the data symbols are kernel VAs and **must be quoted hex strings** (`"0xffffffc00a2293d0"`), because a HOCON/JSON number cannot carry them |
+| `cred_usage_size`, `cred_caps_offset`, `cred_caps_count`, `cred_security_offset`, `cred_user_offset`, `cred_user_ns_offset`, `cred_ucounts_offset`, `cred_group_info_offset` | fake only | The fake cred's layout: where the fabricated object carries its fields. `cred_ucounts_offset` exists only where the cred has `ucounts` (5.10 omits it, and `init_ucounts` with it) |
+| `security_sid_offset` | fake only | The `sid` offset **inside the LSM blob** the fake cred's `security` pointer names — not a cred offset |
+| `page_alloc_gfp_offset`, `page_alloc_gfp_size` | int, int | Where the raw `mm_page_alloc` record carries `gfp_flags`: `0x14`/`4` on 5.10, `0x18`/`8` on 6.x. The reclaim's frag/slab classifier reads it; a wrong layout silently disables the discriminator |
+
+Rules: unknown keys inside the block are an error; the real-path five are always required. The
+block carries no mode key: the fake ending is declared structurally, so **any** fake key makes the
+whole fake set (including the flat cred keys) required, and a block without them supports the real
+ending only. `0` is
+written only when it is the real value (a 5.10 cred has no `ucounts`, so
+`init_ucounts`/`cred_ucounts_offset` are omitted there); every `cred_*_offset` must fall inside
+`cred_request_size` (with the caps run fitting) and the fake path's `task_cred_offset` inside
+`task_alloc_size`; `static_timer_site`'s
+low 21 bits must equal `timer_site_lower_21bit` (the same image site — a disagreement would derive
+a bogus KASLR slide); `timer_site_lower_21bit` and
+`task_alloc_site_lower_21bit` are 21-bit; `timer_object_size`/`cred_request_size`/`cred_alloc_size` must agree with the
+measured `/proc/slabinfo` lines when those are present.
+
+The app renders the merged, validated profile as the canonical backend document
+(`ProfileDocument`): top-level `release`/`schema_version`/`kernel_major`, a `kernel` block (the
+shared geometry), a `native` block (route/fallback/pipeline/execution) and this block. The timer
+tool reads only `release` and `timer_98260` and re-checks its own invariants; the native keeps its
+binary wire in this version. 64-bit values are `"0x..."` strings in the document.
 
 ## 5. execution tuning (advisory)
 

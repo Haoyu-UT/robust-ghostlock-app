@@ -25,6 +25,10 @@ object ProfileResolver {
          * credentials, so this branch carries it as an informational value
          * only (the Samsung run needs the DirtyFrag stage, not a cred write). */
         "kdp",
+        /* The timer route's capability block: a Kotlin-side sibling of the
+         * native route, consumed by the Shizuku-delivered timer tool. It is
+         * optional here; profiles without it are native-only. */
+        "timer_98260",
     )
     private val RequiredTopLevel = setOf(
         "release", "schema_version", "kernel_major", "route", "task_struct", "cred", "offset",
@@ -175,6 +179,7 @@ object ProfileResolver {
                 }
             }
         }
+        errors += Timer98260.validate(profile[Timer98260.BLOCK_KEY])
         errors += validateLayoutGroups(profile, route, fallbackTo)
         errors += validateStage1Blocks(profile, route, fallbackTo)
         errors += validateRouteWaiterShape(profile, route, fallbackTo)

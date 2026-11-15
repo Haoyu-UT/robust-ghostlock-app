@@ -490,6 +490,103 @@ def fact_mismatches(entry, asset_path):
     return mismatched
 
 
+TIMER_BLOCK = "timer_98260"
+TIMER_TOP_KEYS = [
+    "version",
+    "timer_site_lower_21bit", "timer_object_size", "cred_request_size", "cred_alloc_size", "cred_uid_offset",
+    "static_timer_site", "task_alloc_site_lower_21bit", "task_alloc_size", "task_cred_offset",
+    "selinux_state", "panic_on_warn", "root_user", "init_user_ns",
+    "init_ucounts", "init_groups",
+    "cred_usage_size", "cred_caps_offset", "cred_caps_count", "cred_security_offset",
+    "cred_user_offset", "cred_user_ns_offset", "cred_ucounts_offset",
+    "cred_group_info_offset", "security_sid_offset",
+    "timer_node_offset", "page_alloc_gfp_offset", "page_alloc_gfp_size",
+]
+TIMER_COMMENT = (
+    "# Timer route (CVE-2026-98260): the Shizuku-delivered shell tool's per-image\n"
+    "# constants. Not a native route; the native wire never carries this block.\n"
+)
+
+
+def timer_block(options):
+    """The store's shipped timer block (a dict) or None."""
+    timer = options.get(TIMER_BLOCK)
+    if not isinstance(timer, dict):
+        return None
+    block = timer.get("block")
+    return block if isinstance(block, dict) else None
+
+
+def _hocon_value(value):
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, bool):  # pragma: no cover - bool handled above
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, str):
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    raise ValueError(f"unsupported timer value {value!r}")
+
+
+def render_timer_block(block):
+    """The `timer_98260` block as HOCON text (numbers stay numbers, 64-bit
+    kernel addresses stay quoted hex strings)."""
+    lines = [f"{TIMER_BLOCK} {{"]
+    for key in TIMER_TOP_KEYS:
+        if key in block:
+            lines.append(f"  {key} = {_hocon_value(block[key])}")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def timer_block_facts(block):
+    """The block's fields as dotted facts, for the asset comparison."""
+    facts = {}
+    for key in TIMER_TOP_KEYS:
+        if key in block:
+            facts[f"{TIMER_BLOCK}.{key}"] = block[key]
+    return facts
+
+
+def timer_block_mismatches(entry, asset_path):
+    """The asset's timer_98260 fields that are absent or differ from the store."""
+    block = timer_block(entry["options"])
+    if block is None:
+        return []
+    expected = timer_block_facts(block)
+    actual = flatten_facts(load_conf_facts(asset_path))
+    mismatched = []
+    for key in sorted(expected):
+        wanted = expected[key]
+        got = actual.get(key, MISSING)
+        if got is MISSING:
+            mismatched.append((key, wanted, "<absent>"))
+        elif got != wanted:
+            mismatched.append((key, wanted, got))
+    return mismatched
+
+
+def sync_timer_block(entry, asset_path):
+    """Insert the timer block into an existing asset; never overwrite values."""
+    block = timer_block(entry["options"])
+    if block is None:
+        return [], []
+    mismatched = timer_block_mismatches(entry, asset_path)
+    if not mismatched:
+        return [], []
+    text = open(asset_path, encoding="utf-8").read()
+    if re.search(rf"(?m)^\s*{re.escape(TIMER_BLOCK)}\s*\{{", text):
+        return [], mismatched
+    text = text.rstrip("\n") + "\n\n" + TIMER_COMMENT + render_timer_block(block) + "\n"
+    open(asset_path, "w", encoding="utf-8").write(text)
+    return [f"added {TIMER_BLOCK} block"], []
+
+
 def _render_literal(value):
     if value is None:
         return "null"
@@ -773,6 +870,9 @@ def asset_text(entry, rendered):
         text = replace_line(text, "kernel_phys_offset", entry["maps"][1])
     if entry.get("stride"):
         text = set_mm_struct_stride(text, entry["stride"])
+    block = timer_block(entry["options"])
+    if block is not None:
+        text = text.rstrip("\n") + "\n\n" + TIMER_COMMENT + render_timer_block(block) + "\n"
     route_label = entry["route"]
     header = (
         "# SHIPPED GOLDEN -- test-kernels golden (QEMU tier); generated, do not edit.\n"
@@ -875,6 +975,7 @@ def main():
                 missing.append(entry)
                 continue
             facts = fact_mismatches(entry, asset_path)
+            facts += timer_block_mismatches(entry, asset_path)
             if facts:
                 entry["reasons"] = [
                     f"{key}: expected {wanted!r}, got {got!r}"
@@ -907,6 +1008,9 @@ def main():
         for entry in mismatched_entries:
             asset_path = os.path.join(args.assets, entry["release"] + ".conf")
             applied, manual = sync_facts(entry, asset_path)
+            block_applied, block_manual = sync_timer_block(entry, asset_path)
+            applied += block_applied
+            manual += block_manual
             print(f"SYNC {entry['release']}: {len(applied)} inserted, {len(manual)} manual")
             for item in applied:
                 print(f"   + {item}")
@@ -916,6 +1020,7 @@ def main():
         for entry in mismatched_entries:
             asset_path = os.path.join(args.assets, entry["release"] + ".conf")
             left = fact_mismatches(entry, asset_path)
+            left += timer_block_mismatches(entry, asset_path)
             if left:
                 remaining += 1
                 print(f"REMAINING {entry['release']}: {len(left)}")

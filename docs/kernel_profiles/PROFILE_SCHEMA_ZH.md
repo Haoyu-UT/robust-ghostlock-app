@@ -238,6 +238,54 @@ cred
 
 page-free 路径不调用 `prepare_good_kernel_page()`：无 spray、无 KernelSnitch 泄漏、无回收套接字、无页面接受检查、无 `[spray]` 行、`base=0`。每次写入记录取值来源（W1/W1p 为 scratch，W2 为 `init_cred`，叶子写入为 `target-8`）。基于页的凭据复制/填充与 fops 哨兵仍留在页路径；缺少任一锚的 profile 行为不变。两个键都是可选的，且不改变 `schema_version`（按设备映射的 profile 仍为 `2`）；缺省键即页路径。
 
+### 4.9 定时器路线的能力块（`timer_98260`）
+
+供 Shizuku 投递的定时器工具（CVE-2026-98260）使用的可选顶层块。它是原生路线在 Kotlin 侧的
+同级配置，不是 `route` 分支：原生利用从不运行该工具，原生 wire 也从不携带此块（同一 profile
+带与不带此块生成的原生文档字节一致）。没有此块的 profile 即纯原生配置，定时器路线不可用。
+
+```hocon
+timer_98260 {
+  version = 1
+  timer_site_lower_21bit = 507136
+  timer_object_size = 264
+  cred_request_size = 168
+  cred_alloc_size = 192
+  cred_uid_offset = 4
+  timer_node_offset = 120
+  page_alloc_gfp_offset = 20
+  page_alloc_gfp_size = 4
+}
+```
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `version` | int | 恒为 `1`；块的演进不改变 `schema_version` |
+| `timer_site_lower_21bit` | int | `do_timer_create` 中 `kmem_cache_alloc(posix_timers_cache)` 的返回地址，按 21 位掩码（与 trace 扫描的比对方式一致） |
+| `timer_object_size`、`cred_request_size`、`cred_alloc_size` | int | SLUB 尺寸：`posix_timers_cache` 对象大小、`cred_jar` 请求大小与分配大小 |
+| `cred_uid_offset` | int | `cred.uid` 偏移 |
+| `timer_node_offset` | int | `k_itimer.it.cpu.node` 偏移（可选，默认 `0x78`） |
+| `static_timer_site`、`task_alloc_site_lower_21bit`、`task_alloc_size`、`task_cred_offset`、六个数据符号 | 仅 fake | fake 路径常量；数据符号是内核 VA，**必须写成带引号的十六进制字符串**（`"0xffffffc00a2293d0"`），HOCON/JSON 数字无法承载 |
+| `cred_usage_size`、`cred_caps_offset`、`cred_caps_count`、`cred_security_offset`、`cred_user_offset`、`cred_user_ns_offset`、`cred_ucounts_offset`、`cred_group_info_offset` | 仅 fake | 伪造 cred 的布局：伪造对象各字段的位置。仅当 cred 有 `ucounts` 时才有 `cred_ucounts_offset`（5.10 省略它，并同时省略 `init_ucounts`） |
+| `security_sid_offset` | 仅 fake | 伪造 cred 的 `security` 指针所指 **LSM blob 内**的 `sid` 偏移——不是 cred 偏移 |
+| `page_alloc_gfp_offset`、`page_alloc_gfp_size` | int, int | 原始 `mm_page_alloc` 记录中 `gfp_flags` 的位置：5.10 为 `0x14`/`4`，6.x 为 `0x18`/`8`。回收的 frag/slab 判别依赖它；布局错误会静默关闭该判别 |
+
+规则：块内未知键报错；真实路径的五个字段总是必需。块没有模式键：fake 结局由结构声明，
+因此**任一** fake 键出现就要求整个 fake 字段组（含扁平的 cred 键），而没有这些键的块只支持真实结局。
+`0` 只在它就是真实值时才写（5.10 的 cred 没有 `ucounts`，因此省略
+`init_ucounts`/`cred_ucounts_offset`）；每个 `cred_*_offset` 必须落在 `cred_request_size` 内
+（caps 区间也要放得下），fake 路径的
+`task_cred_offset` 必须落在 `task_alloc_size` 内；`static_timer_site` 的低
+21 位必须等于 `timer_site_lower_21bit`（二者来自同一镜像站点，不一致会推出错误的 KASLR slide）；
+`timer_site_lower_21bit` 与
+`task_alloc_site_lower_21bit` 为 21 位；存在实测 `/proc/slabinfo` 行时，
+`timer_object_size`/`cred_request_size`/`cred_alloc_size` 必须与其一致。
+
+app 把合并并通过校验的 profile 渲染为规范的后端文档（`ProfileDocument`）：顶层
+`release`/`schema_version`/`kernel_major`、`kernel` 块（共享几何）、`native` 块
+（route/fallback/pipeline/execution）以及本块。定时器工具只读 `release` 与 `timer_98260` 并
+自行复核不变量；本版本中原生仍使用二进制 wire。文档中的 64 位值一律写成 `"0x..."` 字符串。
+
 ## 5. execution 调优参数（advisory）
 
 `execution` 全部为建议值，随 profile 合并后传入 native；数值语义与默认值见 [defaults_ZH.md](defaults_ZH.md)。通用分组来自 `execution-tuning.conf`，路由分组由 resolver 从 `execution-<route>.conf` 加载（主路由 + 回退路由），设备 profile 不再 include 它们：
