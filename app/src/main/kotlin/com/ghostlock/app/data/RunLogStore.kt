@@ -255,6 +255,10 @@ internal class SyncPacer(private val sync: () -> Unit) {
     }
 
     companion object {
-        const val IntervalNs = 500_000_000L
+        /* The 0.5 s cadence was the 2026-10-10 default. This test build pins
+         * the fsyncing tailer off the route's cores and tightens it to 0.1 s:
+         * the tail lost to a reset is smaller, and the flush no longer runs on
+         * the cores the stamp depends on. */
+        const val IntervalNs = 100_000_000L
     }
 }

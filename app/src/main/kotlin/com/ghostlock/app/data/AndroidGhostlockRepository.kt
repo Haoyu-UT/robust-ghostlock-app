@@ -1401,8 +1401,17 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             // tag root-script lines so they cannot be read as the native stages'
             val ksuSink: (String) -> Unit = { onLog("[ksu] $it") }
             // status events are consumed here (persisted + ACKed); plain lines are logs
+            val routeCpus = java.util.Collections.newSetFromMap(
+                java.util.concurrent.ConcurrentHashMap<Int, Boolean>())
             val nativeSink: (String) -> Unit = { line ->
                 if (!handleStatusLine(line, processRef)) onLog(line)
+                val cpus = routeCpusFromLine(line)
+                if (cpus.isNotEmpty() && routeCpus.addAll(cpus)) {
+                    val pick = pinTailerOutside(routeCpus)
+                    if (pick != null) {
+                        onLog("<k> log fsync thread pinned to cpu=$pick (avoiding $routeCpus)")
+                    }
+                }
             }
             val tailer = Thread {
                 try {
@@ -2074,6 +2083,35 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         }
+    }
+
+    /** The cores the current route's stamp/trigger threads report (from the
+     *  native's picker and the compat helper's effective/pre-copy lines). The
+     *  log thread's fsyncs are kept off them. */
+    private fun routeCpusFromLine(line: String): Set<Int> {
+        Regex("cpu select: runtime pair main=(\\d+) consumer=(\\d+)").find(line)?.let {
+            return setOf(it.groupValues[1].toInt(), it.groupValues[2].toInt())
+        }
+        Regex("compat-engine: (waiter|consumer) effective cpu (\\d+)").find(line)?.let {
+            return setOf(it.groupValues[2].toInt())
+        }
+        Regex("compat-engine: waiter pre-copy cpu (\\d+)").find(line)?.let {
+            return setOf(it.groupValues[1].toInt())
+        }
+        return emptySet()
+    }
+
+    /** Move the calling (tailer) thread off the route's cores. The fsync then
+     *  runs on a core the stamp does not depend on; the storage IRQs and the
+     *  filesystem's background writeback are not ours to move. */
+    private fun pinTailerOutside(pair: Set<Int>): Int? {
+        val tid = android.os.Process.myTid()
+        val count = Runtime.getRuntime().availableProcessors().coerceAtLeast(8)
+        for (cpu in 0 until count) {
+            if (cpu in pair) continue
+            if (NativeCpuPin.setThreadAffinity(tid, cpu) == 0) return cpu
+        }
+        return null
     }
 
     private fun tailKsuLog(logFile: File, offset: AtomicLong, onLog: (String) -> Unit) {
