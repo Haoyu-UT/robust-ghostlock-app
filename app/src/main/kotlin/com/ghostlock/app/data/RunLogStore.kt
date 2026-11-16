@@ -2,6 +2,7 @@ package com.ghostlock.app.data
 
 import android.content.Context
 import android.net.Uri
+import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.RunLogState
 import java.io.BufferedOutputStream
@@ -46,7 +47,14 @@ internal object RunLogStore {
     const val LogName = "log"
     const val MetaName = "meta"
 
+    /** The first line of every run log: which boot the run was born in. */
+    const val BootTag = "[boot]"
+
+    /** Crash-evidence captures live beside the runs, under this directory. */
+    internal const val CrashDirectoryName = "last-crash"
+
     private const val DirName = "runs"
+    private const val IndexName = "index.txt"
 
     fun root(context: Context): File = File(context.filesDir, DirName)
 
@@ -115,27 +123,171 @@ internal object RunLogStore {
         if (files.isEmpty()) return@runCatching false
         var written = 0
         ZipOutputStream(BufferedOutputStream(out)).use { zip ->
-            for (file in files) {
-                /* One unreadable file must not cost the whole report: the root
-                 * script's dumps land root-owned when it runs (it chmods them,
-                 * but a truncated dump or an older build may not), and half a
-                 * zip is still a report. */
-                val copied = runCatching {
-                    /* Open before declaring the entry: a file that cannot be
-                     * read must be absent from the zip, not present and empty
-                     * -- an empty kernel-dmesg.log reads as "no dump", which is
-                     * a different claim from "the app could not read it". */
-                    file.inputStream().use { input ->
-                        zip.putNextEntry(ZipEntry("${dir.name}/${file.name}"))
-                        input.copyTo(zip)
-                        zip.closeEntry()
-                    }
-                }.isSuccess
-                if (copied) written++
-            }
+            written = zipDir(dir, dir.name, zip)
         }
         written > 0
     }.getOrDefault(false)
+
+    /**
+     * Everything the app has, in one report: every retained run plus the
+     * crash-evidence captures. The root `index.txt` says which run was in
+     * which boot and which capture came from which boot, so the analyst can
+     * correlate the two without the app pretending to know more than it does.
+     */
+    fun exportBundle(
+        context: Context,
+        target: Uri,
+        pendingImport: ImportedEvidence? = null,
+    ): Boolean = runCatching {
+        val out = context.contentResolver.openOutputStream(target, "w")
+            ?: return@runCatching false
+        bundleZip(
+            root(context),
+            File(context.filesDir, CrashDirectoryName),
+            out,
+            pendingImport,
+        )
+    }.getOrDefault(false)
+
+    /** The bundle's suggested file name. */
+    fun reportName(): String = "ghostlock-report-${stampNow()}.zip"
+
+    internal fun bundleZip(
+        runsRoot: File,
+        crashRoot: File,
+        out: OutputStream,
+        pendingImport: ImportedEvidence? = null,
+    ): Boolean = runCatching {
+        val runDirs = runsRoot.listFiles().orEmpty()
+            .filter { it.isDirectory }
+            .sortedByDescending { it.name }
+        val crashDirs = crashRoot.listFiles().orEmpty()
+            .filter { it.isDirectory }
+            /* Imported reports are session state now; old on-disk imports from
+             * earlier builds must never silently ride along in a bundle. */
+            .filter { CrashEvidenceStore.readFacts(it)["source"] != "bugreport" }
+            .sortedByDescending { it.name }
+        ZipOutputStream(BufferedOutputStream(out)).use { zip ->
+            zip.putNextEntry(
+                ZipEntry(IndexName).apply { time = System.currentTimeMillis() },
+            )
+            zip.write(indexText(runDirs, crashDirs, pendingImport).toByteArray(StandardCharsets.UTF_8))
+            zip.closeEntry()
+            for (dir in runDirs) zipDir(dir, dir.name, zip)
+            for (dir in crashDirs) {
+                zipDir(dir, "$CrashDirectoryName/${dir.name}", zip)
+            }
+            if (pendingImport != null) {
+                val prefix = "$CrashDirectoryName/${importDirName(pendingImport)}"
+                for ((fileName, data) in pendingImport.files.toSortedMap()) {
+                    zip.putNextEntry(
+                        ZipEntry("$prefix/$fileName").apply { time = pendingImport.capturedMs },
+                    )
+                    zip.write(data)
+                    zip.closeEntry()
+                }
+            }
+        }
+        true
+    }.getOrDefault(false)
+
+    /**
+     * Copies one directory into [zip] under [prefix]. One unreadable file must
+     * not cost the whole report: the root script's dumps land root-owned when
+     * it runs (it chmods them, but a truncated dump or an older build may
+     * not), and half a zip is still a report.
+     *
+     * The zip entry keeps the file's mtime: a run's log mtime is the only
+     * "when did this die" fact that survives, and the index repeats it.
+     */
+    private fun zipDir(dir: File, prefix: String, zip: ZipOutputStream): Int {
+        var written = 0
+        for (file in dir.listFiles().orEmpty()
+            .filter { it.isFile && it.name != MetaName }
+            .sortedBy { it.name }) {
+            val copied = runCatching {
+                /* Open before declaring the entry: a file that cannot be read
+                 * must be absent from the zip, not present and empty -- an
+                 * empty kernel-dmesg.log reads as "no dump", which is a
+                 * different claim from "the app could not read it". */
+                file.inputStream().use { input ->
+                    zip.putNextEntry(
+                        ZipEntry("$prefix/${file.name}").apply { time = file.lastModified() },
+                    )
+                    input.copyTo(zip)
+                    zip.closeEntry()
+                }
+            }.isSuccess
+            if (copied) written++
+        }
+        return written
+    }
+
+    private fun indexText(
+        runDirs: List<File>,
+        crashDirs: List<File>,
+        pendingImport: ImportedEvidence?,
+    ): String {
+        val lines = mutableListOf(
+            "ghostlock report ${stampNow()}",
+            "runs:",
+        )
+        for (dir in runDirs) {
+            val meta = readMeta(dir)
+            val log = File(dir, LogName)
+            val (bootId, start) = bootFields(log)
+            lines += "  ${dir.name} entry=${meta.entry} state=${meta.state.token} " +
+                "boot_id=$bootId start=$start log_mtime=${log.lastModified()}"
+        }
+        if (crashDirs.isNotEmpty() || pendingImport != null) {
+            lines += "crash-evidence:"
+            for (dir in crashDirs) {
+                val facts = readFacts(dir)
+                val files = dir.listFiles().orEmpty()
+                    .filter { it.isFile }
+                    .map { it.name }
+                    .sorted()
+                    .joinToString(",")
+                lines += "  $CrashDirectoryName/${dir.name} " +
+                    "source=${facts["source"].orEmpty()} " +
+                    "capture_boot_id=${facts["capture_boot_id"].orEmpty()} " +
+                    "captured=${facts["captured"].orEmpty()} files=$files"
+            }
+            if (pendingImport != null) {
+                val files = pendingImport.files.keys.sorted().joinToString(",")
+                lines += "  $CrashDirectoryName/${importDirName(pendingImport)} " +
+                    "source=bugreport " +
+                    "capture_boot_id=${pendingImport.captureBootId} " +
+                    "captured=${pendingImport.capturedMs} files=$files"
+            }
+        }
+        lines += "note: kernel evidence is from the boot before the capture boot; " +
+            "correlate it with the run log mtimes and the boot history in " +
+            "last-crash/*/boot.txt"
+        return lines.joinToString("\n", postfix = "\n")
+    }
+
+    private fun importDirName(imported: ImportedEvidence): String =
+        SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(imported.capturedMs)) + "-import"
+
+    private fun bootFields(log: File): Pair<String, String> {
+        val line = runCatching { log.bufferedReader().use { it.readLine() } }
+            .getOrNull()
+            .orEmpty()
+        if (!line.startsWith(BootTag)) return "unknown" to "unknown"
+        val id = Regex("""id=(\S+)""").find(line)?.groupValues?.get(1) ?: "unknown"
+        val start = Regex("""start=(\d+)""").find(line)?.groupValues?.get(1) ?: "unknown"
+        return id to start
+    }
+
+    private fun readFacts(dir: File): Map<String, String> = runCatching {
+        File(dir, "boot.txt").takeIf { it.isFile }?.readLines().orEmpty()
+            .mapNotNull { line ->
+                val at = line.indexOf('=')
+                if (at <= 0) null else line.take(at) to line.substring(at + 1)
+            }
+            .toMap()
+    }.getOrDefault(emptyMap())
 
     fun clear(context: Context) {
         runCatching { root(context).deleteRecursively() }
@@ -195,6 +347,21 @@ internal class RunLogWriter(
 
     init {
         RunLogStore.writeMeta(folderFile, entry, RunLogState.RUNNING)
+        /* The first thing this run writes, and the only line that says which
+         * boot it belongs to: a later crash report's `last-crash` evidence is
+         * from the boot *before* the capture boot, and this line is how the
+         * analyst places the run against the boot history. Synced immediately:
+         * a run can die before the pacer's first tick. */
+        append(bootLine())
+        pacer.force()
+    }
+
+    private fun bootLine(): String {
+        val id = runCatching { File("/proc/sys/kernel/random/boot_id").readText().trim() }
+            .getOrNull()
+            .orEmpty()
+            .ifEmpty { "unknown" }
+        return "${RunLogStore.BootTag} id=$id start=${System.currentTimeMillis()}"
     }
 
     /** Must be called with the owning [DebugAttackLog]'s lock held. */

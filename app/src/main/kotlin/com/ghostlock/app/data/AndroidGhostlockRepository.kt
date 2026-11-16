@@ -9,6 +9,7 @@ import android.net.IpSecTransform
 import android.os.Build
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.system.Os
 import android.util.Log
 import androidx.core.content.edit
@@ -16,8 +17,10 @@ import androidx.core.net.toUri
 import com.ghostlock.app.BuildConfig
 import com.ghostlock.app.BuildInfo
 import com.ghostlock.app.domain.model.CpuPair
+import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.DebugSettings
 import com.ghostlock.app.domain.model.ExternalProfileInfo
+import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
 import com.ghostlock.app.domain.model.LegacyProfileState
 import com.ghostlock.app.domain.model.physSourceFromLines
@@ -393,6 +396,101 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         RunLogStore.markInterrupted(appContext)
     }
 
+    override fun reportBundleName(): String = RunLogStore.reportName()
+
+    override suspend fun latestCrashEvidence(): CrashEvidenceInfo? = withContext(Dispatchers.IO) {
+        CrashEvidenceStore.latestAutomatic(CrashEvidenceStore.root(appContext))?.toInfo()
+    }
+
+    private fun currentBootId(): String = runCatching {
+        File("/proc/sys/kernel/random/boot_id").readText().trim()
+    }.getOrDefault("unknown")
+
+    /**
+     * Captures what the current boot can still show about the last crash.
+     * Shell first (Shizuku, then root), one bare capture when neither exists.
+     * The store keys captures by the capture boot, so a second start in the
+     * same boot does not duplicate. A bare "no shell" capture is retried
+     * (the user may enable Shizuku after the first attempt); a shell-backed
+     * capture is final, because the previous boot's pstore cannot change
+     * later in this boot.
+     */
+    override suspend fun collectCrashEvidence(): CrashEvidenceInfo? = withContext(Dispatchers.IO) {
+        val bootId = currentBootId()
+        val root = CrashEvidenceStore.root(appContext)
+        val existing = CrashEvidenceStore.findForBoot(root, bootId)
+        /* A shell-backed capture is final for this boot: the pstore record of
+         * the previous boot cannot appear later. Only a bare "no shell"
+         * capture is worth retrying (the user may enable Shizuku or root). */
+        if (existing != null && existing.source != "none" && existing.source != "unknown") {
+            return@withContext existing.toInfo()
+        }
+        val now = System.currentTimeMillis()
+        val dir = existing?.dir ?: CrashEvidenceStore.newDir(root, bootId, now)
+        val facts = readCrashFacts(dir)
+        val history = facts?.get("history")
+        val capture = when {
+            facts != null -> CrashEvidenceStore.complete(root, dir, facts, history, now)
+            existing == null -> CrashEvidenceStore.complete(
+                root,
+                dir,
+                mapOf(
+                    "source" to "none",
+                    "capture_boot_id" to bootId,
+                    "note" to "no shell available; pstore not readable",
+                ),
+                null,
+                now,
+            )
+            else -> existing
+        }
+        capture?.toInfo()
+    }
+
+    private suspend fun readCrashFacts(dir: File): Map<String, String>? {
+        if (shizukuRunner.status() == com.ghostlock.app.domain.model.ShizukuStatus.READY) {
+            val facts = shizukuRunner.collectCrash(dir)
+            if (!facts.isNullOrEmpty() && !facts["capture_boot_id"].isNullOrEmpty()) return facts
+        }
+        return RootCrashCollector.collect(appContext, dir)
+    }
+
+    override suspend fun importBugreport(uri: String): ImportedEvidence? =
+        withContext(Dispatchers.IO) {
+            val parsed = runCatching { uri.toUri() }.getOrNull() ?: return@withContext null
+            val name = runCatching {
+                appContext.contentResolver.query(
+                    parsed,
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null,
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                }
+            }.getOrNull() ?: parsed.lastPathSegment ?: "bugreport.zip"
+            val input = runCatching { appContext.contentResolver.openInputStream(parsed) }
+                .onFailure { Log.w("GhostLock", "bugreport import: cannot open $parsed", it) }
+                .getOrNull() ?: return@withContext null
+            val started = System.nanoTime()
+            input.use { stream ->
+                BugreportImporter.extract(stream, name, currentBootId())
+            }.also {
+                val elapsed = (System.nanoTime() - started) / 1_000_000
+                Log.i("GhostLock", "bugreport import: $name ${elapsed} ms, ok=${it != null}")
+            }
+        }
+
+    override suspend fun exportReportBundle(
+        documentUri: String,
+        pendingImport: ImportedEvidence?,
+    ): Boolean = withContext(Dispatchers.IO) {
+        RunLogStore.exportBundle(appContext, documentUri.toUri(), pendingImport)
+    }
+
+    override suspend fun clearStoredImports() = withContext(Dispatchers.IO) {
+        CrashEvidenceStore.clearImported(CrashEvidenceStore.root(appContext))
+    }
 
     /* Profile configuration now lives in AndroidProfileConfigController: the
      * repository only wires it and forwards the native document. */

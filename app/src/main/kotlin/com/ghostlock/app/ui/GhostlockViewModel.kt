@@ -3,6 +3,8 @@ package com.ghostlock.app.ui
 import android.Manifest
 import android.app.Application
 import android.content.pm.PackageManager
+import android.provider.OpenableColumns
+import android.provider.Settings
 import android.net.Uri
 import android.os.Build
 import androidx.core.net.toUri
@@ -21,6 +23,7 @@ import com.ghostlock.app.data.decision
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.customCpuPairHint
 import com.ghostlock.app.domain.model.ExternalProfileInfo
+import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
 import com.ghostlock.app.domain.model.LegacyProfileState
 import com.ghostlock.app.domain.model.LogTone
@@ -36,6 +39,7 @@ import com.ghostlock.app.domain.model.RootManagerCandidate
 import com.ghostlock.app.domain.model.nextPhysImage
 import com.ghostlock.app.domain.model.sourceSuppliesLoad
 import com.ghostlock.app.domain.model.ProfileDiffRow
+import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.ProfileFieldNode
 import com.ghostlock.app.domain.model.RouteVerdict
@@ -65,10 +69,21 @@ sealed interface GhostlockEffect {
     data class PickDocument(val request: DocumentRequest) : GhostlockEffect
     data class CreateProfileDocument(val suggestedName: String) : GhostlockEffect
 
-    /** Save dialog for one retained run log; the app streams the zip into it. */
-    data class CreateRunLogDocument(val suggestedName: String) : GhostlockEffect
+    /** Save dialog for the whole report: every run plus the crash evidence. */
+    data class CreateReportBundleDocument(val suggestedName: String) : GhostlockEffect
+
+    /** Platform picker for a user-supplied bugreport zip. */
+    data object PickBugreport : GhostlockEffect
+
+    data object OpenDeveloperOptions : GhostlockEffect
+    data object OpenAboutPhone : GhostlockEffect
+
+    /** Share the finished report bundle through the system sheet. */
+    data class ShareFile(val uri: String) : GhostlockEffect
+
     data class Share(val uri: String) : GhostlockEffect
     data class Toast(val resourceId: Int) : GhostlockEffect
+    data class ToastText(val text: String) : GhostlockEffect
     data class Clipboard(val text: String) : GhostlockEffect
     data class KeepScreenAwake(val enabled: Boolean) : GhostlockEffect
     data object OpenShizuku : GhostlockEffect
@@ -81,6 +96,18 @@ sealed interface GhostlockEffect {
 }
 
 private const val OverwriteSummaryLimit = 12
+
+/** True when the evidence already carries a kernel log or a full imported report. */
+private fun CrashEvidenceInfo?.hasKernelEvidence(): Boolean =
+    this?.hasKernelLog == true || this?.source == "bugreport"
+
+/**
+ * True when a shell read the kernel side for this boot. The pstore may still
+ * have been empty; that is a fact the export warning shows, not a reason to
+ * ask for a system report the shell has already superseded.
+ */
+private fun CrashEvidenceInfo?.hasShellCapture(): Boolean =
+    this?.source == "shizuku" || this?.source == "root"
 
 enum class DocumentRequest {
     SelectProfile, BootImage, XblImage, PayloadImage, UefiImage, VendorBootImage, DtboImage,
@@ -171,6 +198,8 @@ class GhostlockViewModel(
     )
 
     private var pendingProfileWrite: PendingProfileWrite? = null
+    /** The imported bugreport, reduced in memory for the current report sheet only. */
+    private var pendingImport: ImportedEvidence? = null
     /** URI of a just-written profile awaiting the "use it?" confirmation. */
     private var pendingSelectUri: String? = null
 
@@ -191,6 +220,16 @@ class GhostlockViewModel(
             applyRecommendedShizuku()
             maybeSuggestShizukuForW3()
             refreshLegacyState()
+        }
+        /* Best effort and off the main path: a no-shell device still records
+         * the boot it was on; a Shizuku/root device captures the pstore.
+         * Imported reports are session state now; drop any left on disk by an
+         * earlier build so they cannot silently ride along in a bundle. */
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.clearStoredImports() }
+            runCatching { repository.collectCrashEvidence() }
+            val evidence = runCatching { repository.latestCrashEvidence() }.getOrNull()
+            if (evidence != null) mutableState.update { it.copy(crashEvidence = evidence) }
         }
     }
 
@@ -665,41 +704,350 @@ class GhostlockViewModel(
         mutableState.update { it.copy(aboutVisible = false) }
     }
 
-    private var pendingRunLogStamp: String? = null
-
-    /** Opens the picker over the runs kept on the device. */
+    /**
+     * Opens the report flow. A shell-backed capture or a kernel log already in
+     * hand — an automatic capture or an imported report — goes straight to the
+     * destination dialog; otherwise the user first decides whether to attach a
+     * system bug report.
+     */
     fun onExportRunLog() {
         viewModelScope.launch {
             val runs = runCatching { repository.listRunLogs() }.getOrDefault(emptyList())
-            mutableState.update { it.copy(runLogs = runs, runLogPickerVisible = true) }
+            val pending = pendingImport
+            var evidence = runCatching { repository.latestCrashEvidence() }.getOrNull()
+            /* Shizuku may have become ready after the start-up capture. Its
+             * pstore read is quick; retry before asking for a bug report.
+             * A pending import is already the user's explicit choice for this
+             * session, so it wins and needs no retry. */
+            if (pending == null && !evidence.hasKernelEvidence() &&
+                !evidence.hasShellCapture() &&
+                mutableState.value.shizukuStatus == ShizukuStatus.READY
+            ) {
+                runCatching { repository.collectCrashEvidence() }
+                evidence = runCatching { repository.latestCrashEvidence() }.getOrNull()
+                    ?: evidence
+            }
+            val direct = pending != null ||
+                evidence.hasKernelEvidence() || evidence.hasShellCapture()
+            val shown = pending?.toInfo() ?: evidence
+            mutableState.update {
+                it.copy(
+                    runLogs = runs,
+                    runLogPickerVisible = true,
+                    crashEvidence = shown,
+                    reportWizardStep = if (direct) {
+                        ReportWizardStep.Export
+                    } else {
+                        ReportWizardStep.Choice
+                    },
+                    reportFlowSteps = if (direct) {
+                        listOf(ReportWizardStep.Export)
+                    } else {
+                        emptyList()
+                    },
+                    reportExportDone = false,
+                    lastReportName = null,
+                    lastReportUri = null,
+                )
+            }
+            if (direct) openReportDestination()
         }
     }
 
-    fun onRunLogPickerDismiss() =
-        mutableState.update { it.copy(runLogPickerVisible = false) }
-
-    fun onRunLogSelected(stamp: String) {
-        pendingRunLogStamp = stamp
-        mutableState.update { it.copy(runLogPickerVisible = false) }
-        send(GhostlockEffect.CreateRunLogDocument("$stamp.zip"))
+    /**
+     * The export flow proper: say what the next dialog is for and open the
+     * destination picker. The sheet stays behind it, so a cancelled picker
+     * leaves the same screen with the button that opens it again.
+     */
+    private fun openReportDestination() {
+        mutableState.update {
+            it.copy(
+                reportWizardStep = ReportWizardStep.Export,
+                reportExportDone = false,
+            )
+        }
+        send(
+            GhostlockEffect.ToastText(
+                application.getString(R.string.report_choose_location),
+            ),
+        )
+        send(GhostlockEffect.CreateReportBundleDocument(repository.reportBundleName()))
     }
 
-    fun onExportRunLogDocumentPicked(documentUri: String?) {
-        val stamp = pendingRunLogStamp ?: return
-        pendingRunLogStamp = null
+    /** The whole-store report: every run plus every crash-evidence capture. */
+    fun onExportReportBundle() {
+        send(GhostlockEffect.CreateReportBundleDocument(repository.reportBundleName()))
+    }
+
+    fun onExportReportBundleDocumentPicked(documentUri: String?) {
         if (documentUri.isNullOrBlank()) return
         viewModelScope.launch {
-            val ok = runCatching { repository.exportRunLog(stamp, documentUri) }
-                .getOrDefault(false)
-            send(
-                GhostlockEffect.Toast(
-                    if (ok) R.string.run_log_export_done else R.string.export_failed,
-                ),
+            /* Refresh the automatic evidence first: the user may have started
+             * Shizuku since the app started. A failed refresh costs the bundle
+             * nothing; the stored captures still travel. The pending import is
+             * in memory and is passed to the writer directly. */
+            runCatching { repository.collectCrashEvidence() }
+            val evidence = runCatching { repository.latestCrashEvidence() }.getOrNull()
+            val pending = pendingImport
+            if (pending == null && evidence != null) {
+                mutableState.update { it.copy(crashEvidence = evidence) }
+            }
+            val ok = runCatching {
+                repository.exportReportBundle(documentUri, pending)
+            }.getOrDefault(false)
+            if (ok) {
+                val name = documentName(documentUri)
+                mutableState.update {
+                    it.copy(
+                        reportExportDone = true,
+                        lastReportName = name,
+                        lastReportUri = documentUri,
+                    )
+                }
+                send(
+                    GhostlockEffect.ToastText(
+                        application.getString(
+                            R.string.report_saved_toast,
+                            name ?: documentUri,
+                        ),
+                    ),
+                )
+            } else {
+                send(GhostlockEffect.Toast(R.string.export_failed))
+            }
+        }
+    }
+
+    private fun documentName(uri: String): String? = runCatching {
+        application.contentResolver.query(
+            uri.toUri(),
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull()
+
+    fun onAddBugreport() {
+        if (mutableState.value.bugreportImporting) return
+        send(GhostlockEffect.PickBugreport)
+    }
+
+    fun onBugreportPicked(uri: String?) {
+        if (uri.isNullOrBlank()) return
+        if (mutableState.value.bugreportImporting) return
+        mutableState.update { it.copy(bugreportImporting = true) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val imported = runCatching { repository.importBugreport(uri) }.getOrNull()
+            val inFlow = mutableState.value.runLogPickerVisible
+            mutableState.update {
+                it.copy(
+                    bugreportImporting = false,
+                    crashEvidence = imported?.toInfo() ?: it.crashEvidence,
+                )
+            }
+            if (imported != null) {
+                pendingImport = imported
+                send(GhostlockEffect.Toast(R.string.bugreport_import_done))
+                /* Importing was the reason for this visit; continue to the
+                 * export. A share-sheet import outside the flow keeps the
+                 * evidence in memory for the next export in this session. */
+                if (inFlow) openReportDestination()
+            } else {
+                send(GhostlockEffect.Toast(R.string.bugreport_import_failed))
+            }
+        }
+    }
+
+    fun onOpenDeveloperOptions() = send(GhostlockEffect.OpenDeveloperOptions)
+
+    fun onOpenAboutPhone() = send(GhostlockEffect.OpenAboutPhone)
+
+    /**
+     * The user chose to attach a system bug report. Developer options is the
+     * way in on every ROM; a Xiaomi feedback-app entry is deliberately not
+     * used — it opens the feedback home/composer, not the system bug report.
+     */
+    fun onReportAppend() {
+        /* While a report is being parsed the wizard holds still. */
+        if (mutableState.value.bugreportImporting) return
+        /* Choosing to attach starts a fresh capture; any session import from
+         * a previous pass is not used. */
+        pendingImport = null
+        if (developerSettingsEnabled()) {
+            mutableState.update {
+                it.copy(
+                    reportWizardStep = ReportWizardStep.Generate,
+                    reportFlowSteps = listOf(
+                        ReportWizardStep.Generate,
+                        ReportWizardStep.Import,
+                        ReportWizardStep.Export,
+                    ),
+                )
+            }
+        } else {
+            mutableState.update {
+                it.copy(
+                    reportWizardStep = ReportWizardStep.Developer,
+                    reportFlowSteps = listOf(
+                        ReportWizardStep.Developer,
+                        ReportWizardStep.Generate,
+                        ReportWizardStep.Import,
+                        ReportWizardStep.Export,
+                    ),
+                )
+            }
+        }
+    }
+
+    /** No system report: go straight to the location dialog. */
+    fun onReportExportOnly() {
+        if (mutableState.value.bugreportImporting) return
+        pendingImport = null
+        mutableState.update {
+            it.copy(reportFlowSteps = listOf(ReportWizardStep.Export))
+        }
+        openReportDestination()
+    }
+
+    /** Re-reads the system switch after the user visited Settings. */
+    fun onReportRecheckDeveloper() {
+        if (developerSettingsEnabled()) {
+            mutableState.update { it.copy(reportWizardStep = ReportWizardStep.Generate) }
+        } else {
+            send(GhostlockEffect.Toast(R.string.report_developer_missing))
+        }
+    }
+
+    /**
+     * Called from the activity's onResume. Returning from About phone is how
+     * the Developer-options gate ends; the screen advances by itself.
+     */
+    fun onReportResumed() {
+        val state = mutableState.value
+        if (!state.runLogPickerVisible) return
+        if (state.reportWizardStep != ReportWizardStep.Developer) return
+        if (developerSettingsEnabled()) {
+            mutableState.update { it.copy(reportWizardStep = ReportWizardStep.Generate) }
+        }
+    }
+
+    fun onReportNext() {
+        val state = mutableState.value
+        if (state.bugreportImporting) return
+        when (state.reportWizardStep) {
+            ReportWizardStep.Developer -> {
+                if (developerSettingsEnabled()) {
+                    mutableState.update { it.copy(reportWizardStep = ReportWizardStep.Generate) }
+                } else {
+                    send(GhostlockEffect.Toast(R.string.report_developer_missing))
+                }
+            }
+
+            ReportWizardStep.Generate ->
+                mutableState.update { it.copy(reportWizardStep = ReportWizardStep.Import) }
+
+            ReportWizardStep.Import -> {
+                if (state.crashEvidence.hasKernelEvidence()) {
+                    openReportDestination()
+                } else {
+                    send(GhostlockEffect.Toast(R.string.report_import_needed))
+                }
+            }
+
+            ReportWizardStep.Choice,
+            ReportWizardStep.Export,
+            -> Unit
+        }
+    }
+
+    fun onReportBack() {
+        val state = mutableState.value
+        if (state.bugreportImporting) return
+        val steps = state.reportFlowSteps
+        val previous = when (state.reportWizardStep) {
+            ReportWizardStep.Developer -> ReportWizardStep.Choice
+
+            ReportWizardStep.Generate ->
+                if (steps.contains(ReportWizardStep.Developer)) {
+                    ReportWizardStep.Developer
+                } else {
+                    ReportWizardStep.Choice
+                }
+
+            ReportWizardStep.Import ->
+                if (steps.contains(ReportWizardStep.Generate)) {
+                    ReportWizardStep.Generate
+                } else {
+                    ReportWizardStep.Choice
+                }
+
+            ReportWizardStep.Export ->
+                if (steps.contains(ReportWizardStep.Import)) {
+                    ReportWizardStep.Import
+                } else {
+                    ReportWizardStep.Choice
+                }
+
+            ReportWizardStep.Choice -> ReportWizardStep.Choice
+        }
+        mutableState.update { it.copy(reportWizardStep = previous) }
+    }
+
+    /** "Already have a report" from the choice or export-warning screens. */
+    fun onReportGoToImport() {
+        if (mutableState.value.bugreportImporting) return
+        val steps = mutableState.value.reportFlowSteps
+        val plan = when {
+            steps.contains(ReportWizardStep.Developer) -> listOf(
+                ReportWizardStep.Developer,
+                ReportWizardStep.Generate,
+                ReportWizardStep.Import,
+                ReportWizardStep.Export,
+            )
+
+            steps.contains(ReportWizardStep.Generate) -> steps
+
+            else -> listOf(
+                ReportWizardStep.Import,
+                ReportWizardStep.Export,
+            )
+        }
+        mutableState.update {
+            it.copy(
+                reportWizardStep = ReportWizardStep.Import,
+                reportFlowSteps = plan,
             )
         }
     }
 
+    fun onReportShare() {
+        val uri = mutableState.value.lastReportUri ?: return
+        send(GhostlockEffect.ShareFile(uri))
+    }
+
+    /** True when the system's Developer options switch is on. */
+    private fun developerSettingsEnabled(): Boolean = runCatching {
+        Settings.Global.getInt(
+            application.contentResolver,
+            Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
+            0,
+        ) == 1
+    }.getOrDefault(false)
+
+    fun onRunLogPickerDismiss() {
+        /* The import owns the sheet until it ends; a tap outside or Back must
+         * not drop a running parse (its result would have nowhere to go). */
+        if (mutableState.value.bugreportImporting) return
+        pendingImport = null
+        mutableState.update { it.copy(runLogPickerVisible = false) }
+    }
+
     fun onClearRunLogs() {
+        if (mutableState.value.bugreportImporting) return
+        pendingImport = null
         viewModelScope.launch {
             runCatching { repository.clearRunLogs() }
             mutableState.update { it.copy(runLogs = emptyList(), runLogPickerVisible = false) }

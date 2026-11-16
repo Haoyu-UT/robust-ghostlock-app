@@ -1,6 +1,5 @@
 package com.ghostlock.app.ui
 
-import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -41,7 +40,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -51,6 +49,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -65,8 +64,8 @@ import com.ghostlock.app.domain.model.MeasurementMergeRow
 import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.ProfileFieldNode
 import com.ghostlock.app.domain.model.ProfileLayers
+import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.RunLogEntry
-import com.ghostlock.app.domain.model.RunLogState
 import com.ghostlock.app.domain.model.ShizukuStatus
 import com.ghostlock.app.domain.model.UserProfileFile
 import com.ghostlock.app.domain.model.VrKoMode
@@ -170,9 +169,23 @@ data class GhostlockUiState(
     val overwriteDialogVisible: Boolean = false,
     val overwriteMessage: String = "",
     val logLines: List<GhostlockLogLine> = emptyList(),
-    /** Runs retained on the device, as the export picker lists them. */
+    /** Runs retained on the device; the report sheet only uses this to offer clearing. */
     val runLogs: List<RunLogEntry> = emptyList(),
     val runLogPickerVisible: Boolean = false,
+    /** The newest crash-evidence capture, if any. */
+    val crashEvidence: CrashEvidenceInfo? = null,
+    val bugreportImporting: Boolean = false,
+    /** The report flow's current screen. */
+    val reportWizardStep: ReportWizardStep = ReportWizardStep.Choice,
+    /**
+     * The screens this visit will pass through, in order. A direct export has
+     * one entry and no step counter; the bug-report paths have two to four.
+     */
+    val reportFlowSteps: List<ReportWizardStep> = emptyList(),
+    /** The last bundle written in this flow, for the saved/share block. */
+    val lastReportName: String? = null,
+    val lastReportUri: String? = null,
+    val reportExportDone: Boolean = false,
     val executionRelease: String = "",
     val executionHasProfile: Boolean = false,
     val executionFields: List<ExecutionFieldValue> = emptyList(),
@@ -231,6 +244,12 @@ data class GhostlockUiState(
 
 enum class DialogType { NONE, LIST, INPUT, CONFIRM, NOTICE, NOTIFICATION_PERMISSION }
 
+/**
+ * The report flow's screens. Choice decides whether a system bug report is
+ * attached; a shell-backed capture with a kernel log skips straight to Export.
+ */
+enum class ReportWizardStep { Choice, Developer, Generate, Import, Export }
+
 /** The last attack run's state; the run-status notification mirrors it. */
 enum class RunStatus { Idle, Running, Success, Failure }
 
@@ -263,9 +282,19 @@ interface GhostlockActions {
     fun onCloseExecutionSheet()
     fun onCopyLogs()
     fun onExportRunLog()
-    fun onRunLogSelected(stamp: String)
     fun onRunLogPickerDismiss()
     fun onClearRunLogs()
+    fun onExportReportBundle()
+    fun onAddBugreport()
+    fun onOpenDeveloperOptions()
+    fun onOpenAboutPhone()
+    fun onReportNext()
+    fun onReportBack()
+    fun onReportGoToImport()
+    fun onReportAppend()
+    fun onReportExportOnly()
+    fun onReportRecheckDeveloper()
+    fun onReportShare()
     fun onSelectProfileFile()
     fun onClearExternalProfile()
     fun onParseOta()
@@ -847,40 +876,353 @@ private fun RunLogPickerDialog(
     state: GhostlockUiState,
     actions: GhostlockActions,
 ) {
-    val context = LocalContext.current
+    val step = state.reportWizardStep
+    val titleRes = when (step) {
+        ReportWizardStep.Choice -> R.string.report_choice_title
+        ReportWizardStep.Developer -> R.string.report_developer_title
+        ReportWizardStep.Generate -> R.string.report_step_generate_title
+        ReportWizardStep.Import -> R.string.report_step_import_title
+        ReportWizardStep.Export -> R.string.report_step_export_title
+    }
+    val summaryRes = when (step) {
+        ReportWizardStep.Choice -> R.string.report_choice_summary
+        ReportWizardStep.Developer -> R.string.report_developer_summary
+        ReportWizardStep.Generate -> R.string.report_step_generate_summary
+        ReportWizardStep.Import -> R.string.report_step_import_summary
+        ReportWizardStep.Export ->
+            if (state.reportExportDone) {
+                R.string.report_step_export_done_summary
+            } else {
+                R.string.report_step_export_summary
+            }
+    }
     OverlayDialog(
         show = state.runLogPickerVisible,
-        title = stringResource(R.string.run_log_pick_title),
-        summary = stringResource(R.string.run_log_pick_summary),
+        title = stringResource(titleRes),
+        summary = stringResource(summaryRes),
         onDismissRequest = actions::onRunLogPickerDismiss,
         content = {
             Column(modifier = Modifier.fillMaxWidth()) {
-                state.runLogs.forEach { run ->
-                    TextButton(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = runLogLabel(context, run),
-                        onClick = { actions.onRunLogSelected(run.stamp) },
-                    )
-                }
-                if (state.runLogs.isEmpty()) {
+                val plan = state.reportFlowSteps
+                val index = plan.indexOf(step)
+                if (plan.size > 1 && index >= 0) {
                     Text(
-                        text = stringResource(R.string.run_log_empty),
+                        text = stringResource(
+                            R.string.report_step_indicator,
+                            index + 1,
+                            plan.size,
+                        ),
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
                     )
                 }
-                if (state.runLogs.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    TextButton(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = stringResource(R.string.run_log_clear),
-                        onClick = actions::onClearRunLogs,
-                    )
+                when (step) {
+                    ReportWizardStep.Choice -> ReportChoiceStep(state, actions)
+                    ReportWizardStep.Developer -> ReportDeveloperStep(actions)
+                    ReportWizardStep.Generate -> ReportGenerateStep(actions)
+                    ReportWizardStep.Import -> ReportImportStep(state, actions)
+                    ReportWizardStep.Export -> ReportExportStep(state, actions)
                 }
+                Spacer(modifier = Modifier.height(12.dp))
+                ReportWizardNav(step, state, actions)
             }
         },
     )
+}
+
+/** The first screen when no kernel log is in hand: attach a system report or not. */
+@Composable
+private fun ReportChoiceStep(state: GhostlockUiState, actions: GhostlockActions) {
+    CrashEvidenceCard(state)
+    TextButton(
+        modifier = Modifier.fillMaxWidth(),
+        text = stringResource(R.string.report_append),
+        colors = ButtonDefaults.textButtonColorsPrimary(),
+        onClick = actions::onReportAppend,
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    TextButton(
+        modifier = Modifier.fillMaxWidth(),
+        text = stringResource(R.string.report_export_only),
+        onClick = actions::onReportExportOnly,
+    )
+    ReportTextLink(
+        text = stringResource(R.string.report_have_bugreport),
+        onClick = actions::onReportGoToImport,
+    )
+}
+
+/** Developer options is off; About phone is the way in. */
+@Composable
+private fun ReportDeveloperStep(actions: GhostlockActions) {
+    Text(
+        text = stringResource(R.string.report_developer_body),
+        style = MiuixTheme.textStyles.body2,
+        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+    )
+    TextButton(
+        modifier = Modifier.fillMaxWidth(),
+        text = stringResource(R.string.report_open_about),
+        colors = ButtonDefaults.textButtonColorsPrimary(),
+        onClick = actions::onOpenAboutPhone,
+    )
+    ReportTextLink(
+        text = stringResource(R.string.report_developer_recheck),
+        onClick = actions::onReportRecheckDeveloper,
+    )
+}
+
+/** Developer options is on: the system generates the report from its own UI. */
+@Composable
+private fun ReportGenerateStep(actions: GhostlockActions) {
+    TextButton(
+        modifier = Modifier.fillMaxWidth(),
+        text = stringResource(R.string.report_open_developer),
+        colors = ButtonDefaults.textButtonColorsPrimary(),
+        onClick = actions::onOpenDeveloperOptions,
+    )
+}
+
+/** Pick the report the user just generated. */
+@Composable
+private fun ReportImportStep(state: GhostlockUiState, actions: GhostlockActions) {
+    CrashEvidenceCard(state)
+    TextButton(
+        modifier = Modifier.fillMaxWidth(),
+        text = stringResource(R.string.report_add_bugreport),
+        enabled = !state.bugreportImporting,
+        colors = ButtonDefaults.textButtonColorsPrimary(),
+        onClick = actions::onAddBugreport,
+    )
+    if (state.bugreportImporting) {
+        Text(
+            text = stringResource(R.string.report_importing),
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+    }
+}
+
+/** The destination is chosen for the user straight away; this screen is the fallback. */
+@Composable
+private fun ReportExportStep(state: GhostlockUiState, actions: GhostlockActions) {
+    CrashEvidenceCard(state)
+    val evidence = state.crashEvidence
+    if (evidence?.crashEvidence != true) {
+        ReportWarningCard(
+            stringResource(
+                if (evidence?.hasKernelLog == true) {
+                    R.string.report_no_crash_warning
+                } else {
+                    R.string.report_no_kernel_warning
+                },
+            ),
+        )
+        ReportTextLink(
+            text = stringResource(R.string.report_back_to_import),
+            onClick = actions::onReportGoToImport,
+        )
+    }
+    TextButton(
+        modifier = Modifier.fillMaxWidth(),
+        text = stringResource(R.string.report_choose_location_action),
+        colors = ButtonDefaults.textButtonColorsPrimary(),
+        onClick = actions::onExportReportBundle,
+    )
+    if (state.reportExportDone) {
+        Text(
+            text = stringResource(
+                R.string.report_saved,
+                state.lastReportName ?: state.lastReportUri.orEmpty(),
+            ),
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        ReportTextLink(
+            text = stringResource(R.string.report_share),
+            onClick = actions::onReportShare,
+        )
+    }
+    if (state.runLogs.isNotEmpty()) {
+        ReportTextLink(
+            text = stringResource(R.string.run_log_clear),
+            onClick = actions::onClearRunLogs,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+    }
+}
+
+@Composable
+private fun ReportWizardNav(
+    step: ReportWizardStep,
+    state: GhostlockUiState,
+    actions: GhostlockActions,
+) {
+    /* Choice is the decision screen; Export ends the flow. The screens in
+     * between go back or continue; Back reaches Choice for the export-only
+     * branch. While a report is being parsed no transition is allowed: both
+     * directions stay visible but disabled, and the dialog's dismiss is
+     * ignored (see the ViewModel). */
+    val busy = state.bugreportImporting
+    val bugreportStep = when (step) {
+        ReportWizardStep.Developer,
+        ReportWizardStep.Generate,
+        ReportWizardStep.Import,
+        -> true
+
+        ReportWizardStep.Choice,
+        ReportWizardStep.Export,
+        -> false
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            if (step != ReportWizardStep.Choice) {
+                TextButton(
+                    text = stringResource(R.string.report_back),
+                    enabled = !busy,
+                    onClick = actions::onReportBack,
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            if (bugreportStep) {
+                TextButton(
+                    text = stringResource(R.string.report_next),
+                    enabled = !busy,
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                    onClick = actions::onReportNext,
+                )
+            }
+        }
+    }
+}
+
+/** A text-link style action; lighter than the filled dialog buttons. */
+@Composable
+private fun ReportTextLink(
+    text: String,
+    onClick: () -> Unit,
+    color: Color = MiuixTheme.colorScheme.primary,
+) {
+    Text(
+        text = text,
+        style = MiuixTheme.textStyles.body2,
+        color = color,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
+@Composable
+private fun ReportWarningCard(text: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        colors = CardDefaults.defaultColors(
+            color = MiuixTheme.colorScheme.errorContainer,
+            contentColor = MiuixTheme.colorScheme.onErrorContainer,
+        ),
+    ) {
+        Text(
+            text = text,
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onErrorContainer,
+        )
+    }
+}
+
+/** What the app already holds about the last crash, and where it came from. */
+@Composable
+private fun CrashEvidenceCard(state: GhostlockUiState) {
+    val evidence = state.crashEvidence
+    var details by remember { mutableStateOf(false) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.report_evidence_title),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurface,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = evidenceStatus(evidence),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+            if (evidence != null && evidence.source != "none") {
+                ReportTextLink(
+                    text = stringResource(R.string.report_details),
+                    onClick = { details = !details },
+                )
+                if (details) {
+                    Text(
+                        text = stringResource(R.string.report_source, evidence.source),
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    Text(
+                        text = stringResource(R.string.report_boot_id, evidence.captureBootId),
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    if (evidence.bootReason.isNotBlank()) {
+                        Text(
+                            text = stringResource(
+                                R.string.report_boot_reason,
+                                evidence.bootReason,
+                            ),
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
+                    if (evidence.files.isNotEmpty()) {
+                        Text(
+                            text = stringResource(
+                                R.string.report_files,
+                                evidence.files.joinToString(", "),
+                            ),
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun evidenceStatus(evidence: CrashEvidenceInfo?): String = when {
+    evidence == null -> stringResource(R.string.report_status_none)
+    evidence.source == "bugreport" ->
+        if (evidence.crashEvidence) {
+            stringResource(
+                R.string.report_status_imported,
+                evidence.bugreportName.ifBlank { "bugreport.zip" },
+            )
+        } else {
+            stringResource(
+                R.string.report_status_imported_no_crash,
+                evidence.bugreportName.ifBlank { "bugreport.zip" },
+            )
+        }
+
+    evidence.hasKernelLog -> stringResource(R.string.report_status_collected)
+    evidence.source == "none" -> stringResource(R.string.report_status_none)
+    else -> stringResource(R.string.report_status_partial)
 }
 
 /**
@@ -1077,17 +1419,6 @@ private fun strideReasonText(reason: StrideReason): String = when (reason) {
 }
 
 /** `20261009-212803 · Shizuku · interrupted · 42 KB` */
-private fun runLogLabel(context: Context, run: RunLogEntry): String {    val state = context.getString(
-        when (run.state) {
-            RunLogState.RUNNING -> R.string.run_log_state_running
-            RunLogState.COMPLETED -> R.string.run_log_state_completed
-            RunLogState.FAILED -> R.string.run_log_state_failed
-            RunLogState.INTERRUPTED -> R.string.run_log_state_interrupted
-        },
-    )
-    val size = android.text.format.Formatter.formatShortFileSize(context, run.bytes)
-    return "${run.stamp} · ${run.entry} · $state · $size"
-}
 
 @Composable
 private fun GhostlockOverwriteDialog(

@@ -202,6 +202,33 @@ data class RunLogEntry(
     val bytes: Long,
 )
 
+/**
+ * The newest crash-evidence capture, as the report sheet shows it. [source] is
+ * `shizuku`, `root`, `bugreport` or `none`; [captureBootId] is the boot the
+ * evidence was read on, not the boot the bytes came from — the kernel console
+ * is from the boot immediately before it, and the bundled `boot.txt` says so.
+ */
+data class CrashEvidenceInfo(
+    val source: String,
+    val captureBootId: String,
+    val capturedMs: Long,
+    val files: List<String>,
+    val bootReason: String = "",
+    val bugreportName: String = "",
+    /** True when the evidence includes a crash log, not just the current boot. */
+    val crashEvidence: Boolean = false,
+) {
+    /** True when the capture carries a kernel console or a bugreport dmesg section. */
+    val hasKernelLog: Boolean
+        get() = files.any {
+            it == "kernel-log.txt" ||
+                it.startsWith("console-") ||
+                it.startsWith("pmsg-") ||
+                it.startsWith("dmesg-") ||
+                it.startsWith("last_kmsg")
+        }
+}
+
 /** One node of the resolved profile tree: a JSON group or a numeric leaf. */
 data class ProfileFieldNode(
     val path: String,

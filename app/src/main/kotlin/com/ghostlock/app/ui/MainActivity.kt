@@ -1,6 +1,7 @@
 package com.ghostlock.app.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -8,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
+import android.provider.Settings
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.Toast
@@ -47,18 +49,27 @@ class MainActivity : ComponentActivity() {
         if (uri != null && request != null) viewModel.onDocumentResult(request, uri.toString())
     }
 
-    /* The run log leaves the device as a zip the user names and places. */
-    private val runLogDocumentCreator =
-        registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri: Uri? ->
-            viewModel.onExportRunLogDocumentPicked(uri?.toString())
-        }
-
     private val profileDocumentCreator =
         /* octet-stream, not text/plain: SAF appends ".txt" to a text/plain
          * document whose name is not a recognised text extension, which turned
          * "…conf" into "…conf.txt". */
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
             viewModel.onExportProfileDocumentPicked(uri?.toString())
+        }
+
+    /* The whole report: every run plus the crash-evidence captures. */
+    private val reportBundleDocumentCreator =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri: Uri? ->
+            viewModel.onExportReportBundleDocumentPicked(uri?.toString())
+        }
+
+    /* A user-supplied bugreport. The picker is opened at the system's "Bug
+     * reports" root when it exists; the importer validates the zip. */
+    private val bugreportPicker =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                viewModel.onBugreportPicked(result.data?.data?.toString())
+            }
         }
 
     /* The run-status notification is the run's visible proof and the reason the
@@ -72,6 +83,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewModel.initialize()
+        handleSendIntent(intent)
         /* Debug-only test hook: `am start --ez second_way true` turns the second
          * way on and persists it, so a harness restart keeps the setting. */
         if (BuildConfig.DEBUG && intent?.hasExtra("second_way") == true) {
@@ -105,6 +117,27 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccessStatus()
+        /* Returning from About phone is how the Developer-options gate ends;
+         * the report screen advances to the generation instructions. */
+        viewModel.onReportResumed()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSendIntent(intent)
+    }
+
+    /** "Share" from the system bugreport notification lands here. */
+    private fun handleSendIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+        if (uri != null) viewModel.onBugreportPicked(uri.toString())
     }
 
     private fun handleEffect(effect: GhostlockEffect) {
@@ -116,8 +149,21 @@ class MainActivity : ComponentActivity() {
                 documentPicker.launch(arrayOf("*/*"))
             }
 
-            is GhostlockEffect.CreateRunLogDocument ->
-                runLogDocumentCreator.launch(effect.suggestedName)
+            is GhostlockEffect.CreateReportBundleDocument ->
+                reportBundleDocumentCreator.launch(effect.suggestedName)
+
+            GhostlockEffect.PickBugreport -> launchBugreportPicker()
+
+            GhostlockEffect.OpenDeveloperOptions ->
+                startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+
+            GhostlockEffect.OpenAboutPhone ->
+                startActivity(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
+
+            is GhostlockEffect.ShareFile -> shareFile(effect.uri.toUri())
+
+            is GhostlockEffect.ToastText ->
+                Toast.makeText(this, effect.text, Toast.LENGTH_LONG).show()
 
             is GhostlockEffect.CreateProfileDocument ->
                 profileDocumentCreator.launch(effect.suggestedName)
@@ -156,6 +202,54 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Opens the system picker at the shell app's "Bug reports" root. The
+     * provider is protected by MANAGE_DOCUMENTS — which the app cannot hold —
+     * but the system picker has it, and the returned document comes with a
+     * read grant the importer can use. On a ROM without the provider the
+     * initial URI is ignored and the normal picker location is shown.
+     *
+     * The root URI is the working form; the document URI is not accepted, and
+     * an already-running picker instance may ignore a new initial URI.
+     */
+    private fun launchBugreportPicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            /* The report is the full bugreport zip; the sibling dumpstate log
+             * and stats files are text and are not the report. The extras
+             * enable the zip while dimming those text siblings. */
+            type = "*/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf(
+                    "application/zip",
+                    "application/x-zip-compressed",
+                    "application/octet-stream",
+                ),
+            )
+            putExtra(
+                DocumentsContract.EXTRA_INITIAL_URI,
+                DocumentsContract.buildRootUri(
+                    SHELL_BUGREPORT_AUTHORITY,
+                    SHELL_BUGREPORT_ROOT,
+                ),
+            )
+        }
+        bugreportPicker.launch(intent)
+    }
+
+    /** Hands the finished bundle to the system share sheet. */
+    private fun shareFile(uri: Uri) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(
+            Intent.createChooser(intent, getString(R.string.report_share_chooser)),
+        )
+    }
+
     private fun shareOffsets(uri: Uri) {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
@@ -186,6 +280,11 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
+
+        /* The shell app's DocumentsProvider and the root it exposes for
+         * completed bugreports (AOSP's BugreportStorageProvider). */
+        const val SHELL_BUGREPORT_AUTHORITY = "com.android.shell.documents"
+        const val SHELL_BUGREPORT_ROOT = "bugreport"
     }
 }
 
@@ -254,9 +353,19 @@ private fun GhostlockRoute(
             override fun onStrideSkip() = viewModel.onStrideSkip()
             override fun onStridePickerDismiss() = viewModel.onStridePickerDismiss()
             override fun onExportRunLog() = viewModel.onExportRunLog()
-            override fun onRunLogSelected(stamp: String) = viewModel.onRunLogSelected(stamp)
             override fun onRunLogPickerDismiss() = viewModel.onRunLogPickerDismiss()
             override fun onClearRunLogs() = viewModel.onClearRunLogs()
+            override fun onExportReportBundle() = viewModel.onExportReportBundle()
+            override fun onAddBugreport() = viewModel.onAddBugreport()
+            override fun onOpenDeveloperOptions() = viewModel.onOpenDeveloperOptions()
+            override fun onOpenAboutPhone() = viewModel.onOpenAboutPhone()
+            override fun onReportNext() = viewModel.onReportNext()
+            override fun onReportBack() = viewModel.onReportBack()
+            override fun onReportGoToImport() = viewModel.onReportGoToImport()
+            override fun onReportAppend() = viewModel.onReportAppend()
+            override fun onReportExportOnly() = viewModel.onReportExportOnly()
+            override fun onReportRecheckDeveloper() = viewModel.onReportRecheckDeveloper()
+            override fun onReportShare() = viewModel.onReportShare()
             override fun onDebugKernelLogChanged(enabled: Boolean) =
                 viewModel.onDebugKernelLogChanged(enabled)
 

@@ -1,9 +1,11 @@
 package com.ghostlock.app.shizuku
 
 import android.content.Context
+import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.system.Os
 import androidx.annotation.Keep
+import com.ghostlock.app.data.CrashEvidenceStore
 import com.ghostlock.app.data.ManagerScanner
 import com.ghostlock.app.data.NativeProfileDocument
 import java.io.File
@@ -231,6 +233,45 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
                 }
             }
         }
+    }
+
+    /**
+     * The boot facts a report needs, read as shell: the app itself is denied
+     * every one of these properties and the pstore directory. The history
+     * value contains newlines by design; the caller stores it verbatim.
+     */
+    override fun readBootFacts(): Array<String> {
+        require(Process.myUid() == Process.SHELL_UID || Process.myUid() == 0) {
+            "crash evidence must be read as shell or root, uid=${Process.myUid()}"
+        }
+        fun prop(key: String): String = runCatching {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java)
+                .invoke(null, key) as? String ?: ""
+        }.getOrDefault("")
+        val facts = mutableListOf<String>()
+        facts += "capture_boot_id=" + runCatching {
+            File("/proc/sys/kernel/random/boot_id").readText().trim()
+        }.getOrDefault("")
+        facts += "uptime_s=" + runCatching {
+            File("/proc/uptime").readText().trim().substringBefore(' ')
+        }.getOrDefault("")
+        facts += "ro.boot.bootreason=" + prop("ro.boot.bootreason")
+        facts += "sys.boot.reason=" + prop("sys.boot.reason")
+        facts += "sys.boot.reason.last=" + prop("sys.boot.reason.last")
+        facts += "history=" + prop("persist.sys.boot.reason.history")
+        return facts.toTypedArray()
+    }
+
+    /** Opens one of the allowlisted pstore nodes for the app to stream. */
+    override fun openPstore(name: String): ParcelFileDescriptor? {
+        if (name !in CrashEvidenceStore.PstoreNames) return null
+        return runCatching {
+            ParcelFileDescriptor.open(
+                File("/sys/fs/pstore/$name"),
+                ParcelFileDescriptor.MODE_READ_ONLY,
+            )
+        }.getOrNull()
     }
 
     override fun destroy() {

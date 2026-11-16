@@ -1,8 +1,10 @@
 package com.ghostlock.app.domain.repository
 
 import com.ghostlock.app.domain.model.CpuPair
+import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.DebugSettings
 import com.ghostlock.app.domain.model.ExternalProfileInfo
+import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
 import com.ghostlock.app.domain.model.LegacyProfileState
 import com.ghostlock.app.domain.model.MeasuredKernelInfo
@@ -221,6 +223,39 @@ interface GhostlockRepository {
      * killed with the device. Returns how many. See `RunLogStore`.
      */
     suspend fun markInterruptedRunLogs(): Int
+
+    /**
+     * Best-effort last-crash evidence for the running boot: the shell-visible
+     * pstore and boot facts, stored under `last-crash/`. A device with no
+     * shell still gets a bare capture that says so. Null only when the store
+     * itself cannot be written.
+     */
+    suspend fun collectCrashEvidence(): CrashEvidenceInfo?
+
+    /** The newest automatic capture on disk, without touching the device. */
+    suspend fun latestCrashEvidence(): CrashEvidenceInfo?
+
+    /**
+     * Reduces a user-supplied bugreport zip in memory for the current export
+     * session. Nothing is written to app storage; the original zip stays in
+     * the system's bugreports folder.
+     */
+    suspend fun importBugreport(uri: String): ImportedEvidence?
+
+    /**
+     * Saves every retained run, every automatic crash capture, and the
+     * session's in-memory import (when present) as one bundle.
+     */
+    suspend fun exportReportBundle(
+        documentUri: String,
+        pendingImport: ImportedEvidence?,
+    ): Boolean
+
+    /** One-time migration: drop imports stored by earlier builds. */
+    suspend fun clearStoredImports()
+
+    /** Suggested file name for [exportReportBundle]. */
+    fun reportBundleName(): String
 
     suspend fun runExploit(pair: CpuPair, onLog: (String) -> Unit): Int
 
