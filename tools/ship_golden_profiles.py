@@ -572,7 +572,8 @@ def timer_block_mismatches(entry, asset_path):
 
 
 def sync_timer_block(entry, asset_path):
-    """Insert the timer block into an existing asset; never overwrite values."""
+    """Insert the timer block into an existing asset, or the block's missing
+    keys; never overwrite a value."""
     block = timer_block(entry["options"])
     if block is None:
         return [], []
@@ -580,11 +581,45 @@ def sync_timer_block(entry, asset_path):
     if not mismatched:
         return [], []
     text = open(asset_path, encoding="utf-8").read()
-    if re.search(rf"(?m)^\s*{re.escape(TIMER_BLOCK)}\s*\{{", text):
+    start = re.search(rf"(?m)^\s*{re.escape(TIMER_BLOCK)}\s*\{{", text)
+    if not start:
+        text = text.rstrip("\n") + "\n\n" + TIMER_COMMENT + render_timer_block(block) + "\n"
+        open(asset_path, "w", encoding="utf-8").write(text)
+        return [f"added {TIMER_BLOCK} block"], []
+    # The block exists: add its missing keys in the canonical order, keep every
+    # existing line, and report value differences as manual.
+    lines = text.splitlines(keepends=True)
+    start_line = text[: start.start()].count("\n")
+    end_line = None
+    for index in range(start_line + 1, len(lines)):
+        if lines[index].strip() == "}":
+            end_line = index
+            break
+    if end_line is None:
         return [], mismatched
-    text = text.rstrip("\n") + "\n\n" + TIMER_COMMENT + render_timer_block(block) + "\n"
-    open(asset_path, "w", encoding="utf-8").write(text)
-    return [f"added {TIMER_BLOCK} block"], []
+    present = {}
+    unknown = []
+    for index in range(start_line + 1, end_line):
+        match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", lines[index])
+        if match:
+            present[match.group(1)] = index
+        elif lines[index].strip():
+            unknown.append(lines[index])
+    added = []
+    body = []
+    for key in TIMER_TOP_KEYS:
+        if key in present:
+            body.append(lines[present[key]])
+        elif key in block:
+            body.append(f"  {key} = {_hocon_value(block[key])}\n")
+            added.append(key)
+    body.extend(unknown)
+    if not added:
+        return [], mismatched
+    new_lines = lines[: start_line + 1] + body + lines[end_line:]
+    open(asset_path, "w", encoding="utf-8").write("".join(new_lines))
+    manual = [item for item in mismatched if item[0].rsplit(".", 1)[-1] not in added]
+    return [f"completed {TIMER_BLOCK}: added {len(added)} keys ({', '.join(added)})"], manual
 
 
 def _render_literal(value):
