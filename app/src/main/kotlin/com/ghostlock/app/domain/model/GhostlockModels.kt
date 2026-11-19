@@ -269,30 +269,22 @@ data class ProfileLayers(
     val build: String = "",
     /** Keys the resolved profile carries that no wire section declares. */
     val uncarriedKeys: List<String> = emptyList(),
-    /** External document selected for this release, when any. */
-    val external: String? = null,
+    /** The imported copy applied to this resolution. */
     val externalApplied: Boolean = false,
-    /** SAF URI of the selected document, for the run log's provenance line. */
-    val externalUri: String? = null,
-    val externalSha256: String? = null,
-    /** Lineage an app export recorded in its comment header. */
-    val externalParent: String? = null,
-    /** Why the selected external document could not be used. */
+    /** Why the imported copy could not be used. */
     val externalError: String? = null,
     /**
-     * The selected document could not be **read** at all (gone, revoked, or the
-     * provider stopped opening it — measured 2026-11-12, an `adb push` replaced
-     * the SAF inode). Distinct from [externalError] for a readable document that
-     * fails its content checks: only this case withdraws the selection's release
-     * from the supported set and asks the user to re-select the file.
+     * The imported copy could not be **read** (or parsed) at all. Distinct from
+     * [externalError] for a readable copy that fails its content checks: only
+     * this case withdraws the selection's release from the supported set and
+     * asks the user to re-import it.
      */
     val externalReadFailure: Boolean = false,
 ) {
     /** True when something present was deliberately not applied. */
     val hasInactiveLayer: Boolean
         get() = (imported != null && !importedApplied) ||
-            (overridesPresent && !overridesApplied) ||
-            externalError != null
+            (overridesPresent && !overridesApplied)
 
     /**
      * Whether this state owes the user the start-up notice, given the build
@@ -305,13 +297,12 @@ data class ProfileLayers(
 
     /** Human-readable layer state; one clause per layer. */
     fun describe(): String = buildList {
-        external?.let { name ->
+        if (externalApplied || externalError != null) {
             add(
                 if (externalApplied) {
-                    "external=$name applied (uri=${externalUri ?: "?"} " +
-                        "sha256=${externalSha256 ?: "unknown"})"
+                    "external=imported profile applied"
                 } else {
-                    "external=$name NOT APPLIED (${externalError ?: "unavailable"})"
+                    "external=imported profile NOT APPLIED (${externalError ?: "unavailable"})"
                 },
             )
         }
@@ -343,15 +334,6 @@ data class ProfileLayers(
         add("build=$build")
     }.joinToString("; ")
 }
-
-/** The external profile document the user selected for this release. */
-data class ExternalProfileInfo(
-    val name: String,
-    val release: String,
-    val sha256: String,
-    /** Parent label/hash an app export recorded, when the document carries one. */
-    val parent: String? = null,
-)
 
 /** One field where the current profile differs from the bundled document. */
 data class ProfileDiffRow(

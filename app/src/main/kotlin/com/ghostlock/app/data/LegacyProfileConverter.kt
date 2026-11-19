@@ -93,10 +93,10 @@ internal object LegacyProfileConverter {
 
     fun convertValue(entry: ValueMap?): ValueMap? {
         if (entry == null) return null
-        /* The bundled extractor still emits v1 reports, which carry no
-         * schema_version; every such document is normalised and seeded. A v2
-         * profile carries schema_version and is only normalised in place, so an
-         * author's own edit keeps showing its missing fields. */
+        /* The bundled extractor still emits unversioned reports (no
+         * schema_version); every such document is normalised and seeded. A
+         * versioned profile (schema_version 1 or 2) is only normalised in
+         * place, so an author's own edit keeps showing its missing fields. */
         val legacy = !entry.containsKey("schema_version")
         MetadataKeys.forEach(entry::remove)
         moveFlatNamespaces(entry)

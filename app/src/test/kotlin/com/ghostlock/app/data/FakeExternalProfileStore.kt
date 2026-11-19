@@ -1,11 +1,13 @@
 package com.ghostlock.app.data
 
 /**
- * In-memory SD-card documents for controller tests. The controller reads and
- * persists references only, so a map is enough to model a selected file.
+ * In-memory SD-card documents and the app-private copy for controller tests.
+ * [importedReadable] models an I/O failure with the file still present.
  */
 internal class FakeExternalProfileStore : ExternalProfileStore {
     val documents = linkedMapOf<String, String>()
+    var imported: String? = null
+    var importedReadable: Boolean = true
 
     fun add(uri: String, text: String): String {
         documents[uri] = text
@@ -14,7 +16,18 @@ internal class FakeExternalProfileStore : ExternalProfileStore {
 
     override fun read(uri: String): String? = documents[uri]
 
-    override fun persistReadPermission(uri: String): Boolean = true
+    override fun readImportedProfile(): String? = if (importedReadable) imported else null
 
-    override fun displayName(uri: String): String = uri.substringAfterLast('/')
+    override fun writeImportedProfile(text: String): Boolean {
+        imported = text
+        importedReadable = true
+        return true
+    }
+
+    override fun clearImportedProfile() {
+        imported = null
+        importedReadable = true
+    }
+
+    override fun importedProfileExists(): Boolean = imported != null
 }

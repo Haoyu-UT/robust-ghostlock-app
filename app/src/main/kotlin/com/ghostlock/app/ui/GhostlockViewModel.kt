@@ -22,7 +22,6 @@ import com.ghostlock.app.data.ScratchInAnchor
 import com.ghostlock.app.data.decision
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.customCpuPairHint
-import com.ghostlock.app.domain.model.ExternalProfileInfo
 import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
 import com.ghostlock.app.domain.model.LegacyProfileState
@@ -323,10 +322,7 @@ class GhostlockViewModel(
                 profileRoute = config.route,
                 profileFallback = config.fallbackTo,
                 activeBuiltinProfile = profileController.activeBuiltinRelease(),
-                externalProfile = profileController.activeExternalProfile(),
-                activeUserProfile = config.layers
-                    ?.takeIf { it.externalApplied }
-                    ?.external,
+                importedProfilePresent = profileController.importedProfileExists(),
                 profileLayers = config.layers,
                 customCpuPair = customCpuPairOf(config),
             )
@@ -1353,8 +1349,7 @@ class GhostlockViewModel(
                 profileRoute = config.route,
                 profileFallback = config.fallbackTo,
                 activeBuiltinProfile = profileController.activeBuiltinRelease(),
-                externalProfile = profileController.activeExternalProfile(),
-                activeUserProfile = config.layers?.takeIf { it.externalApplied }?.external,
+                importedProfilePresent = profileController.importedProfileExists(),
                 profileLayers = config.layers,
             )
         }
@@ -1484,7 +1479,10 @@ class GhostlockViewModel(
                 appendLog(
                     when {
                         snapshot.externalProfileUnreadable ->
-                            "result: the selected external profile cannot be read; re-select it"
+                            "result: the imported profile cannot be read; re-import it"
+
+                        state.value.importedProfilePresent ->
+                            "result: the imported profile does not apply to this kernel; re-import or clear it"
 
                         snapshot.devicePairMissing ->
                             "result: device physical layout missing; attach vendor_boot/dtbo (MediaTek) and re-parse"
@@ -2128,8 +2126,7 @@ class GhostlockViewModel(
                     ?: snapshot.externalProfileUnreadable,
                 executionHasProfile = loaded?.hasProfile ?: false,
                 profileLayers = loaded?.layers,
-                externalProfile = profileController.activeExternalProfile(),
-                activeUserProfile = loaded?.layers?.takeIf { it.externalApplied }?.external,
+                importedProfilePresent = profileController.importedProfileExists(),
                 customCpuPair = loaded?.let(::customCpuPairOf),
                 selectedManagerPackage = repository.selectedManagerPackage(),
             )

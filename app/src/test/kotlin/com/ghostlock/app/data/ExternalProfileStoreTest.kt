@@ -91,16 +91,71 @@ class ExternalProfileStoreTest {
     }
 
     @Test
-    fun `the lineage header round-trips`() {
-        val parent = ProfileLineage.Parent("external:my-profile.conf", "abc123def456")
-        val header = ProfileLineage.header(parent)
+    fun `an unversioned scalar copy gets schema 1`() {
+        val text = """
+            release = "$release"
+            kernel_major = 5
+            route { select_stack { waiter_shift = -2 } }
+        """.trimIndent()
 
-        assertEquals(parent, ProfileLineage.parse("$header\nrelease = \"x\"\n"))
-        assertNull(ProfileLineage.parse("release = \"x\"\n"))
-        assertEquals(
-            ProfileLineage.Parent("bundled:$release", null),
-            ProfileLineage.parse(ProfileLineage.header(ProfileLineage.Parent("bundled:$release", null))),
-        )
+        val upgraded = ImportedProfileSchema.ensureSchema(text)
+        val entry = checkNotNull(HoconSupport.parseValue(upgraded).asValueMap())
+
+        assertEquals(1L, (entry["schema_version"] as Number).toLong())
+    }
+
+    @Test
+    fun `an unversioned copy with phys maps gets schema 2`() {
+        val text = """
+            release = "$release"
+            kernel_phys_load = { diting = 1 }
+        """.trimIndent()
+
+        val upgraded = ImportedProfileSchema.ensureSchema(text)
+        val entry = checkNotNull(HoconSupport.parseValue(upgraded).asValueMap())
+
+        assertEquals(2L, (entry["schema_version"] as Number).toLong())
+    }
+
+    @Test
+    fun `a versioned copy is left unchanged`() {
+        val text = """
+            release = "$release"
+            schema_version = 2
+            kernel_phys_load = { diting = 1 }
+        """.trimIndent()
+
+        assertEquals(text, ImportedProfileSchema.ensureSchema(text))
+    }
+
+    @Test
+    fun `a multi-entry copy is versioned per entry`() {
+        val text = """
+            [
+              { release = "6.1.1-a" },
+              { release = "$release", schema_version = 2 }
+            ]
+        """.trimIndent()
+
+        val upgraded = ImportedProfileSchema.ensureSchema(text)
+        val entries = checkNotNull(HoconSupport.parseValue(upgraded).asValueList())
+            .mapNotNull { it.asValueMap() }
+
+        assertEquals(1L, (entries[0]["schema_version"] as Number).toLong())
+        assertEquals(2L, (entries[1]["schema_version"] as Number).toLong())
+    }
+
+    @Test
+    fun `the lineage header survives the schema rewrite`() {
+        val text = """
+            # ghostlock-profile parent=external:my-profile.conf parent_sha256=abc
+            release = "$release"
+        """.trimIndent()
+
+        val upgraded = ImportedProfileSchema.ensureSchema(text)
+
+        assertTrue(upgraded.startsWith("# ghostlock-profile parent=external:my-profile.conf"))
+        assertTrue(upgraded.contains("schema_version = 1"))
     }
 
     @Test

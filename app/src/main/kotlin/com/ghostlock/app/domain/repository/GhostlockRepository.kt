@@ -3,7 +3,6 @@ package com.ghostlock.app.domain.repository
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.DebugSettings
-import com.ghostlock.app.domain.model.ExternalProfileInfo
 import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
 import com.ghostlock.app.domain.model.LegacyProfileState
@@ -128,15 +127,15 @@ interface GhostlockRepository {
         keepAnchor: Boolean,
     ): String?
 
-    /* ---- profile sources (measured-db storage model) ---- */
+    /* ---- profile sources (import-copy storage model) ---- */
 
-    /** External document selected for the device release, or null. */
-    fun activeExternalProfile(): ExternalProfileInfo?
+    /** True when the app-private imported copy exists (the external selection). */
+    fun importedProfileExists(): Boolean
 
     /**
-     * Selects the SD-card document [uri] for the running kernel. Null when it
-     * cannot be read or carries no entry for this release; the previous
-     * selection is then untouched.
+     * Imports the SD-card document [uri] for the running kernel into the
+     * app-private copy. Null when it cannot be read or carries no entry for
+     * this release; the previous copy is then untouched.
      */
     suspend fun selectExternalProfile(uri: String): ProfileConfig?
 

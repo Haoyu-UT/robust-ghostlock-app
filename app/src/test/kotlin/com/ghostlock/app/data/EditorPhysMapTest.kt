@@ -79,8 +79,7 @@ class EditorPhysMapTest {
         val raw = HoconSupport.parseValue(asset).asValueMap() ?: error("no bundle")
         raw["kernel_phys_offset"] = null
         val externalText = HoconSupport.render(raw)
-        val uri = "content://test/diting-load-only"
-        val external = FakeExternalProfileStore().also { it.add(uri, externalText) }
+        val external = FakeExternalProfileStore().also { it.writeImportedProfile(externalText) }
         val controller = AndroidProfileConfigController(
             context = context,
             externalProfiles = external,
@@ -88,7 +87,7 @@ class EditorPhysMapTest {
                 .also { it.edit().clear().commit() },
             deviceCodename = "diting",
             overrideStore = MemoryOverrideStore(),
-            forcedSelection = ProfileSelection.External(uri, "load-only.conf", release, "sha"),
+            forcedSelection = ProfileSelection.External,
         )
 
         val document = entry(controller.renderResolved(release, CpuPair(4, 5)) ?: error("no render"))

@@ -19,7 +19,6 @@ import com.ghostlock.app.BuildInfo
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.DebugSettings
-import com.ghostlock.app.domain.model.ExternalProfileInfo
 import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
 import com.ghostlock.app.domain.model.LegacyProfileState
@@ -225,6 +224,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override suspend fun snapshot(): KernelSnapshot {
         val release = System.getProperty("os.version", "unknown").orEmpty()
+        /* One-time move of the pre-import-copy selection before the support
+         * decision reads the copy. */
+        profileController.migrateLegacyExternalSelection(release)
+        val importedPresent = profileController.importedProfileExists()
         /* PROFILE-SUGGEST-01: recommend_shizuku is a suggestion. It seeds the
          * toggle until the user makes an explicit choice, which then overrides
          * it in both directions. */
@@ -232,11 +235,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             importedOffsetsRecommendShizuku(release)
         val shizukuActive = if (shizukuPreferenceSet) shizukuEnabled else recommendShizuku
         val socName = resolveSocName()
-        /* Resolve before judging support: the stored external selection makes its
-         * release a candidate, but the selection only counts once the document
-         * can actually be read. An unreadable one must not keep the badge
-         * supported — the resolver refuses it (fail-closed) and the home says
-         * why (2026-11-12, G2: an inode swap made the SAF row unopenable). */
+        /* Resolve before judging support: the imported copy makes its own
+         * release a candidate, and the copy's presence is the user's statement.
+         * A copy that cannot be read must not keep the badge supported — the
+         * resolver refuses it (fail-closed) and the home says why. */
         val coveredByStoredSource = releaseCoveredByStoredSource()
         val profile = if (coveredByStoredSource) {
             runCatching { profileController.load(release, currentPairOrZero()) }.getOrNull()
@@ -244,6 +246,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             null
         }
         val externalReadFailure = profile?.layers?.externalReadFailure == true
+        /* A copy that exists but yielded no profile: the card reports the copy,
+         * not a kernel/pair fault. */
+        val copyBlocked = importedPresent && profile?.layers?.externalError != null
         val kernelKnown = coveredByStoredSource && !externalReadFailure
         val pairKnown = profile?.physLoad != null && profile.physOffset != null
         /* A known kernel is not enough on MediaTek: the compiled pair there is
@@ -255,7 +260,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             kernelRelease = release,
             socName = socName,
             kernelSupported = usable,
-            devicePairMissing = kernelKnown && !usable,
+            devicePairMissing = kernelKnown && !usable && !copyBlocked,
             externalProfileUnreadable = externalReadFailure,
             cpuPairs = cpuPairs.toList(),
             cpuPairLabels = cpuPairLabels.toList(),
@@ -1625,10 +1630,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             }
         }
 
-    /* ---- profile sources (measured-db storage model) ---- */
+    /* ---- profile sources (import-copy storage model) ---- */
 
-    override fun activeExternalProfile(): ExternalProfileInfo? =
-        profileController.activeExternalProfile()
+    override fun importedProfileExists(): Boolean = profileController.importedProfileExists()
 
     override suspend fun selectExternalProfile(uri: String): ProfileConfig? =
         withContext(Dispatchers.IO) {
@@ -1646,12 +1650,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     override fun liveProfileDocument(): String? {
         val release = deviceRelease()
         val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return null
-        val text = profileController.renderResolved(release, pair) ?: return null
-        return withLineage(
-            text,
-            profileController.currentSelectionLabel(release),
-            profileController.activeExternalProfile()?.sha256,
-        )
+        return profileController.renderResolved(release, pair)
     }
 
     override suspend fun writeProfileDocument(uri: String, text: String): Boolean =
@@ -1705,8 +1704,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         val session = editSession ?: return null
         val release = editSessionTargetRelease ?: return null
         val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return null
-        val text = session.renderResolved(release, pair) ?: return null
-        return withLineage(text, editSessionTargetName, session.activeExternalProfile()?.sha256)
+        return session.renderResolved(release, pair)
     }
 
     override fun editSessionDiff(): List<ProfileDiffRow> {
@@ -1758,15 +1756,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return null
         val facts = measuredProfiles.kernel(release)?.profileFacts().orEmpty()
         if (facts.isEmpty()) return null
-        val text = profileController.renderMerged(
+        return profileController.renderMerged(
             release,
             pair,
             facts.associate { it.key to it.value },
-        ) ?: return null
-        return withLineage(
-            text,
-            profileController.currentSelectionLabel(release),
-            profileController.activeExternalProfile()?.sha256,
         )
     }
 
@@ -1833,11 +1826,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private fun deviceRelease(): String = System.getProperty("os.version", "").orEmpty()
 
     private fun currentPairOrZero(): CpuPair = cpuPairs.getOrNull(selectedCpuPair) ?: CpuPair(0, 0)
-
-    private fun withLineage(text: String, parentLabel: String?, parentSha256: String?): String {
-        val parent = parentLabel?.let { ProfileLineage.Parent(it, parentSha256) }
-        return ProfileLineage.header(parent) + "\n" + text
-    }
 
     private fun legacyOverridePresent(): Boolean {
         val raw = preferences.getString(
@@ -1918,18 +1906,17 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         entries.mapNotNull { (it.asValueMap()?.get("release") as? String) }.distinct()
 
     /**
-     * Whether a stored source names this release: a bundled asset, the stored
-     * external selection's recorded release, or a legacy import. The external
-     * term is only a **candidate** — [snapshot] discounts it when the document
-     * cannot be read, because the resolver then refuses the release rather
-     * than falling back to the bundle.
+     * Whether a stored source names this release: a bundled asset, the imported
+     * copy, or a legacy import. The copy is a **candidate** — [snapshot]
+     * discounts it when it cannot be read, because the resolver then refuses
+     * the release rather than falling back to the bundle.
      */
     private fun releaseCoveredByStoredSource(): Boolean {
         val version = System.getProperty("os.version", "").orEmpty()
         return releaseSupportedByProfileSources(
             version,
             builtinProfiles.unames,
-            profileController.activeExternalProfile()?.release,
+            profileController.importedProfileExists(),
         ) || importedOffsetsMatch(version)
     }
 
@@ -2244,13 +2231,12 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
 /**
  * Whether the release is covered by a profile source the app can trust: a
- * bundled asset naming it, or an SD-card document the user selected for it.
- * The measured-db model keeps no copy in app data, so the selection reference
- * is the only place to ask; an unreadable file surfaces in the resolution as
- * an error, never a silent fallback.
+ * bundled asset naming it, or an imported copy the user selected. The copy's
+ * presence is the selection; its own release decides applicability downstream,
+ * and an unreadable copy surfaces as an error, never a silent fallback.
  */
 internal fun releaseSupportedByProfileSources(
     release: String,
     bundledReleases: Set<String>,
-    externalSelectionRelease: String?,
-): Boolean = release in bundledReleases || externalSelectionRelease == release
+    importedSelected: Boolean,
+): Boolean = release in bundledReleases || importedSelected

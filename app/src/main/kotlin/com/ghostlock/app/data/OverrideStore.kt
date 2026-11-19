@@ -41,12 +41,6 @@ internal class MemoryOverrideStore : OverrideStore {
 internal sealed interface ProfileSelection {
     data class Bundled(val release: String) : ProfileSelection
     data class Builtin(val release: String) : ProfileSelection
-    data class External(
-        val uri: String,
-        val name: String,
-        val release: String,
-        val sha256: String,
-        val parent: String? = null,
-        val parentSha256: String? = null,
-    ) : ProfileSelection
+    /** The app-private imported copy; its presence is the whole selection. */
+    object External : ProfileSelection
 }

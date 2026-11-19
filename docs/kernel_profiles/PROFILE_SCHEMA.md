@@ -12,7 +12,8 @@ native.
 
 > **Two version names** (do not conflate them):
 > - **Profile schema version**: the HOCON profile generation, carried by the
->   `schema_version` field inside each profile (see section 2).
+>   `schema_version` field inside each profile (see section 2). `1` means the phys fields are
+>   scalars or absent; `2` means they are per-device maps.
 > - **Binary wire version**: the GLK1 transport version after magic
 >   `0x0D000721`. The current writer emits wire version `2` (object sections,
 >   see section 9); it is the only version, and Kotlin/native are version-bound.
@@ -93,7 +94,7 @@ offset { init_task = 34464384, init_cred = 34538824 }
 | Field | Type | Meaning |
 |---|---|---|
 | `release` | string | Must match the device's `uname -r` exactly (case and suffix); template files never participate in matching |
-| `schema_version` | int | Always `1` |
+| `schema_version` | int | `1` or `2`: `1` when the phys fields are scalars or absent; `2` when they are per-device maps (required for maps) |
 | `kernel_major` | int | `5` or `6`; used for address resolution and sanity checks, no longer selects the route |
 | `route` | object | Explicit route parent with exactly one branch; see section 3 |
 | `fallback` | object | Fallback declaration (`to` plus an optional `route` branch); see section 3 |
@@ -291,8 +292,8 @@ On the page-free path the native skips `prepare_good_kernel_page()`: no spray, n
 leak, no reclaim sockets, no page-acceptance gate, no `[spray]` lines, `base=0`. Each write
 states its value source (`w1_value_source=scratch` for W1/W1p, `init_cred` for W2, `target-8` for
 leaf writes). The page-based credential copy/fill and the fops sentinel remain on the page path; a
-profile without either anchor behaves exactly as before. Both keys are optional and
-`schema_version` stays 1; a missing key means the page path.
+profile without either anchor behaves exactly as before. Both keys are optional and do not change
+`schema_version` (`1`, or `2` for a per-device-maps profile); a missing key means the page path.
 
 ## 5. execution tuning (advisory)
 

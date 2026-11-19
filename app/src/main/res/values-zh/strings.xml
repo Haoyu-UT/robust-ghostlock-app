@@ -109,7 +109,7 @@
     <string name="cancel">取消</string>
     <string name="profile_invalid">配置参数不合法，请先修正红色标记的项</string>
     <string name="run_blocked_no_profile">未找到匹配本机内核的配置，请前往配置参数导入或调整</string>
-    <string name="run_blocked_external_unreadable">所选外部配置无法读取，请前往配置参数重新选择</string>
+    <string name="run_blocked_external_unreadable">导入的配置无法读取，请前往配置参数重新导入</string>
     <string name="run_blocked_shizuku">Shizuku 未就绪，请点击状态卡启动或授权</string>
     <string name="export_share">分享偏移</string>
     <string name="export_failed">导出失败</string>
@@ -187,7 +187,8 @@
     <string name="kernel_unsupported_summary">未找到匹配的内核配置</string>
     <string name="kernel_profile_required_summary">加载配置后可继续</string>
     <string name="kernel_profile_invalid_summary">请修正标记的配置项</string>
-    <string name="kernel_external_unreadable_summary">请在配置参数中重新选择外部配置文件</string>
+    <string name="kernel_external_unreadable_summary">请在配置参数中重新导入配置</string>
+    <string name="imported_profile_not_applicable_summary">导入的配置不适用于当前内核，请在配置参数中重新选择或取消</string>
     <string name="cpu_pair_custom">自定义（%1$s）</string>
     <string name="cpu_pair_label">CPU 核心组</string>
     <string name="safe_mode_label">安全模式</string>
@@ -246,14 +247,11 @@
     <string name="measurement_time">测量于：%1$s</string>
     <string name="measurement_evidence">证据：%1$s</string>
     <string name="select_profile_file">选择配置文件…</string>
-    <string name="select_profile_summary">SD 卡上的配置文件；对本内核优先于内置配置</string>
+    <string name="select_profile_summary">SD 卡上的配置文件；导入后用于当前内核</string>
     <string name="profile_source_title">配置来源</string>
-    <string name="external_profile_label">外部配置：%1$s</string>
-    <string name="external_profile_other_release">已为 %1$s 选择（不适用于当前内核）</string>
-    <string name="external_profile_sha">SHA-256：%1$s</string>
-    <string name="external_profile_parent">来源：%1$s</string>
+    <string name="profile_kind_external">外部配置</string>
+    <string name="profile_kind_builtin">内置配置</string>
     <string name="clear_external_profile">取消外部配置</string>
-    <string name="external_profile_missing">无法读取所选文档，请重新选择或取消选择。</string>
     <string name="export_cancelled">已取消导出，未写入文件</string>
     <string name="profile_exported_title">配置已导出</string>
     <string name="profile_use_question">下一次运行使用该配置？</string>
@@ -289,7 +287,6 @@
     <string name="legacy_cleanup_done">旧版数据已删除</string>
     <string name="legacy_cleanup_failed">删除旧版数据失败</string>
     <string name="legacy_empty">没有旧版文档，仅剩保存的覆盖。</string>
-    <string name="layer_external_not_applied">无法读取所选配置 %1$s；在重新选择或清除前，运行将没有配置。</string>
     <string name="override_summary">编辑已加载配置的参数</string>
     <string name="profile_docs">配置文档</string>
     <string name="profile_docs_summary">在 GitHub 上查看字段含义与校验规则</string>

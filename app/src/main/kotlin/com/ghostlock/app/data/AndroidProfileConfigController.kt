@@ -13,7 +13,6 @@ import com.ghostlock.app.data.route.RouteKind
 import com.ghostlock.app.domain.model.AnchorGeometry
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.ExecutionFieldValue
-import com.ghostlock.app.domain.model.ExternalProfileInfo
 import com.ghostlock.app.domain.model.ProfileConfig
 import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.ProfileFieldNode
@@ -21,12 +20,14 @@ import com.ghostlock.app.domain.model.ProfileLayers
 import com.ghostlock.app.domain.repository.ProfileConfigController
 
 /**
- * Controller-centered profile architecture, measured-db model (2026-10-25).
+ * Controller-centered profile architecture, measured-db model (2026-10-25),
+ * amended by the import-copy model (2026-11-19).
  *
  * A profile is a **document**: a bundled asset, a hand-picked builtin asset, or
- * an external file the user selected through SAF. App data holds only the
- * reference to the external selection; there is no imported copy and no
- * persisted override layer. Resolution order is external > builtin > bundled.
+ * the app-private copy of the external file the user imported. The SD card is
+ * the user's document store; app data holds exactly one copy
+ * (`filesDir/profiles/imported_profile.conf`) and no persisted override layer.
+ * Resolution order is external > builtin > bundled.
  *
  * Live runs resolve the selection with no sparse edits. An editor session gets
  * a private [MemoryOverrideStore] and a pinned [ProfileSelection]; its edits
@@ -65,6 +66,7 @@ internal class AndroidProfileConfigController(
         DeviceIdentity.candidates(deviceCodename, deviceAliases)
 
     override suspend fun load(release: String, pair: CpuPair): ProfileConfig {
+        migrateLegacyExternalSelection(release)
         val overrides = activeOverrides(release)
         val resolution = resolve(release, pair, overrides)
         val full = resolution.profile
@@ -625,9 +627,9 @@ internal class AndroidProfileConfigController(
     /** Test seam: the session's in-memory edit map; never persisted. */
     internal fun overrideSnapshot(release: String): ValueMap = overrideStore.read(release)
 
-    /** Human label of the source, for the editor banner. */
+    /** Human label of the source, for the editor banner and export name. */
     fun currentSelectionLabel(release: String): String? = when (val source = currentSelection(release)) {
-        is ProfileSelection.External -> source.name
+        is ProfileSelection.External -> ImportedProfileCopy.Label
         is ProfileSelection.Builtin -> source.release
         is ProfileSelection.Bundled -> source.release
         null -> null
@@ -664,15 +666,35 @@ internal class AndroidProfileConfigController(
         return preferences.getString(PrefBuiltinRelease, null)?.takeIf { it.isNotEmpty() }
     }
 
-    override fun activeExternalProfile(): ExternalProfileInfo? {
-        val external = (forcedSelection ?: storedExternalSelection()) as? ProfileSelection.External
-            ?: return null
-        return ExternalProfileInfo(
-            name = external.name,
-            release = external.release,
-            sha256 = external.sha256,
-            parent = external.parent,
-        )
+    override fun importedProfileExists(): Boolean = externalProfiles.importedProfileExists()
+
+    /**
+     * Moves the pre-import-copy selection (`external_profile_*` preferences)
+     * into the app-private copy once. A readable URI for the running release
+     * is copied; the old keys are deleted either way. When a copy already
+     * exists it wins and the keys are deleted without a read (the crash window
+     * between the copy write and the key delete).
+     */
+    override fun migrateLegacyExternalSelection(deviceRelease: String) {
+        if (!LegacyExternalKeys.any(preferences::contains)) return
+        if (!externalProfiles.importedProfileExists()) {
+            val uri = preferences.getString(PrefExternalUri, null)?.takeIf { it.isNotEmpty() }
+            if (uri != null) {
+                val text = externalProfiles.read(uri)
+                if (text != null &&
+                    ProfileDocumentParser.entryForRelease(
+                        text, deviceRelease, ::loadBundledInclude,
+                    ) != null
+                ) {
+                    externalProfiles.writeImportedProfile(text)
+                }
+            }
+        }
+        clearLegacyExternalPreferences()
+    }
+
+    private fun clearLegacyExternalPreferences() {
+        preferences.edit { LegacyExternalKeys.forEach { remove(it) } }
     }
 
     /**
@@ -688,36 +710,16 @@ internal class AndroidProfileConfigController(
     ): ProfileConfig? {
         val text = externalProfiles.read(uri) ?: return null
         ProfileDocumentParser.entryForRelease(text, deviceRelease, ::loadBundledInclude) ?: return null
-        externalProfiles.persistReadPermission(uri)
-        val parent = ProfileLineage.parse(text)
-        preferences.edit {
-            putString(PrefExternalUri, uri)
-            putString(PrefExternalName, externalProfiles.displayName(uri))
-            putString(PrefExternalRelease, deviceRelease)
-            putString(PrefExternalSha256, sha256Of(text))
-            if (parent == null) {
-                remove(PrefExternalParent)
-                remove(PrefExternalParentSha256)
-            } else {
-                putString(PrefExternalParent, parent.label)
-                if (parent.sha256 == null) remove(PrefExternalParentSha256)
-                else putString(PrefExternalParentSha256, parent.sha256)
-            }
-            remove(PrefBuiltinRelease)
-        }
+        if (!externalProfiles.writeImportedProfile(text)) return null
+        clearLegacyExternalPreferences()
+        preferences.edit { remove(PrefBuiltinRelease) }
         forcedSelection = null
         return load(deviceRelease, pair)
     }
 
     override suspend fun clearExternalProfile(deviceRelease: String, pair: CpuPair): ProfileConfig {
-        preferences.edit {
-            remove(PrefExternalUri)
-            remove(PrefExternalName)
-            remove(PrefExternalRelease)
-            remove(PrefExternalSha256)
-            remove(PrefExternalParent)
-            remove(PrefExternalParentSha256)
-        }
+        externalProfiles.clearImportedProfile()
+        clearLegacyExternalPreferences()
         forcedSelection = null
         return load(deviceRelease, pair)
     }
@@ -727,17 +729,11 @@ internal class AndroidProfileConfigController(
         deviceRelease: String,
         pair: CpuPair,
     ): ProfileConfig {
+        externalProfiles.clearImportedProfile()
+        clearLegacyExternalPreferences()
         preferences.edit {
             if (release.isNullOrBlank()) remove(PrefBuiltinRelease)
             else putString(PrefBuiltinRelease, release)
-            /* An explicit builtin choice is a choice; the stored external
-             * reference would otherwise silently outrank it. */
-            remove(PrefExternalUri)
-            remove(PrefExternalName)
-            remove(PrefExternalRelease)
-            remove(PrefExternalSha256)
-            remove(PrefExternalParent)
-            remove(PrefExternalParentSha256)
         }
         forcedSelection = null
         return load(deviceRelease, pair)
@@ -799,25 +795,8 @@ internal class AndroidProfileConfigController(
         return if (bundledDocument(release) != null) ProfileSelection.Bundled(release) else null
     }
 
-    private fun storedExternalSelection(): ProfileSelection.External? {
-        val uri = preferences.getString(PrefExternalUri, null)?.takeIf { it.isNotEmpty() }
-            ?: return null
-        val name = preferences.getString(PrefExternalName, null)?.takeIf { it.isNotEmpty() }
-            ?: return null
-        val release = preferences.getString(PrefExternalRelease, null)?.takeIf { it.isNotEmpty() }
-            ?: return null
-        val sha = preferences.getString(PrefExternalSha256, null)?.takeIf { it.isNotEmpty() }
-            ?: return null
-        return ProfileSelection.External(
-            uri = uri,
-            name = name,
-            release = release,
-            sha256 = sha,
-            parent = preferences.getString(PrefExternalParent, null)?.takeIf { it.isNotEmpty() },
-            parentSha256 = preferences.getString(PrefExternalParentSha256, null)
-                ?.takeIf { it.isNotEmpty() },
-        )
-    }
+    private fun storedExternalSelection(): ProfileSelection.External? =
+        if (externalProfiles.importedProfileExists()) ProfileSelection.External else null
 
     private fun resolve(release: String, pair: CpuPair, overrides: ValueMap?): Resolution =
         resolveFor(release, pair, overrides, forcedSelection ?: liveSelection(release))
@@ -888,14 +867,16 @@ internal class AndroidProfileConfigController(
             }
 
             is ProfileSelection.External -> {
-                val text = externalProfiles.read(selection.uri)
-                    ?: return Source(null, "cannot read ${selection.name}", readFailure = true)
-                val document = ProfileDocumentParser.entryForRelease(
-                    text, release, ::loadBundledInclude,
-                )
+                val raw = externalProfiles.readImportedProfile()
+                    ?: return Source(null, "cannot read the imported profile", readFailure = true)
+                val text = ImportedProfileSchema.ensureSchema(raw, ::loadBundledInclude)
+                if (text != raw) externalProfiles.writeImportedProfile(text)
+                val entries = ProfileDocumentParser.entries(text, ::loadBundledInclude)
+                    ?: return Source(null, "cannot parse the imported profile", readFailure = true)
+                val document = entries.firstOrNull { it["release"] == release }
                 Source(
                     document,
-                    if (document == null) "${selection.name} has no entry for $release" else null,
+                    if (document == null) "the imported profile has no entry for $release" else null,
                 )
             }
         }
@@ -928,7 +909,7 @@ internal class AndroidProfileConfigController(
         error: String?,
         readFailure: Boolean = false,
     ): ProfileLayers {
-        val external = selection as? ProfileSelection.External
+        val external = selection is ProfileSelection.External
         val builtinRelease = when (selection) {
             is ProfileSelection.Bundled -> selection.release
             is ProfileSelection.Builtin -> selection.release
@@ -939,11 +920,7 @@ internal class AndroidProfileConfigController(
             bundledAuthoritative = selection is ProfileSelection.Bundled,
             builtinSelected = selection is ProfileSelection.Builtin,
             build = buildIdentity,
-            external = external?.name,
-            externalApplied = external != null && error == null,
-            externalUri = external?.uri,
-            externalSha256 = external?.sha256,
-            externalParent = external?.parent,
+            externalApplied = external && error == null,
             externalError = error,
             externalReadFailure = readFailure,
         )
@@ -1307,6 +1284,12 @@ internal class AndroidProfileConfigController(
         const val PrefExternalSha256 = "external_profile_sha256"
         const val PrefExternalParent = "external_profile_parent"
         const val PrefExternalParentSha256 = "external_profile_parent_sha256"
+
+        /** Pre-import-copy selection keys; read only by the one-time migration. */
+        private val LegacyExternalKeys = listOf(
+            PrefExternalUri, PrefExternalName, PrefExternalRelease,
+            PrefExternalSha256, PrefExternalParent, PrefExternalParentSha256,
+        )
 
         /* Legacy storage keys, read only by the one-time cleanup flow. */
         const val PrefDebugProfileOverrides = "debug_profile_overrides"

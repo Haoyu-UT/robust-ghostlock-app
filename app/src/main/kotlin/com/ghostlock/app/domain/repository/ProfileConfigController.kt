@@ -1,7 +1,6 @@
 package com.ghostlock.app.domain.repository
 
 import com.ghostlock.app.domain.model.CpuPair
-import com.ghostlock.app.domain.model.ExternalProfileInfo
 import com.ghostlock.app.domain.model.ProfileConfig
 import com.ghostlock.app.domain.model.ProfileDiffRow
 
@@ -67,13 +66,20 @@ interface ProfileConfigController {
     /** Manually selected builtin source, or null for automatic matching. */
     fun activeBuiltinRelease(): String?
 
-    /** External document selected for the device release, or null. */
-    fun activeExternalProfile(): ExternalProfileInfo?
+    /** True when the app-private imported copy exists (the external selection). */
+    fun importedProfileExists(): Boolean
 
     /**
-     * Selects the SD-card document [uri] for [deviceRelease]. Returns null when
-     * it cannot be read or carries no entry for that release; the previous
-     * selection is then untouched.
+     * Moves the pre-import-copy `external_profile_*` preferences into the
+     * app-private copy once. Idempotent; called before the support decision and
+     * at every load.
+     */
+    fun migrateLegacyExternalSelection(deviceRelease: String)
+
+    /**
+     * Imports the SD-card document [uri] for [deviceRelease] into the
+     * app-private copy. Returns null when it cannot be read or carries no entry
+     * for that release; the previous copy is then untouched.
      */
     suspend fun selectExternalProfile(
         uri: String,

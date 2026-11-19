@@ -301,12 +301,12 @@ internal fun ParameterScreen(
         ) {
             item(key = "loaded") {
                 ProfileHintBanner(
-                    text = if (!state.executionHasProfile) {
+                    text = if (state.importedProfilePresent) {
+                        stringResource(R.string.profile_kind_external)
+                    } else if (!state.executionHasProfile) {
                         stringResource(R.string.profile_not_loaded)
                     } else {
-                        state.activeUserProfile?.let { profile ->
-                            stringResource(R.string.loaded_user_profile, profile)
-                        } ?: stringResource(
+                        stringResource(
                             R.string.builtin_profile_label,
                             state.activeBuiltinProfile ?: stringResource(R.string.load_builtin_auto),
                         )
@@ -394,53 +394,18 @@ internal fun LoadConfigScreen(
         ) {
             item(key = "top-space") { Spacer(Modifier.height(12.dp)) }
             item(key = "source") {
-                val external = state.externalProfile
-                val externalApplied = state.profileLayers?.external != null
-                val details = buildList {
-                    when {
-                        external != null && externalApplied -> {
-                            add(stringResource(R.string.external_profile_label, external.name))
-                            add(stringResource(R.string.external_profile_sha, external.sha256.take(16)))
-                            external.parent?.let { add(stringResource(R.string.external_profile_parent, it)) }
-                        }
+                val details = when {
+                    state.importedProfilePresent -> stringResource(R.string.profile_kind_external)
+                    state.activeBuiltinProfile != null || state.executionHasProfile ->
+                        stringResource(R.string.profile_kind_builtin)
 
-                        external != null -> {
-                            add(stringResource(R.string.external_profile_label, external.name))
-                            add(
-                                stringResource(
-                                    R.string.external_profile_other_release,
-                                    external.release,
-                                ),
-                            )
-                            external.parent?.let { add(stringResource(R.string.external_profile_parent, it)) }
-                        }
-
-                        state.activeBuiltinProfile != null -> add(
-                            stringResource(R.string.builtin_profile_label, state.activeBuiltinProfile),
-                        )
-
-                        state.executionHasProfile -> add(
-                            stringResource(R.string.builtin_profile_label, state.executionRelease),
-                        )
-
-                        else -> add(stringResource(R.string.profile_not_loaded))
-                    }
-                }.joinToString("\n")
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ProfileHintBanner(
-                        title = stringResource(R.string.profile_source_title),
-                        text = details,
-                        warning = state.profileLayers?.externalError != null,
-                        modifier = Modifier.preferencePageItem(),
-                    )
-                    if (state.profileLayers?.externalError != null) {
-                        ProfileHintBanner(
-                            text = stringResource(R.string.external_profile_missing),
-                            warning = true,
-                            modifier = Modifier.preferencePageItem(),
-                        )
-                    }
+                    else -> stringResource(R.string.profile_not_loaded)
                 }
+                ProfileHintBanner(
+                    title = stringResource(R.string.profile_source_title),
+                    text = details,
+                    modifier = Modifier.preferencePageItem(),
+                )
             }
             item(key = "select-profile") {
                 Card(modifier = Modifier.preferencePageItem()) {
@@ -451,7 +416,7 @@ internal fun LoadConfigScreen(
                     )
                 }
             }
-            if (state.externalProfile != null) {
+            if (state.importedProfilePresent) {
                 item(key = "clear-external") {
                     TextButton(
                         text = stringResource(R.string.clear_external_profile),
@@ -483,7 +448,7 @@ internal fun LoadConfigScreen(
                         summary = stringResource(R.string.load_builtin_summary),
                         onClick = actions::onOpenBuiltinProfiles,
                         endActions = {
-                            if (state.executionHasProfile && state.activeUserProfile == null &&
+                            if (state.executionHasProfile && !state.importedProfilePresent &&
                                 state.activeBuiltinProfile == null
                             ) {
                                 Text(
@@ -568,14 +533,17 @@ internal fun ProfileOverrideScreen(
             item(key = "top-space") { Spacer(Modifier.height(12.dp)) }
             item(key = "general-banner") {
                 val source = buildList {
-                    state.externalProfile?.let {
-                        add(stringResource(R.string.external_profile_label, it.name))
+                    /* The session's own base, not the live copy: a rebase to the
+                     * bundle changes this banner while the copy still exists. */
+                    val externalApplied = state.profileLayers?.externalApplied == true
+                    if (externalApplied) {
+                        add(stringResource(R.string.profile_kind_external))
                     }
                     state.activeBuiltinProfile?.let {
                         add(stringResource(R.string.builtin_profile_label, it))
                         add(stringResource(R.string.target_kernel, state.executionRelease))
                     }
-                    if (state.externalProfile == null && state.activeBuiltinProfile == null) {
+                    if (!externalApplied && state.activeBuiltinProfile == null) {
                         add(stringResource(R.string.builtin_profile_label, state.executionRelease))
                     }
                     state.editTargetName?.let {
@@ -584,7 +552,6 @@ internal fun ProfileOverrideScreen(
                 }.joinToString("\n")
                 ProfileHintBanner(
                     text = source,
-                    warning = state.profileLayers?.externalError != null,
                     modifier = Modifier.preferencePageItem(),
                 )
             }
@@ -703,7 +670,7 @@ internal fun BuiltinProfileScreen(
                     modifier = Modifier.preferencePageItem(),
                 )
             }
-            if (state.activeBuiltinProfile == null && state.activeUserProfile == null &&
+            if (state.activeBuiltinProfile == null && !state.importedProfilePresent &&
                 !state.executionHasProfile
             ) {
                 item(key = "auto-no-match") {
@@ -723,7 +690,7 @@ internal fun BuiltinProfileScreen(
             item(key = "auto") {
                 BuiltinProfileRow(
                     title = stringResource(R.string.load_builtin_auto),
-                    selected = state.activeUserProfile == null &&
+                    selected = !state.importedProfilePresent &&
                             state.activeBuiltinProfile == null,
                     onClick = { actions.onSelectBuiltinProfile(null) },
                     modifier = Modifier.preferencePageItem(),
@@ -736,7 +703,7 @@ internal fun BuiltinProfileScreen(
                 items(state.builtinTemplates, key = { "template:$it" }) { release ->
                     BuiltinProfileRow(
                         title = release,
-                        selected = state.activeUserProfile == null &&
+                        selected = !state.importedProfilePresent &&
                                 state.activeBuiltinProfile == release,
                         onClick = { actions.onSelectBuiltinProfile(release) },
                         modifier = Modifier.preferencePageItem(),
@@ -750,7 +717,7 @@ internal fun BuiltinProfileScreen(
                 items(state.builtinProfiles, key = { "kernel:$it" }) { release ->
                     BuiltinProfileRow(
                         title = release,
-                        selected = state.activeUserProfile == null &&
+                        selected = !state.importedProfilePresent &&
                                 state.activeBuiltinProfile == release,
                         onClick = { actions.onSelectBuiltinProfile(release) },
                         modifier = Modifier.preferencePageItem(),
@@ -857,8 +824,8 @@ internal fun AdvancedOverrideScreen(
                     if (state.activeBuiltinProfile != null) {
                         add(stringResource(R.string.target_kernel, state.profileOverrideRelease))
                     }
-                    state.activeUserProfile?.let {
-                        add(stringResource(R.string.loaded_user_profile, it))
+                    if (state.profileLayers?.externalApplied == true) {
+                        add(stringResource(R.string.profile_kind_external))
                     }
                 }.joinToString("\n")
                 ProfileHintBanner(

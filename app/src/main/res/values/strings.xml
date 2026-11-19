@@ -109,7 +109,7 @@
     <string name="cancel">Cancel</string>
     <string name="profile_invalid">Profile parameters are invalid; fix the red fields first</string>
     <string name="run_blocked_no_profile">No profile matches this kernel; import or adjust it in Parameters</string>
-    <string name="run_blocked_external_unreadable">The selected external profile cannot be read; re-select it in Parameters</string>
+    <string name="run_blocked_external_unreadable">The imported profile cannot be read; re-import it in Parameters</string>
     <string name="run_blocked_shizuku">Shizuku is not ready; tap the status card to start or authorize</string>
     <string name="export_share">Share offsets</string>
     <string name="export_failed">Export failed</string>
@@ -187,7 +187,8 @@
     <string name="kernel_unsupported_summary">No matching kernel profile</string>
     <string name="kernel_profile_required_summary">Load a profile to continue</string>
     <string name="kernel_profile_invalid_summary">Correct the marked fields</string>
-    <string name="kernel_external_unreadable_summary">Re-select the external profile file in Parameters</string>
+    <string name="kernel_external_unreadable_summary">Re-import the profile in Parameters</string>
+    <string name="imported_profile_not_applicable_summary">The imported profile does not apply to this kernel; re-import or clear it in Parameters</string>
     <string name="cpu_pair_custom">Custom (%1$s)</string>
     <string name="cpu_pair_label">CPU cores</string>
     <string name="safe_mode_label">Safe mode</string>
@@ -246,14 +247,11 @@
     <string name="measurement_time">Measured: %1$s</string>
     <string name="measurement_evidence">Evidence: %1$s</string>
     <string name="select_profile_file">Select profile file…</string>
-    <string name="select_profile_summary">An SD-card document; it wins over the built-in profile for this kernel</string>
+    <string name="select_profile_summary">An SD-card document; import it to use it for this kernel</string>
     <string name="profile_source_title">Profile source</string>
-    <string name="external_profile_label">External profile: %1$s</string>
-    <string name="external_profile_other_release">Selected for %1$s (not this kernel)</string>
-    <string name="external_profile_sha">SHA-256: %1$s</string>
-    <string name="external_profile_parent">Parent: %1$s</string>
+    <string name="profile_kind_external">External profile</string>
+    <string name="profile_kind_builtin">Built-in profile</string>
     <string name="clear_external_profile">Clear external profile</string>
-    <string name="external_profile_missing">The selected document cannot be read. Re-select it or clear the selection.</string>
     <string name="export_cancelled">Export cancelled; nothing was written</string>
     <string name="profile_exported_title">Profile exported</string>
     <string name="profile_use_question">Use this profile for the next run?</string>
@@ -289,7 +287,6 @@
     <string name="legacy_cleanup_done">Legacy data deleted</string>
     <string name="legacy_cleanup_failed">Could not delete legacy data</string>
     <string name="legacy_empty">No legacy documents; only the stored override remains.</string>
-    <string name="layer_external_not_applied">The selected profile %1$s could not be read; runs have no profile until you re-select or clear it.</string>
     <string name="override_summary">Edit the parameters of the loaded profile</string>
     <string name="profile_docs">Profile documentation</string>
     <string name="profile_docs_summary">Field reference and validation rules on GitHub</string>

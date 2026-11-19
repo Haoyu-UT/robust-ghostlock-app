@@ -68,7 +68,8 @@ class ProfileLayerPolicyTest {
         val layers = checkNotNull(config.layers)
         assertTrue(layers.bundledAuthoritative)
         assertFalse(layers.builtinSelected)
-        assertNull(layers.external)
+        assertFalse(layers.externalApplied)
+        assertNull(layers.externalError)
         assertFalse(layers.hasInactiveLayer)
     }
 
@@ -87,9 +88,102 @@ class ProfileLayerPolicyTest {
         val layers = checkNotNull(config.layers)
         assertFalse(layers.bundledAuthoritative)
         assertTrue(layers.externalApplied)
-        assertEquals("wins.conf", layers.external)
-        assertEquals("wins.conf", controller.activeExternalProfile()?.name)
+        assertTrue(controller.importedProfileExists())
         assertFalse(layers.hasInactiveLayer)
+    }
+
+    @Test
+    fun `the imported copy survives the source document disappearing`() = runBlocking {
+        val uri = external.add(
+            "content://profiles/wins.conf",
+            document(bundledRelease, routeWaitMs = 4242),
+        )
+        assertNotNull(controller.selectExternalProfile(uri, bundledRelease, pair))
+        /* The CN MIUI sequence: the provider stops opening the URI after the
+         * import. Every later resolution reads the copy. */
+        external.documents.clear()
+
+        val config = controller.load(bundledRelease, pair)
+
+        assertTrue(config.hasProfile)
+        assertEquals(4242L, generalValue(config, routeWaitPath))
+        assertTrue(config.layers!!.externalApplied)
+    }
+
+    @Test
+    fun `import stores only the copy, not the reference keys`() = runBlocking {
+        val uri = external.add(
+            "content://profiles/wins.conf",
+            document(bundledRelease, routeWaitMs = 4242),
+        )
+        assertNotNull(controller.selectExternalProfile(uri, bundledRelease, pair))
+
+        assertTrue(controller.importedProfileExists())
+        for (key in listOf(
+            AndroidProfileConfigController.PrefExternalUri,
+            AndroidProfileConfigController.PrefExternalName,
+            AndroidProfileConfigController.PrefExternalRelease,
+            AndroidProfileConfigController.PrefExternalSha256,
+            AndroidProfileConfigController.PrefExternalParent,
+            AndroidProfileConfigController.PrefExternalParentSha256,
+        )) {
+            assertFalse("$key must not be written by the import", preferences.contains(key))
+        }
+    }
+
+    @Test
+    fun `the old selection migrates into the copy once`() = runBlocking {
+        val uri = external.add(
+            "content://profiles/old.conf",
+            document(bundledRelease, routeWaitMs = 4242),
+        )
+        preferences.edit(commit = true) {
+            putString(AndroidProfileConfigController.PrefExternalUri, uri)
+            putString(AndroidProfileConfigController.PrefExternalName, "old.conf")
+            putString(AndroidProfileConfigController.PrefExternalRelease, bundledRelease)
+            putString(AndroidProfileConfigController.PrefExternalSha256, "sha")
+            putString(AndroidProfileConfigController.PrefExternalParent, "parent")
+            putString(AndroidProfileConfigController.PrefExternalParentSha256, "parent-sha")
+        }
+
+        val config = controller.load(bundledRelease, pair)
+
+        assertTrue(config.hasProfile)
+        assertEquals(4242L, generalValue(config, routeWaitPath))
+        assertTrue(controller.importedProfileExists())
+        assertFalse(preferences.contains(AndroidProfileConfigController.PrefExternalUri))
+        assertFalse(preferences.contains(AndroidProfileConfigController.PrefExternalParentSha256))
+    }
+
+    @Test
+    fun `an unreadable old selection is dropped, not guessed`() = runBlocking {
+        preferences.edit(commit = true) {
+            putString(AndroidProfileConfigController.PrefExternalUri, "content://missing/doc.conf")
+            putString(AndroidProfileConfigController.PrefExternalRelease, bundledRelease)
+        }
+
+        val config = controller.load(bundledRelease, pair)
+
+        assertFalse(controller.importedProfileExists())
+        assertFalse(preferences.contains(AndroidProfileConfigController.PrefExternalUri))
+        /* The bundled profile applies again: the old reference is gone. */
+        assertTrue(config.hasProfile)
+        assertFalse(config.layers!!.externalApplied)
+    }
+
+    @Test
+    fun `a copy plus stale old keys deletes the keys without a read`() = runBlocking {
+        external.writeImportedProfile(document(bundledRelease, routeWaitMs = 4242))
+        preferences.edit(commit = true) {
+            putString(AndroidProfileConfigController.PrefExternalUri, "content://whatever/doc.conf")
+        }
+        /* A read would fail; the copy must win and the stale key must go. */
+        external.documents.clear()
+
+        assertTrue(controller.load(bundledRelease, pair).hasProfile)
+
+        assertTrue(controller.importedProfileExists())
+        assertFalse(preferences.contains(AndroidProfileConfigController.PrefExternalUri))
     }
 
     @Test
@@ -110,23 +204,26 @@ class ProfileLayerPolicyTest {
     }
 
     @Test
-    fun `a selected external profile makes its own release supported`() = runBlocking {
+    fun `a selected copy makes the release a candidate`() = runBlocking {
         val uri = external.add(
             "content://profiles/foreign.conf",
             document(foreignRelease, routeWaitMs = 4242),
         )
         assertNotNull(controller.selectExternalProfile(uri, foreignRelease, pair))
 
-        val selected = controller.activeExternalProfile()?.release
-        assertTrue(releaseSupportedByProfileSources(foreignRelease, emptySet(), selected))
+        assertTrue(controller.importedProfileExists())
+        assertTrue(releaseSupportedByProfileSources(foreignRelease, emptySet(), true))
         assertTrue(
             releaseSupportedByProfileSources(
                 foreignRelease,
                 setOf(bundledRelease),
-                selected,
+                true,
             ),
         )
-        assertFalse(releaseSupportedByProfileSources(bundledRelease, emptySet(), selected))
+        /* The copy is the selection for every release; applicability is decided
+         * by the document's entries, not the support predicate. */
+        assertTrue(releaseSupportedByProfileSources(bundledRelease, emptySet(), true))
+        assertFalse(releaseSupportedByProfileSources(foreignRelease, emptySet(), false))
     }
 
     @Test
@@ -142,13 +239,11 @@ class ProfileLayerPolicyTest {
         assertFalse(config.hasProfile)
         val layers = checkNotNull(config.layers)
         assertFalse(layers.externalApplied)
-        assertNotNull(layers.external)
         assertNotNull(layers.externalError)
         assertTrue(layers.externalError!!.contains("no entry for $bundledRelease"))
         /* A readable document that misses this release is a content miss, not a
-         * read failure: it must not take the "re-select the file" path. */
+         * read failure: it must not take the "re-import" path. */
         assertFalse(layers.externalReadFailure)
-        assertTrue(layers.hasInactiveLayer)
     }
 
     @Test
@@ -158,7 +253,7 @@ class ProfileLayerPolicyTest {
             document(bundledRelease, routeWaitMs = 4242),
         )
         assertNotNull(controller.selectExternalProfile(uri, bundledRelease, pair))
-        external.documents.clear()
+        external.importedReadable = false
 
         val config = controller.load(bundledRelease, pair)
 
@@ -167,10 +262,9 @@ class ProfileLayerPolicyTest {
         assertFalse(layers.externalApplied)
         assertNotNull(layers.externalError)
         /* The typed read-failure fact: the repository withdraws the selection's
-         * release from the supported set on this, and the home offers re-selection
-         * (the inode-swap case, 2026-11-12 G2). */
+         * release from the supported set on this, and the home offers re-import
+         * (the copy read-failure case). */
         assertTrue(layers.externalReadFailure)
-        assertTrue(layers.hasInactiveLayer)
     }
 
     @Test
@@ -180,13 +274,12 @@ class ProfileLayerPolicyTest {
             document(bundledRelease, routeWaitMs = 4242),
         )
         assertNotNull(controller.selectExternalProfile(uri, bundledRelease, pair))
-        val text = external.documents.getValue(uri)
-        external.documents.clear()
+        external.importedReadable = false
         assertTrue(controller.load(bundledRelease, pair).layers!!.externalReadFailure)
 
-        /* Re-selecting the same file repairs the state without a restart: the
-         * reference already points at it, and the next resolution reads it. */
-        external.documents[uri] = text
+        /* Re-importing the same file repairs the state without a restart: the
+         * copy already exists, and the next resolution reads it. */
+        external.importedReadable = true
         val config = controller.load(bundledRelease, pair)
 
         assertTrue(config.hasProfile)
@@ -208,7 +301,7 @@ class ProfileLayerPolicyTest {
 
         controller.selectBuiltin(other, bundledRelease, pair)
 
-        assertNull(controller.activeExternalProfile())
+        assertFalse(controller.importedProfileExists())
         val layers = checkNotNull(controller.load(bundledRelease, pair).layers)
         assertTrue(layers.builtinSelected)
         assertEquals(other, layers.builtinRelease)
@@ -220,11 +313,55 @@ class ProfileLayerPolicyTest {
 
         assertFalse(config.hasProfile)
         assertNull(config.layers?.builtinRelease)
-        assertNull(config.layers?.external)
+        assertFalse(config.layers!!.externalApplied)
+    }
+
+    @Test
+    fun `a copy without the newly optional pipeline still loads`() = runBlocking {
+        val text = document(bundledRelease, routeWaitMs = 4242)
+            .replace(Regex("(?m)^pipeline\\s*=.*$"), "")
+        val uri = external.add("content://profiles/no-pipeline.conf", text)
+
+        assertNotNull(controller.selectExternalProfile(uri, bundledRelease, pair))
+        val config = controller.load(bundledRelease, pair)
+
+        assertTrue(config.hasProfile)
+        assertTrue(config.invalidPaths.isEmpty())
+        assertTrue(config.pipelineOrder.isEmpty())
+    }
+
+    @Test
+    fun `a copy without the required execution block gets the preset defaults`() = runBlocking {
+        val text = removeTopLevelBlock(document(bundledRelease, routeWaitMs = 4242), "execution")
+        val uri = external.add("content://profiles/no-execution.conf", text)
+
+        assertNotNull(controller.selectExternalProfile(uri, bundledRelease, pair))
+        val config = controller.load(bundledRelease, pair)
+
+        assertTrue(config.hasProfile)
+        assertTrue(config.invalidPaths.isEmpty())
+        assertEquals(bundledRouteWaitMs, generalValue(config, routeWaitPath))
+    }
+
+    @Test
+    fun `a copy missing a required offset is flagged, not defaulted`() = runBlocking {
+        val text = document(bundledRelease, routeWaitMs = 4242)
+            .replace(Regex("(?m)^\\s*init_task\\s*=.*$"), "")
+        val uri = external.add("content://profiles/no-init-task.conf", text)
+
+        assertNotNull(controller.selectExternalProfile(uri, bundledRelease, pair))
+        val config = controller.load(bundledRelease, pair)
+
+        assertTrue(config.hasProfile)
+        assertTrue("offset.init_task" in config.invalidPaths)
     }
 
     private fun generalValue(config: ProfileConfig, path: String): Long? =
         config.general.firstOrNull { it.path == path }?.value
+
+    /** Removes a top-level `name { ... }` block (its close is at column 0). */
+    private fun removeTopLevelBlock(text: String, name: String): String =
+        text.replace(Regex("(?ms)^$name \\{.*?^\\}\\s*$"), "")
 
     /** The bundled profile, re-labelled and edited, as an external file would be. */
     private fun document(release: String, routeWaitMs: Long): String {

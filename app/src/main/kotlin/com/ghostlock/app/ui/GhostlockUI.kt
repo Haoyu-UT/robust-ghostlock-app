@@ -58,7 +58,6 @@ import androidx.compose.ui.unit.sp
 import com.ghostlock.app.R
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.ExecutionFieldValue
-import com.ghostlock.app.domain.model.ExternalProfileInfo
 import com.ghostlock.app.domain.model.MeasuredKernelInfo
 import com.ghostlock.app.domain.model.MeasurementMergeRow
 import com.ghostlock.app.domain.model.ProfileDiffRow
@@ -114,9 +113,9 @@ data class GhostlockUiState(
     val socName: String = "",
     val kernelSupported: Boolean = false,
     /**
-     * The stored external selection cannot be read, so there is no profile and
-     * no run: the home names the real cause and sends the user to re-select it
-     * instead of claiming the kernel is unsupported.
+     * The imported copy cannot be read, so there is no profile and no run: the
+     * home names the real cause and sends the user to re-import instead of
+     * claiming the kernel is unsupported.
      */
     val externalProfileUnreadable: Boolean = false,
     val shizukuEnabled: Boolean = false,
@@ -220,10 +219,8 @@ data class GhostlockUiState(
     /** Builtin releases sorted by similarity to the device kernel. */
     val builtinProfiles: List<String> = emptyList(),
     val loadConfigVisible: Boolean = false,
-    /** External document selected for this kernel (applied or not). */
-    val externalProfile: ExternalProfileInfo? = null,
-    /** External document actually applied to the last resolution. */
-    val activeUserProfile: String? = null,
+    /** The app-private imported copy exists (the external selection). */
+    val importedProfilePresent: Boolean = false,
     /** Which layers the last resolution applied, and which it deliberately did not. */
     val profileLayers: ProfileLayers? = null,
     /** The slab-stride choice sheet; non-null while a probe result awaits. */
@@ -263,9 +260,6 @@ internal fun layerNoticeBody(layers: ProfileLayers): String = buildList {
     val imported = layers.imported
     if (imported != null && !layers.importedApplied) {
         add(stringResource(R.string.layer_import_not_applied, imported))
-    }
-    layers.external?.takeIf { !layers.externalApplied }?.let { name ->
-        add(stringResource(R.string.layer_external_not_applied, name))
     }
     if (layers.overridesPresent && !layers.overridesApplied) {
         add(stringResource(R.string.layer_overrides_not_applied))
@@ -1533,6 +1527,8 @@ private fun ControlPanel(
         ActivationStatusCard(
             supported = state.kernelSupported,
             externalUnreadable = state.externalProfileUnreadable,
+            externalBlocked = state.importedProfilePresent &&
+                state.profileLayers?.externalError != null,
             profileAvailable = state.executionHasProfile,
             profileValid = state.profileInvalidPaths.isEmpty(),
             shizukuEnabled = state.shizukuEnabled,
@@ -1624,6 +1620,7 @@ private fun ControlPanel(
 private fun ActivationStatusCard(
     supported: Boolean,
     externalUnreadable: Boolean,
+    externalBlocked: Boolean,
     profileAvailable: Boolean,
     profileValid: Boolean,
     shizukuEnabled: Boolean,
@@ -1655,6 +1652,16 @@ private fun ActivationStatusCard(
             Icons.Rounded.ErrorOutline,
         )
 
+        /* A readable copy that produced no profile for this kernel (no entry
+         * for the release, schema too new, a merge refusal): the fault is the
+         * copy, not the kernel match. Invalid fields resolve a profile and go
+         * to the `else` branch with their red fields. */
+        externalBlocked -> Triple(
+            MiuixTheme.colorScheme.errorContainer,
+            R.string.kernel_profile_invalid,
+            Icons.Rounded.ErrorOutline,
+        )
+
         missing -> Triple(
             MiuixTheme.colorScheme.errorContainer,
             if (!supported) R.string.kernel_unsupported else R.string.kernel_profile_required,
@@ -1675,6 +1682,7 @@ private fun ActivationStatusCard(
         ready && shizukuEnabled -> R.string.kernel_profile_ready_shizuku
         ready -> R.string.kernel_profile_ready
         externalUnreadable -> R.string.kernel_external_unreadable_summary
+        externalBlocked -> R.string.imported_profile_not_applicable_summary
         !supported -> R.string.kernel_unsupported_summary
         !profileAvailable -> R.string.kernel_profile_required_summary
         !profileValid -> R.string.kernel_profile_invalid_summary
@@ -1683,7 +1691,9 @@ private fun ActivationStatusCard(
 
         else -> R.string.shizuku_status_not_running
     }
-    val action = if (!externalUnreadable && supported && profileAvailable && profileValid && !accessReady) {
+    val action = if (!externalUnreadable && !externalBlocked && supported &&
+        profileAvailable && profileValid && !accessReady
+    ) {
         onShizukuClick
     } else {
         onParametersClick
