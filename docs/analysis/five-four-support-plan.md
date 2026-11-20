@@ -28,9 +28,13 @@ pre-device gate is QEMU and the real gate is that report's next run.
    no `w1_scratch`; the venus falls back to the page path and dies in KernelSnitch. Fix: a
    measured 5.4 template and the picker's value-relative semantics. The venus then becomes
    page-free with `w1_scratch = anchor + 0xF8` (`0x32F7200`), and never runs KernelSnitch.
-3. **The star cannot place a scratch inside its anchor** (its base's value byte 2 is even
-   for every admissible offset in the 4 KiB region). It stays page-based; its page path
-   needs the KernelSnitch items in §2.6, not a forced scratch.
+3. **The star's in-anchor scratch refuses, but the second-region lane works.** Its
+   `dump_skip.zeroes` base gives an even value byte 2 for every admissible offset in the
+   4 KiB region; the lane the 6.1.138 POCO precedent built (`options.rs`'s auto chain,
+   `--w1-scratch-symbol`) finds `serial8250_ports.llvm.* + 0x50` (image `0x335A000`) and
+   the conditioned `s3c24xx_serial_ports + 0xA0` (image `0x2ED1700`). The extractor must
+   resolve the LTO clone name (S1), and the 8250 premise stays a device fact with its
+   kprobe gate.
 4. **KernelSnitch.** The venus page-free route removes the leak from that device's path.
    For the page path this plan carries (a) a conditioned second scan phase over
    `[48 GiB, the model end)`, including the cached-bank tail, and (b) the 5.4 slab-order
@@ -166,18 +170,25 @@ the whole bundle) and for every profile without the block on a measured family.
      not used as a 5.4-only gate. A release not in the table stays `None` (fail closed, as
      today).
    - The two-image evidence (venus/star, §1.1) is the template's provenance note.
-2. **`pick_w1_scratch()`** (`src/anchor.rs:629`) keeps its algorithm; its
+2. **`named_candidate()`** (`src/anchor.rs:485`) matches the requested name exactly, so the
+   5.4 vendor builds' LTO clones (`serial8250_ports.llvm.<hash>`, the star's second-region
+   candidate) are invisible to the options scan. Accept exactly one `<name>.llvm.*` clone
+   when the plain name is absent (two or more stay ambiguous, fail closed) — the same rule
+   the timer extractor got in R1.
+3. **`pick_w1_scratch()`** (`src/anchor.rs:629`) keeps its algorithm; its
    `initialized_offset` argument is now the value-relative byte, so its existing predicates
    (value byte 0 = 0, byte `initialized` odd) are exactly right. The doc comment that names
    `selinux_state.enforcing` as "byte 0" is updated.
-3. **Call sites** — `main.rs:1287` (options), `main.rs:1549` (profile render),
+4. **Call sites** — `main.rs:1287` (options), `main.rs:1549` (profile render),
    `options.rs:378-402` (candidate placements) pass the relative byte; the report
    (`report.rs:447-458`, `560-590`, `659-690`) emits
    `selinux { enforcing = <field>; initialized = <value byte> }` and the matching
    `# fact_sources` lines.
-4. **Tests** — the 5.10 render byte-identical; a 5.4 template unit test (1, 2); an unknown
+5. **Tests** — the 5.10 render byte-identical; a 5.4 template unit test (1, 2); an unknown
    no-BTF release → `None`; a BTF layout with a `disabled` field → accepted with `(1, 2)`;
-   the two-image render check (venus scratch `0x32F7200`, star `None`).
+   a unique `<name>.llvm.*` clone resolves and two clones stay ambiguous; the two-image
+   render check (venus in-anchor `0x32F7200`; star in-anchor `None`, second region
+   `0x335A000` from `serial8250_ports.llvm.* + 0x50`).
 
 ### 2.3 Native (attack path — this is the L-level hunk)
 
@@ -228,10 +239,15 @@ w1_scratch {
 the reserved window `0x1F8..0x20F` skips anchor slots 15–16, and W1 never calls
 `prepare_kernel_page`.
 
-**Star** — add only the `selinux` block (`enforcing = 1`, `initialized = 2`). The picker
-returns `None` for `0x3321148`: `base = 0x23321148`, and the value's byte 2 is `0x32`
-(even) for every `s` within the 4 KiB anchor. The star stays page-based and remains a
-candidate.
+**Star** — add the `selinux` block (`enforcing = 1`, `initialized = 2`) and a
+second-region scratch. The in-anchor picker returns `None` for `0x3321148`
+(`base = 0x233A1148`, value byte 2 = `0x3A` even for every `s`), but the second-region
+lane finds two: `serial8250_ports.llvm.* + 0x50` (image `0x335A000`, value `0x233DA100`,
+byte 2 = `0x3D`; the unconditioned class) and `s3c24xx_serial_ports + 0xA0` (image
+`0x2ED1700`, in-file zero window; the conditioned class). The profile carries the
+`serial8250_ports` one: outside the anchor, so it reserves no slots; the premise — no
+8250 device on the phone — is a device fact, and a kprobe readback gates page-free before
+the profile claims it.
 
 **Regeneration** — the 5.4 route geometry is hand-derived (the extractor refuses to emit a
 family geometry for 5.4), so the profiles stay hand-completed; the new block is produced by
@@ -290,14 +306,16 @@ Design: a profile fact (proposal: `kernelsnitch.mm_slab_order`, default 3) consu
 spray geometry; the base rounding uses the actual slab size; the stride probe uses the
 slab-local offset. The non-tcp payload fits an 8 KiB slab (max offset `0x1300` < `0x2000`);
 the tcp layout (`0x5800`) does not, but tcp is infeasible on 5.x anyway. This is deferred
-from the venus's critical path (page-free) and is required only for the star's page path.
+from the venus's critical path (page-free) and is required only if a unit falls back to
+the page path (the star's second-region premise failing).
 
 #### 2.6.5 Star status
 
-The star has no in-anchor scratch (residue) and needs §2.6.2 and §2.6.4 before its page
-path can be gated. A second scratch region (`--w1-scratch-symbol`) is an optional follow-up
-that would move it to page-free; it needs a named zeroed region with a suitable residue and
-its own reference scan.
+The star is page-free through the existing second-region lane, not page-based: the
+`serial8250_ports.llvm.*` window resolves the in-anchor refusal. What remains is the
+clone-name resolution (§2.2 item 2) so the auto plan lists it, plus the standard 8250
+premise (no device on the phone) and a kprobe readback gate. The page path (§2.6.2,
+§2.6.4) is then only the fallback if that premise fails on a unit.
 
 ### 2.7 Gates
 
@@ -316,14 +334,14 @@ the only end-to-end 5.4 gate available.
 
 | # | item | files |
 |---|---|---|
-| S1 | extractor: 5.4 template, BTF guard, relative byte, picker doc, tests | `tools/extract_rs/src/{main.rs,anchor.rs,options.rs,report.rs}` + tests |
+| S1 | extractor: 5.4 template, BTF guard, relative byte, LTO-clone name resolution, picker doc, tests | `tools/extract_rs/src/{main.rs,anchor.rs,options.rs,report.rs}` + tests |
 | S2 | native: W1 target offset, 5.4 release fallback, tests | `src/core/kernel/runtime_struct_offsets.h`, `src/core/profile/model.h`, `src/core/session/backend/cve_2026_43499_backend.cpp` + host tests |
 | S3 | Kotlin validator + schema docs + tests | `profile-core/src/main/kotlin/.../ProfileResolver.kt`, `docs/kernel_profiles/PROFILE_SCHEMA*.md` |
-| S4 | profiles: venus block+scratch, star block, port READMEs, report memo | `external/port/venus-5.4/`, `external/port/star-5.4/`, `external/github_error_reports/5.4.274-qgki-g76ac0b265f44/` |
+| S4 | profiles: venus block+in-anchor scratch, star block+second-region scratch, port READMEs, report memo | `external/port/venus-5.4/`, `external/port/star-5.4/`, `external/github_error_reports/5.4.274-qgki-g76ac0b265f44/` |
 | S5 | KernelSnitch phase 2 + bank tail + tests | `src/core/kernelsnitch/kernelsnitch.h`, `src/core/attack/ops.cpp` |
 | S6 | QEMU W1 gate | `scripts/`, `external/port/five-four-tools/` |
 | S7 | the venus reporter run | external |
-| S8 | slab-order fact (deferred; the star) | `src/core/kernel/constants.hpp`, `src/core/support/util.cpp`, the profile schema |
+| S8 | slab-order fact (deferred; the page-path fallback) | `src/core/kernel/constants.hpp`, `src/core/support/util.cpp`, the profile schema |
 
 Order: S1 → S2 → S3 → S4 (they ship together; a profile with the new block is refused by
 an old app and misread by an old native) → S6/G2 → G3 → S7. S5 is independent of S1–S4 and
@@ -350,15 +368,16 @@ can land in parallel; S8 last.
   remains ungated and candidate.
 - **KernelSnitch phase 2 only helps if the range is the cause.** If the venus page path is
   ever needed and phase 2 still misses, the verbose collision set is the next diagnosis.
-- **Do not force a star scratch.** Its no-scratch result is the correct fail-closed
-  behavior.
+- **The star's second region is a premise, not a guarantee.** `serial8250_ports` needs no
+  8250 device bound on the unit; the page-free claim waits on the kprobe readback, and if
+  that premise fails the page path (§2.6.2/§2.6.4) is the fallback.
 
 ## 5. Open questions
 
 1. The 5.4 source's exact `struct selinux_state` guards — the disassembly is authoritative;
    record the upstream source (5.4.y `security/selinux/include/security.h`) when available.
-2. A second zeroed region for the star (`--w1-scratch-symbol`): is there one with the
-   needed residue? (optional; the star is not on the venus's path)
+2. The star's 8250 premise (no 8250 device on the unit) and the kprobe readback gate
+   before its profile claims page-free.
 3. The slab-order fact's shape (`mm_slab_order` vs `objs_per_slab`) and whether the venus's
    page path is ever needed after page-free.
 4. Whether the venus candidate is bundled after the reporter gate — an operator decision,
@@ -367,14 +386,21 @@ can land in parallel; S8 last.
 ## Appendix A — the scratch arithmetic (for reference)
 
 ```
-venus:  delta = 0xA0080000 − 0x80000000 = 0x20080000
-        base  = delta + anchor 0x32F7108 = 0x232F7108
+venus (in-anchor):
+        delta = 0xA0080000 − 0x80000000 = 0x20080000
+        base  = 0x20080000 + 0x32F7108 = 0x23377108
         s     = (−base) & 0xFF = 0xF8;  s + 0x100 + 0x18 = 0x210 ≤ 0x1000
-        value = 0x232F7300  ->  byte0 0x00, byte1 0x73, byte2 0x2F (odd), byte3 0x23
-        image = 0x32F7108 + 0xF8 = 0x32F7200 (53441024), window 0x1F8, slots 15..16
-star:   base  = 0x20080000 + 0x3321148 = 0x23321148
-        s     = 0xB8;  value = 0x23321300  ->  byte2 = 0x32 (even)
-        every s in the 4 KiB region keeps byte2 = 0x32  ->  picker returns None
+        value = 0x23377300  ->  byte0 0x00, byte1 0x73, byte2 0x37 (odd), byte3 0x23
+        image = 0x32F7200 (53441024), window 0x1F8, slots 15..16
+star (in-anchor):
+        base  = 0x20080000 + 0x3321148 = 0x233A1148
+        s     = 0xB8;  value = 0x233A1300  ->  byte2 = 0x3A (even)
+        every s in the 4 KiB region keeps byte2 = 0x3A  ->  picker returns None
+star (second region):
+        serial8250_ports.llvm.* 0x3359FB0 + 0x50 -> image 0x335A000
+        value = 0x233DA100  ->  byte2 0x3D (odd); BSS beyond the file
+        s3c24xx_serial_ports 0x2ED1660 + 0xA0 -> image 0x2ED1700
+        value = 0x22F51800  ->  byte2 0xF5 (odd); in-file window zero
 ```
 
 ## Appendix B — the current fallbacks this plan retires
