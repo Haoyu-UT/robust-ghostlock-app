@@ -276,9 +276,18 @@ class ProfileResolverTest {
     }
 
     @Test
+    fun `validateMerged accepts the five-four selinux layout`() {
+        val profile = validProfile()
+        profile["selinux"] = valueMapOf("enforcing" to 1L, "initialized" to 2L)
+        assertEquals(emptyList<ConfigError>(), ProfileResolver.validateMerged(profile, "select_stack", "none"))
+        assertEquals(2L, ProfileResolver.nativeValue(profile, "select_stack", "none", "selinux.initialized"))
+        assertEquals(1L, ProfileResolver.nativeValue(profile, "select_stack", "none", "selinux.enforcing"))
+    }
+
+    @Test
     fun `validateMerged rejects a selinux block that is not the known layout`() {
         val profile = validProfile()
-        profile["selinux"] = valueMapOf("enforcing" to 1L, "initialized" to 8L)
+        profile["selinux"] = valueMapOf("enforcing" to 8L, "initialized" to 8L)
         val errors = ProfileResolver.validateMerged(profile, "select_stack", "none")
         assertTrue(errors.any { it.fieldPath == "selinux.enforcing" })
         assertTrue(errors.any { it.fieldPath == "selinux.initialized" })

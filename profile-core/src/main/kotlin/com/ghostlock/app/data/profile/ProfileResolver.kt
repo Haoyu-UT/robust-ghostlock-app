@@ -274,8 +274,10 @@ object ProfileResolver {
      * Page-free Stage 1 blocks. Both are optional -- a profile without them is
      * the page path and the release-derived selinux layout, i.e. every profile
      * that predates the keys. When present they must describe one coherent
-     * layout: `enforcing` is the struct's first byte on every sampled image,
-     * `initialized` is a byte offset inside the value, and a scratch that lies
+     * layout: `enforcing` is the field's byte inside `selinux_state` (0 on
+     * 5.10/6.x; 1 on the 5.4 family, whose `disabled` byte is unconditional),
+     * `initialized` is the byte of the W1 value that lands on the initialized
+     * field (relative to the enforcing field), and a scratch that lies
      * inside the route's lock-anchor region is the slot the allocator reserves
      * (its 0x18-byte collateral window must stay inside the region).
      */
@@ -293,8 +295,8 @@ object ProfileResolver {
                 when (val enforcing = block["enforcing"]) {
                     null -> errors += ConfigError("selinux.enforcing", "missing")
                     !is Number -> errors += ConfigError("selinux.enforcing", "not a number")
-                    else -> if (enforcing.toLong() != 0L) {
-                        errors += ConfigError("selinux.enforcing", "must be 0")
+                    else -> if (enforcing.toLong() !in 0L..7L) {
+                        errors += ConfigError("selinux.enforcing", "must be a byte offset")
                     }
                 }
                 when (val initialized = block["initialized"]) {

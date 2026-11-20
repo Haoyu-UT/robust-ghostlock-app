@@ -180,7 +180,7 @@ cred
 |---|---|
 | `offset.init_task` / `offset.init_cred` | `init_task` / `init_cred` 相对内核镜像基址的偏移 |
 | `offset.root_task_group` | `root_task_group` 偏移 |
-| `offset.selinux_enforcing` | `selinux_state.enforcing` 偏移（W1 写 0） |
+| `offset.selinux_enforcing` | `selinux_state` 符号偏移；字段字节由 `selinux.enforcing` 块补充 |
 | `offset.selinux_blob_sizes` / `offset.security_hook_heads` | SELinux/安全钩子相关偏移 |
 | `offset.slide_nfulnl_logger` / `offset.slide_boot_id` / `offset.slide_loggers_0_1` | 地址滑移（KASLR）定位点 |
 | `kernel_phys_load` | 内核物理加载地址（0 时按 SoC 公式回退） |
@@ -221,14 +221,14 @@ cred
 
 | 字段 | 含义 |
 |---|---|
-| `selinux.enforcing` | `enforcing` 字节的偏移；必须为 `0`（W1 向其写入 0） |
-| `selinux.initialized` | 初始化字节的偏移。page-free 写入值必须使该字节非零；提取器据此选择 scratch。无 BTF 时的回退：6.6 之前为 `2`，6.6 起为 `1` |
+| `selinux.enforcing` | `selinux_state` 内 `enforcing` 字段的字节偏移；5.10/6.x 为 `0`，5.4 系列为 `1`（其 `disabled` 字节无条件存在，使后续字段后移）。W1 写入值的第 0 字节落在此处。 |
+| `selinux.initialized` | W1 写入值中落在初始化字段上的字节（`initialized_struct − enforcing_struct`）。page-free 写入值必须使该字节非零；提取器据此选择 scratch。无 BTF 时的回退：6.6 之前为 `2`，6.6 起为 `1`。 |
 
-提取器在 5.15/6.x 上从 BTF 生成，在 5.10 上从版本模板生成；校验 `enforcing == 0` 且不存在 `disabled`，两者都无见证时失败关闭。缺少该块时使用版本回退。解析器校验 `enforcing == 0` 与 `initialized < 8`。
+提取器在 5.15/6.x 上从 BTF 生成，在 5.10 与 5.4 上从实测版本表生成（表中配置前提仅作为来源记录，不作为门禁）；两者都无见证时失败关闭。缺少该块时使用版本回退（5.4：enforcing `1`、initialized `2`）。解析器将 `enforcing` 与 `initialized` 校验为 `0..7` 内的字节偏移。
 
 ### 4.8 W1 scratch 与 page-free 模式（`w1_scratch`）
 
-`w1_scratch` 指定一个镜像内区域，其直接映射别名作为 W1 的写入值（`alias(image) + 0x100`）：第 0 字节落在 `selinux.enforcing` 上且必须为 0，`selinux.initialized` 处的字节必须非零。提取器通过锁锚扫描选择位置：锚内窗口存在时使用锚内（native 会保留重叠的锁槽），否则使用第二个安全区域。profile 只记录镜像偏移；错误的值会导致内核崩溃。
+`w1_scratch` 指定一个镜像内区域，其直接映射别名作为 W1 的写入值（`alias(image) + 0x100`）：写入目标是字段而非结构体基址，第 0 字节落在 `selinux.enforcing` 上且必须为 0，写入值中第 `selinux.initialized` 字节必须非零。提取器通过锁锚扫描选择位置：锚内窗口存在时使用锚内（native 会保留重叠的锁槽），否则使用第二个安全区域。profile 只记录镜像偏移；错误的值会导致内核崩溃。
 
 | 字段 | 含义 |
 |---|---|
