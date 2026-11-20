@@ -170,3 +170,12 @@ disabled state greys the button in place and puts one line, “Shizuku 未运行
 hierarchy. Screenshots (NAS share root):
 `ghostlock-ui-generate-v2-enabled-2026-11-21.png` (md5 `6e1c515f…`) and
 `ghostlock-ui-generate-v2-disabled-2026-11-21.png` (md5 `ec1c9c0d…`).
+
+## NAS package (2026-11-21)
+
+`smb://nas.local/haoyu_ssd/ghostlock-builds/2026-11-21-crash-export-generate-777/` — the review
+build 777 (APK 22,910,129 B, md5 `6214b9801bea5fbfbedbfcbc5c593d0a`, sha256
+`c81b12501113bd6af040f89498eee85c44b83bdbe4d4fe1af15de8f9ad465189`), a README with the English
+overview and the Chinese how-to, this design doc, and the two Generate-step screenshots
+(`ui-generate-enabled.png`, `ui-generate-disabled.png`). Every file is listed in `MD5SUMS` and
+`SHA256SUMS`; both sets verified on the share (`md5sum -c`).
