@@ -169,7 +169,7 @@ NATIVE_HOST_TESTS := \
   kernelsnitch_scan_bounds_test route_controller_test pi_race_test \
   tcp_zerocopy_route_test select_stack_route_test sigreturn_route_test \
   target_constants_test native_resource_test \
-  profile_binary_test futex_hash_test scan_grid_test stride_verify_test \
+  profile_binary_test futex_hash_test scan_grid_test stride_verify_test slab_order_test \
   number_parse_test runtime_paths_test runtime_config_test handoff_probe_test victim_context_test \
   run_state_test address_space_test cpp_link_probe_test compat_bitmap_test dirtyfrag_verdict_test \
   anchor_align_test cpu_select_test
@@ -345,6 +345,10 @@ $(HOST_BUILD_DIR)/scan_grid_test: core/tests/scan_grid_test.cpp core/kernelsnitc
 $(HOST_BUILD_DIR)/stride_verify_test: core/tests/stride_verify_test.cpp core/kernelsnitch/stride_verify.h
 	@mkdir -p $(HOST_BUILD_DIR)
 	$(HOST_CXX) $(HOST_CXXFLAGS) -Icore $< -o $@
+
+$(HOST_BUILD_DIR)/slab_order_test: core/tests/slab_order_test.cpp core/kernelsnitch/slab_order.h
+	@mkdir -p $(HOST_BUILD_DIR)
+	$(HOST_CXX) $(HOST_CXXFLAGS) -Icore -DTARGET_CONFIG_H=\"kernel/target.h\" $< -o $@
 
 $(HOST_BUILD_DIR)/number_parse_test: core/tests/number_parse_test.cpp core/kernelsnitch/number_parse.h
 	@mkdir -p $(HOST_BUILD_DIR)
