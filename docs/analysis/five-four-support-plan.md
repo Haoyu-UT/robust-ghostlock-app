@@ -1,8 +1,8 @@
 # 5.4 support plan — SELinux W1 layout, page-free, and the KernelSnitch page path
 
-**Status 2026-11-20: S1–S6 implemented and gated; S8 implemented and host-gated (the
-diting page-based control run is its remaining device gate); S7 (the venus reporter run)
-remains; no 5.4 device run yet.** The operator approved the plan on
+**Status 2026-11-20: S1–S6 implemented and gated; S8 implemented, host-gated and
+device-gated (the diting page-based control chose order 3 on 9/9 leaks with the compiled
+geometry); S7 (the venus reporter run) remains; no 5.4 device run yet.** The operator approved the plan on
 2026-11-20. Gates run: extractor `cargo test` (all targets), the venus/star renders (venus
 in-anchor `0x32F7200`, star second region `0x335A000`), native zero-warning build,
 `lint-tidy`, `native-host-tests` (including the scan-grid phase tests and the S8
@@ -372,8 +372,10 @@ implemented in `src/core/kernelsnitch/slab_order.h` and wired through `prepare_k
 phones the prior is order 3, i.e. today's compiled behavior, so the run is byte-identical
 there. Tests: `src/core/tests/slab_order_test.cpp` pins the prior for 960/1024/1280, the
 exact pass counts (`min/max` per candidate) and the vote policy; the diting page-based
-control run (the page path on the diting is the only page-path device in hand) remains the
-device gate, proving the derivation picks order 3 and the spray is unchanged.
+control (2026-11-20) exercised the page path (`page_free=0`) and the prior held on 9/9
+leaks — every prepare read `slab_order=3 slab_size=32768 objects_per_slab=34`, W1 and W2
+verified, and the run then stopped at the known W3 CPU-active class — so the derivation
+picks the phone's order and the spray is unchanged.
 
 #### 2.6.5 Star status
 
@@ -407,7 +409,7 @@ the only end-to-end 5.4 gate available.
 | S5 | KernelSnitch phase 2 + bank tail + tests | `src/core/kernelsnitch/kernelsnitch.h`, `src/core/attack/ops.cpp` |
 | S6 | QEMU W1 gate | `scripts/`, `external/port/five-four-tools/` |
 | S7 | the venus reporter run | external |
-| S8 | slab order: runtime derivation (rule prior + leak vote, no cache), no profile key; page path only; implemented, host-gated, diting page-based control pending | `src/core/kernelsnitch/slab_order.h`, `src/core/support/util.cpp`, `src/core/memory/heap_context.*`; `slab_order_test` |
+| S8 | slab order: runtime derivation (rule prior + leak vote, no cache), no profile key; page path only; implemented, host- and device-gated (diting control 2026-11-20) | `src/core/kernelsnitch/slab_order.h`, `src/core/support/util.cpp`, `src/core/memory/heap_context.*`; `slab_order_test` |
 
 Order: S1 → S2 → S3 → S4 (they ship together; a profile with the new block is refused by
 an old app and misread by an old native) → S6/G2 → G3 → S7. S5 is independent of S1–S4 and
@@ -446,9 +448,10 @@ can land in parallel; S8 last.
    before its profile claims page-free.
 3. S8's vote policy: implemented as "the prior is kept while it has never failed; after a
    failure the nearest surviving order takes over", with the first call of a run using the
-   prior. Still open: whether a run whose prior is wrong should take an extra leak round
-   before the first spray — today the corrected order applies to the next prepare call
-   (the contexts are sized before the leak completes), and the page path is expensive.
+   prior. The diting control exercised the keep path only (9/9 the prior held). Still open:
+   whether a run whose prior is wrong should take an extra leak round before the first
+   spray — today the corrected order applies to the next prepare call (the contexts are
+   sized before the leak completes), and the page path is expensive.
 4. Whether the venus candidate is bundled after the reporter gate — an operator decision,
    outside this plan.
 
