@@ -1,8 +1,8 @@
 # 5.4 support plan — SELinux W1 layout, page-free, and the KernelSnitch page path
 
 **Status 2026-11-20: S1–S6 implemented and gated; S7 (the venus reporter run) and S8 (the
-slab-order runtime derivation, re-scoped to a design in §2.6.4 — no profile key, no code yet)
-remain; no device run yet.** The operator approved the plan on
+slab-order runtime derivation, re-scoped to a design in §2.6.4 — no profile key, no cache,
+no code yet) remain; no device run yet.** The operator approved the plan on
 2026-11-20. Gates run: extractor `cargo test` (all targets), the venus/star renders (venus
 in-anchor `0x32F7200`, star second region `0x335A000`), native zero-warning build,
 `lint-tidy`, `native-host-tests` (including the new scan-grid phase tests), profile-core +
@@ -50,7 +50,7 @@ pre-device gate is QEMU and the real gate is that report's next run.
    `[48 GiB, the model end)`, including the cached-bank tail, and (b) the slab-order rule:
    the order is a runtime function of the boot's possible-CPU count (1 vCPU: order 1/8
    objects; the phone's 8 vCPUs: order 3/34), and the app cannot read it — S8 derives it at
-   runtime (rule prior + leak verification + root-cache override), not as a profile key.
+   runtime (rule prior + leak vote, no cache), not as a profile key.
 5. **The 5.4 row joins the trusted release fallback.** The native already derives the
    selinux layout from the release when a profile has no `selinux` block (initialized 2
    below 6.6, 1 from 6.6). 5.4 joins that table as a measured row — `enforcing = 1`,
@@ -324,41 +324,53 @@ patches) — a pure rule is an unverified prediction, and a wrong order breaks t
 silently. It is not a blocker for the 5.4 phones: their 8-CPU order is 3, and both devices
 now take the page-free route anyway.
 
-**S8 design — derive the order at runtime, no profile key.** Three layers:
+**S8 design — derive the order at runtime, no profile key, no cache.** Two layers:
 
-1. **Rule prior.** From the stride, `nr_cpu_ids` (`_SC_NPROCESSORS_CONF` /
-   `/sys/devices/system/cpu/possible`) and the release's `calculate_order` (+ `/proc/cmdline`
-   slub parameters when readable), compute the expected order. The sampled families give
+1. **Rule prior.** From the stride and `nr_cpu_ids` (`_SC_NPROCESSORS_CONF` /
+   `/sys/devices/system/cpu/possible`) compute the expected order with the release's
+   `calculate_order` shape. The slub cmdline parameters (`slub_min_order`/`slub_max_order`/
+   `slub_min_objects`) are not available to the app — only the root script can read
+   `/proc/cmdline` — so the prior is the CPU-count rule alone. The sampled families give
    order 3 at 8 CPUs for strides 960/1024/1280.
-2. **Leak verification.** The page path leaks a fresh `mm_struct` right before the spray. For
-   a candidate slab size `S = PAGE_SIZE << order`:
-   `off = leaked & (S-1)`; valid iff `off % stride == 0` and `off + stride <= S`. The true
-   candidate always passes; a false larger one passes only when the real slab sits in its
-   first sub-block (≈1/2, 1/4 … per sample), a false smaller one only for objects in its
-   valid prefix. Try the prior first; on failure test the remaining candidates and take the
-   one that passes; if several pass, keep the prior and log. A repeated mismatch across the
-   prepare rounds is a vote — intersecting the passing sets pins the true order.
-3. **Root-cache override.** The root phase already captures the whole `mm_struct` slabinfo
-   line (`.ghostlock_slabinfo`, release-stamped), whose `objperslab`/`pagesperslab` columns
-   are the order. The native reads that file at run start — the same home-directory cache
-   pattern as `.ghostlock_iomem` — and uses the order when the stamp matches; the runtime
-   derivation covers the first, pre-root run. (The Kotlin measured DB can display the same
-   line, but the native's read is the operative path; no profile or wire field is added.)
+2. **Leak vote.** The page path leaks a fresh `mm_struct` right before the spray. For a
+   candidate slab size `S = PAGE_SIZE << order`, with `off = leaked & (S-1)`, the candidate
+   passes iff `off % stride == 0` and `off + stride <= S`. Simulated over random slab
+   alignment (200k draws/cell): the true candidate passes 100 %, a false candidate passes
+   with probability `min(S, S_true) / max(S, S_true)` — e.g. true order 3: order 2 0.50,
+   order 1 0.24, order 0 0.12; true order 1: order 2 0.50, order 3 0.25. So a **failure is
+   decisive** against that candidate, while a pass is not confirmation. Evaluate every
+   candidate on each leak and intersect the passing sets across prepare rounds: the true
+   order is in every intersection, and a false candidate survives `k` rounds with
+   probability `ratio^k`. The prior gets no privilege — a wrong prior that passes once is
+   demoted by a later round (a prior order 3 against a true order 1 fails 3/4 of the time
+   per sample). One leak cannot identify the order on its own; the round count is the §5
+   Q3 policy question.
+3. **No root-cache override (rejected 2026-11-20).** `.ghostlock_slabinfo` has no sound
+   invalidation for the order: its only stamp is the release, and the order is not a
+   release property (`nr_cpu_ids` and the boot's slub cmdline parameters, which the app
+   cannot read to compare); the app also deletes the capture before every measured run
+   (`AndroidGhostlockRepository`), so a native start-of-run read is always empty — the file
+   exists only mid-run, after the root phase, i.e. after the spray it would have informed.
+   The leak vote re-derives the order per run, so the cache adds no validity. The measured
+   DB keeps `mm_struct_sz` display-only; no profile or wire field is added.
 
-`prepare_kernel_page()` then uses the derived `S` for `mm_objs_per_slab = S / stride`, the base
+`prepare_kernel_page()` then uses the voted `S` for `mm_objs_per_slab = S / stride`, the base
 rounding `leaked & ~(S-1)`, the send-buffer size/step and the stride probe's modulo. Cost: a
-few instructions per leak — no extra leak rounds in the normal case. The non-tcp payload fits
-any order ≥ 1 (`0x1300 < 0x2000`); the tcp layout (`0x5800`) needs order 3, so a derived
-order < 3 with tcp selected must refuse (the 6.1 phones are 8-CPU/order 3).
+few instructions per leak — no extra leak rounds. One ordering constraint: the spray contexts
+are sized from `mm_objs_per_slab` before the leak completes (`prepare_ctxs()` in `util.cpp`),
+so a corrected order re-sizes the *next* prepare call; the first call of a run uses the prior.
+The non-tcp payload fits any order ≥ 1 (`0x1300 < 0x2000`); the tcp layout (`0x5800`) needs
+order 3, so a voted order < 3 with tcp selected must refuse (the 6.1 phones are 8-CPU/order 3).
 
 This replaces the earlier `kernelsnitch.mm_slab_order`/`objs_per_slab` profile-key proposal:
 no schema, wire or store change, and it self-corrects a vendor/cmdline difference the rule
-alone would miss. It is a page-path-only, attack-path change — design only, no code before
-operator approval. On the 8-CPU phones the derived order is 3, i.e. today's compiled
-behaviour, so the change is a no-op there. Tests: a host unit test of the candidate check
-(the false-positive arithmetic for the 960/1024/1280 strides) and, when implemented, a diting
-page-based control run (the page path on the diting is the only page-path device in hand)
-proving the derivation picks order 3 and the spray is unchanged.
+alone would miss once a leak has been sampled. It is a page-path-only, attack-path change —
+design only, no code before operator approval. On the 8-CPU phones the derived order is 3,
+i.e. today's compiled behaviour, so the change is a no-op there. Tests: a host unit test of
+the candidate check and the vote (the `min/max` pass probabilities for the 960/1024/1280
+strides) and, when implemented, a diting page-based control run (the page path on the diting
+is the only page-path device in hand) proving the derivation picks order 3 and the spray is
+unchanged.
 
 #### 2.6.5 Star status
 
@@ -392,7 +404,7 @@ the only end-to-end 5.4 gate available.
 | S5 | KernelSnitch phase 2 + bank tail + tests | `src/core/kernelsnitch/kernelsnitch.h`, `src/core/attack/ops.cpp` |
 | S6 | QEMU W1 gate | `scripts/`, `external/port/five-four-tools/` |
 | S7 | the venus reporter run | external |
-| S8 | slab order: runtime derivation (rule prior + leak-verified candidate + root-cache override), no profile key; page path only; design only, approval needed | `src/core/support/util.cpp`, `src/core/kernelsnitch/*`, the measured-DB ingest; tests |
+| S8 | slab order: runtime derivation (rule prior + leak vote, no cache), no profile key; page path only; design only, approval needed | `src/core/support/util.cpp`, `src/core/kernelsnitch/*`; tests |
 
 Order: S1 → S2 → S3 → S4 (they ship together; a profile with the new block is refused by
 an old app and misread by an old native) → S6/G2 → G3 → S7. S5 is independent of S1–S4 and
@@ -429,9 +441,10 @@ can land in parallel; S8 last.
    record the upstream source (5.4.y `security/selinux/include/security.h`) when available.
 2. The star's 8250 premise (no 8250 device on the unit) and the kprobe readback gate
    before its profile claims page-free.
-3. S8's vote policy: how many prepare rounds to sample before trusting a candidate when the
-   rule prior fails (one sample plus the prior is the default; the page path is expensive), and
-   whether the measured DB should carry `objs_per_slab` for the root-cache override.
+3. S8's vote policy: how many prepare rounds to sample before trusting an order (the page
+   path is expensive and a leak costs seconds), and whether the first call can use an order
+   the leak has contradicted — today the spray contexts are sized before the leak completes,
+   so the vote takes effect on the next call.
 4. Whether the venus candidate is bundled after the reporter gate — an operator decision,
    outside this plan.
 
