@@ -127,7 +127,7 @@
     <string name="report_developer_recheck">已启用？重新检查</string>
     <string name="report_developer_missing">仍未检测到开发者选项</string>
     <string name="report_step_generate_title">生成错误报告</string>
-    <string name="report_step_generate_summary">打开开发者选项，点按「错误报告」，选择「完整报告」，再点「报告」。生成需要几分钟，完成后会出现在系统的「错误报告」目录。</string>
+    <string name="report_step_generate_summary">系统错误报告包含内核日志与启动历史。</string>
     <string name="report_step_import_title">导入错误报告</string>
     <string name="report_step_import_summary">选择刚生成的报告。只会保留启动信息和内核日志。</string>
     <string name="report_step_export_title">导出报告</string>
@@ -148,7 +148,6 @@
     <string name="report_files">文件：%1$s</string>
 
     <string name="report_have_bugreport">已有错误报告？直接导入</string>
-    <string name="report_open_developer">打开开发者选项</string>
     <string name="report_open_about">打开关于手机</string>
 
     <string name="report_add_bugreport">导入错误报告</string>
@@ -164,10 +163,21 @@
     <string name="report_saved">已保存：%1$s</string>
     <string name="report_saved_toast">报告已保存：%1$s</string>
     <string name="report_shizuku_not_running">Shizuku 未运行；启动后重新导出即可附上内核日志</string>
-    <string name="report_generate_via_shizuku">通过 Shizuku 生成错误报告（约 2 分钟）</string>
-    <string name="report_generating_bugreport">正在生成错误报告…（约 2 分钟）</string>
+    <string name="report_generate_card_title">通过 Shizuku 生成</string>
+    <string name="report_generate_action">开始生成（约 2 分钟）</string>
+    <string name="report_generate_card_summary">无需电脑；完成后自动导入。</string>
+    <string name="report_generate_unavailable">Shizuku 未运行：启动后此处会自动可用。</string>
+    <string name="report_generate_progress">正在生成…（约 2 分钟）</string>
     <string name="report_generate_failed">无法生成错误报告</string>
-    <string name="report_generate_fallback">开发者选项中没有「错误报告」选项（部分系统未提供）？可在电脑上执行「adb bugreport report.zip」，再回到这里导入该文件。</string>
+    <string name="report_other_ways">其他方式</string>
+    <string name="report_dev_row_title">通过开发者选项生成</string>
+    <string name="report_dev_row_summary">「错误报告」→「完整报告」→「报告」；部分系统没有该入口。</string>
+    <string name="report_adb_row_title">在电脑上生成</string>
+    <string name="report_adb_row_summary">adb bugreport report.zip</string>
+    <string name="report_adb_row_hint">生成后回到本页导入。</string>
+    <string name="report_adb_copy">复制命令</string>
+    <string name="report_adb_copied">已复制命令</string>
+    <string name="report_import_existing">导入已生成的报告</string>
     <string name="report_share">分享报告</string>
     <string name="report_share_chooser">分享报告</string>
 

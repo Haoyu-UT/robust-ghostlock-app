@@ -285,6 +285,7 @@ interface GhostlockActions {
     fun onExportReportBundle()
     fun onAddBugreport()
     fun onReportGenerateBugreport()
+    fun onCopyBugreportCommand()
     fun onOpenDeveloperOptions()
     fun onOpenAboutPhone()
     fun onReportNext()
@@ -913,7 +914,7 @@ private fun RunLogPickerDialog(
                         ),
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        textAlign = TextAlign.Center,
+                        textAlign = TextAlign.End,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 4.dp),
@@ -979,44 +980,96 @@ private fun ReportDeveloperStep(actions: GhostlockActions) {
 /** Developer options is on: the system generates the report from its own UI. */
 @Composable
 private fun ReportGenerateStep(state: GhostlockUiState, actions: GhostlockActions) {
-    /* Always present: an unavailable shell greys the action out and says why,
-     * instead of removing the route the user came here for. The verdict is
-     * re-read while the sheet is open, so starting Shizuku or granting the
-     * permission flips the button in place. */
-    TextButton(
-        modifier = Modifier.fillMaxWidth(),
-        text = stringResource(R.string.report_generate_via_shizuku),
-        enabled = state.crashShellAvailable && !state.bugreportGenerating,
-        colors = ButtonDefaults.textButtonColorsPrimary(),
-        onClick = actions::onReportGenerateBugreport,
-    )
-    if (!state.crashShellAvailable) {
-        Text(
-            text = stringResource(R.string.shizuku_status_not_running),
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        )
-    }
-    if (state.bugreportGenerating) {
-        Text(
-            text = stringResource(R.string.report_generating_bugreport),
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        )
+    /* One primary card, then the manual routes as rows: the shell generator is
+     * the fast path (no computer, auto-import), and the two fallbacks carry
+     * their own how-to instead of three stacked paragraphs. The shell verdict
+     * is polled while the sheet is open, so the card's state is live. */
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                text = stringResource(R.string.report_generate_card_title),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurface,
+            )
+            TextButton(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                text = stringResource(
+                    if (state.bugreportGenerating) {
+                        R.string.report_generate_progress
+                    } else {
+                        R.string.report_generate_action
+                    },
+                ),
+                enabled = state.crashShellAvailable && !state.bugreportGenerating,
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+                onClick = actions::onReportGenerateBugreport,
+            )
+            Text(
+                text = stringResource(
+                    if (!state.crashShellAvailable) {
+                        R.string.report_generate_unavailable
+                    } else {
+                        R.string.report_generate_card_summary
+                    },
+                ),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
     }
     Text(
-        text = stringResource(R.string.report_generate_fallback),
+        text = stringResource(R.string.report_other_ways),
         style = MiuixTheme.textStyles.body2,
         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
     )
-    TextButton(
-        modifier = Modifier.fillMaxWidth(),
-        text = stringResource(R.string.report_open_developer),
-        onClick = actions::onOpenDeveloperOptions,
-    )
+    Card(modifier = Modifier.fillMaxWidth()) {
+        ArrowPreference(
+            title = stringResource(R.string.report_dev_row_title),
+            summary = stringResource(R.string.report_dev_row_summary),
+            onClick = actions::onOpenDeveloperOptions,
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .height(1.dp)
+                .background(MiuixTheme.colorScheme.secondaryContainer),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.report_adb_row_title),
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = stringResource(R.string.report_adb_row_summary),
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                Text(
+                    text = stringResource(R.string.report_adb_row_hint),
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            TextButton(
+                text = stringResource(R.string.report_adb_copy),
+                onClick = actions::onCopyBugreportCommand,
+            )
+        }
+    }
 }
 
 /** Pick the report the user just generated. */
@@ -1129,7 +1182,13 @@ private fun ReportWizardNav(
             Spacer(modifier = Modifier.weight(1f))
             if (bugreportStep) {
                 TextButton(
-                    text = stringResource(R.string.report_next),
+                    text = stringResource(
+                        if (step == ReportWizardStep.Generate) {
+                            R.string.report_import_existing
+                        } else {
+                            R.string.report_next
+                        },
+                    ),
                     enabled = !busy,
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                     onClick = actions::onReportNext,

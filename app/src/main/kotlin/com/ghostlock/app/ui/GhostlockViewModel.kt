@@ -2,6 +2,9 @@ package com.ghostlock.app.ui
 
 import android.Manifest
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.OpenableColumns
 import android.provider.Settings
@@ -905,6 +908,18 @@ class GhostlockViewModel(
                 send(GhostlockEffect.Toast(R.string.bugreport_import_failed))
             }
         }
+    }
+
+    /** Copies the adb bugreport command for the report sheet's computer route. */
+    fun onCopyBugreportCommand() {
+        runCatching {
+            val clipboard =
+                application.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(
+                ClipData.newPlainText("bugreport", "adb bugreport report.zip"),
+            )
+        }
+        send(GhostlockEffect.Toast(R.string.report_adb_copied))
     }
 
     /**

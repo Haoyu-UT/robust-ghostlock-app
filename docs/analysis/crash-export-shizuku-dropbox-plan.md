@@ -155,3 +155,18 @@ tick, and a tap on it is a no-op (focus and the app log unchanged — note the b
 still reports `enabled=true`; the clickable parent is where the disabled semantics live). Restarting
 the server re-enabled it and removed the reason line within ~2 s, with the same sheet open; closing
 the sheet to the home stops the poll.
+
+**Revised Generate layout (diting, 777, 2026-11-21).** The step now opens with a
+one-line description and a right-aligned step chip, then a single primary card
+(label “通过 Shizuku 生成”, a full-width “开始生成（约 2 分钟）” button, and the
+subtitle “无需电脑；完成后自动导入。”), then “其他方式” with two rows: the
+Developer-options route (chevron) and “在电脑上生成” (`adb bugreport report.zip`
+plus a 复制命令 button wired to the new `onCopyBugreportCommand`). The
+bottom-right action is renamed “导入已生成的报告” because the primary path
+auto-advances; the generic 下一步 remains on the other bug-report steps. The
+disabled state greys the button in place and puts one line, “Shizuku 未运行：启动
+后此处会自动可用。”, in the card. The dialog title/summary stay centered — Miuix's
+`OverlayDialog` takes plain strings — so the body carries the left-aligned
+hierarchy. Screenshots (NAS share root):
+`ghostlock-ui-generate-v2-enabled-2026-11-21.png` (md5 `6e1c515f…`) and
+`ghostlock-ui-generate-v2-disabled-2026-11-21.png` (md5 `ec1c9c0d…`).

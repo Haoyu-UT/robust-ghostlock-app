@@ -127,7 +127,7 @@
     <string name="report_developer_recheck">Enabled it? Check again</string>
     <string name="report_developer_missing">Developer options is still off</string>
     <string name="report_step_generate_title">Generate the bug report</string>
-    <string name="report_step_generate_summary">In Developer options, tap “Take bug report”, choose “Full report”, then “Report”. It takes a few minutes, then appears in the system’s Bug reports folder.</string>
+    <string name="report_step_generate_summary">A system bug report carries the kernel log and boot history.</string>
     <string name="report_step_import_title">Import the bug report</string>
     <string name="report_step_import_summary">Pick the report you just generated. Only the boot facts and the kernel-log entries are kept.</string>
     <string name="report_step_export_title">Export the report</string>
@@ -148,7 +148,6 @@
     <string name="report_files">Files: %1$s</string>
 
     <string name="report_have_bugreport">Already have a bug report? Import it</string>
-    <string name="report_open_developer">Open Developer options</string>
     <string name="report_open_about">Open About phone</string>
 
     <string name="report_add_bugreport">Import bug report</string>
@@ -164,10 +163,21 @@
     <string name="report_saved">Saved: %1$s</string>
     <string name="report_saved_toast">Report saved: %1$s</string>
     <string name="report_shizuku_not_running">Shizuku is not running; start it and export again to include the kernel log</string>
-    <string name="report_generate_via_shizuku">Generate the report via Shizuku (about 2 minutes)</string>
-    <string name="report_generating_bugreport">Generating the bug report… (about 2 minutes)</string>
+    <string name="report_generate_card_title">Generate via Shizuku</string>
+    <string name="report_generate_action">Start (about 2 minutes)</string>
+    <string name="report_generate_card_summary">No computer needed; imported automatically when done.</string>
+    <string name="report_generate_unavailable">Shizuku is not running; this becomes available once it starts.</string>
+    <string name="report_generate_progress">Generating… (about 2 minutes)</string>
     <string name="report_generate_failed">Could not generate the bug report</string>
-    <string name="report_generate_fallback">No “Take bug report” entry in Developer options (some ROMs omit it)? On a computer run “adb bugreport report.zip”, then import that file here.</string>
+    <string name="report_other_ways">Other ways</string>
+    <string name="report_dev_row_title">Generate via Developer options</string>
+    <string name="report_dev_row_summary">“Take bug report” → “Full report” → “Report”; some ROMs omit the entry.</string>
+    <string name="report_adb_row_title">Generate on a computer</string>
+    <string name="report_adb_row_summary">adb bugreport report.zip</string>
+    <string name="report_adb_row_hint">Then return here to import it.</string>
+    <string name="report_adb_copy">Copy command</string>
+    <string name="report_adb_copied">Command copied</string>
+    <string name="report_import_existing">Import the generated report</string>
     <string name="report_share">Share report</string>
     <string name="report_share_chooser">Share report</string>
 
