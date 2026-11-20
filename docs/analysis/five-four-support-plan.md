@@ -1,14 +1,16 @@
 # 5.4 support plan — SELinux W1 layout, page-free, and the KernelSnitch page path
 
-**Status 2026-11-20: S1–S4 implemented and host-gated; S5 (KernelSnitch phase 2) and S6
-(the QEMU W1 gate) are not started; no device run yet.** The operator approved the plan on
+**Status 2026-11-20: S1–S6 implemented and gated; S7 (the venus reporter run) and S8 (the
+slab-order fallback) remain; no device run yet.** The operator approved the plan on
 2026-11-20. Gates run: extractor `cargo test` (all targets), the venus/star renders (venus
 in-anchor `0x32F7200`, star second region `0x335A000`), native zero-warning build,
-`lint-tidy`, `native-host-tests`, profile-core + app unit tests, `assembleDebug` (versionCode
-764), ship `--check` 61/0/0/12 (the store's current exempt count; the 5.4 images are not
-bundled), HoconCheck on both updated profiles, and a parent-commit `cmp_disasm` A/B (every
-target's instruction count identical; the FAIL is the known missing-`multicast_*` control
-plus two layout-shift annotations).
+`lint-tidy`, `native-host-tests` (including the new scan-grid phase tests), profile-core +
+app unit tests, `assembleDebug` (versionCode 764), ship `--check` 61/0/0/12 (the store's
+current exempt count; the 5.4 images are not bundled), HoconCheck on both updated profiles,
+a parent-commit `cmp_disasm` A/B (every target's instruction count identical; the FAIL is
+the known missing-`multicast_*` control plus two layout-shift annotations), and the QEMU
+W1 layout gate passing on both 5.4 Images (venus/star; evidence
+`external/port/five-four-w1-gate-2026-11-20/`).
 
 **Targets.** The two local non-diting 5.4 candidates:
 
