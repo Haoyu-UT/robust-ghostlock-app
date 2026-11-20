@@ -36,10 +36,12 @@ pre-device gate is QEMU and the real gate is that report's next run.
    `[48 GiB, the model end)`, including the cached-bank tail, and (b) the 5.4 slab-order
    fact: the venus/star `mm_struct` slab is **order 1** (8 KiB, 8 objects), while the page
    path assumes order 3 (32 KiB, 34 objects).
-5. **Fail closed on an unmeasured layout.** Today a missing `selinux` block silently
-   resolves to enforcing@0 and initialized@2. After this change, a 5.4-family profile
-   without the block refuses W1 with a clear log; the release fallback stays only for the
-   families the fallback was measured on.
+5. **The 5.4 row joins the trusted release fallback.** The native already derives the
+   selinux layout from the release when a profile has no `selinux` block (initialized 2
+   below 6.6, 1 from 6.6). 5.4 joins that table as a measured row — `enforcing = 1`,
+   `initialized = 2` — so a 5.4 profile without the block resolves exactly like every other
+   family's; the block is an override on every family, and no family gets a stricter check.
+   The original bug was a missing row, not a missing refusal.
 
 ## 1. Evidence
 
@@ -157,10 +159,12 @@ the whole bundle) and for every profile without the block on a measured family.
      result `(e, i − e, "btf")`. Accept a `disabled` field (a 5.4 BTF image will carry it);
      the guards become `e < 8`, `i < 8`, `i > e` (the old `enforcing != 0` and
      "disabled is present → omit" guards are 5.10-only facts).
-   - No BTF: `5.10 → (0, 2)`, `5.4 → (1, 3 − 1 = 2)`, both `"release-template"`, the 5.4 one
-     gated on the image's IKCONFIG (`CONFIG_SECURITY_SELINUX=y`,
-     `CONFIG_SECURITY_SELINUX_DEVELOP=y`; DISABLE is recorded but does not change the 5.4
-     layout). Any other no-BTF release stays `None` (fail closed).
+   - No BTF: the release template table — `5.10 → (0, 2)`, `5.4 → (1, 2)` (raw struct
+     `(1, 3)`; the emitted second value is the value byte, i.e. initialized − enforcing).
+     Both are `"release-template"`, the same kind of measured fact; the config premises
+     (SELINUX=y, DEVELOP=y, DISABLE unset) are recorded in the `# fact_sources` provenance,
+     not used as a 5.4-only gate. A release not in the table stays `None` (fail closed, as
+     today).
    - The two-image evidence (venus/star, §1.1) is the template's provenance note.
 2. **`pick_w1_scratch()`** (`src/anchor.rs:629`) keeps its algorithm; its
    `initialized_offset` argument is now the value-relative byte, so its existing predicates
@@ -171,9 +175,9 @@ the whole bundle) and for every profile without the block on a measured family.
    (`report.rs:447-458`, `560-590`, `659-690`) emits
    `selinux { enforcing = <field>; initialized = <value byte> }` and the matching
    `# fact_sources` lines.
-4. **Tests** — the 5.10 render byte-identical; a 5.4 template unit test (1, 2); a 5.4
-   image with DEVELOP=n → `None`; a BTF layout with a `disabled` field → accepted with
-   `(1, 2)`; the two-image render check (venus scratch `0x32F7200`, star `None`).
+4. **Tests** — the 5.10 render byte-identical; a 5.4 template unit test (1, 2); an unknown
+   no-BTF release → `None`; a BTF layout with a `disabled` field → accepted with `(1, 2)`;
+   the two-image render check (venus scratch `0x32F7200`, star `None`).
 
 ### 2.3 Native (attack path — this is the L-level hunk)
 
@@ -181,14 +185,16 @@ the whole bundle) and for every profile without the block on a measured family.
    `symbol_image(...) + profile.selinux_enforcing_offset()`, wiring the dead field offset
    into the W1 target.
 2. **`model.h:546`** — `selinux_initialized_offset()` keeps returning the profile's value
-   (now documented as the value-relative byte); `selinux_enforcing_offset()` gains the
-   fail-closed policy: a 5.4-family release whose profile has no `selinux` block refuses W1
-   (model refuses at `run_setup`/W1 with a named reason) instead of defaulting to 0. The
-   5.10/6.x release fallbacks stay for legacy/external pre-stage-1 profiles.
+   (now documented as the value-relative byte); `selinux_enforcing_offset()` gains a
+   release-derived default: the profile value when stated, else `1` for a 5.4 release and
+   `0` otherwise. `selinux_initialized_offset()`'s existing release rule already yields 2
+   for 5.4 (below 6.6), so the fallback pair is `(1, 2)` with no family-specific refusal;
+   the block remains an override on every family.
 3. **`payload_builder.cpp:136`** — no change: the page acceptance check already consumes
    the value-relative byte.
 4. **Tests** — a `(1, 2)` profile targets symbol+1 and checks value byte 2; `(0, 2)` and
-   `(0, 1)` profiles are byte-identical to today; a 5.4 release without the block refuses.
+   `(0, 1)` profiles are byte-identical to today; a 5.4 release without the block resolves
+   to `(1, 2)` through the release fallback, identical to the same profile with the block.
 
 ### 2.4 App / Kotlin / docs
 
@@ -311,7 +317,7 @@ the only end-to-end 5.4 gate available.
 | # | item | files |
 |---|---|---|
 | S1 | extractor: 5.4 template, BTF guard, relative byte, picker doc, tests | `tools/extract_rs/src/{main.rs,anchor.rs,options.rs,report.rs}` + tests |
-| S2 | native: W1 target offset, fail-closed policy, tests | `src/core/kernel/runtime_struct_offsets.h`, `src/core/profile/model.h`, `src/core/session/backend/cve_2026_43499_backend.cpp` + host tests |
+| S2 | native: W1 target offset, 5.4 release fallback, tests | `src/core/kernel/runtime_struct_offsets.h`, `src/core/profile/model.h`, `src/core/session/backend/cve_2026_43499_backend.cpp` + host tests |
 | S3 | Kotlin validator + schema docs + tests | `profile-core/src/main/kotlin/.../ProfileResolver.kt`, `docs/kernel_profiles/PROFILE_SCHEMA*.md` |
 | S4 | profiles: venus block+scratch, star block, port READMEs, report memo | `external/port/venus-5.4/`, `external/port/star-5.4/`, `external/github_error_reports/5.4.274-qgki-g76ac0b265f44/` |
 | S5 | KernelSnitch phase 2 + bank tail + tests | `src/core/kernelsnitch/kernelsnitch.h`, `src/core/attack/ops.cpp` |
@@ -328,9 +334,12 @@ can land in parallel; S8 last.
 - **Attack-path change (S2).** The only behavioral change is for `selinux.enforcing != 0`;
   every existing profile is 0, so the diting and the bundle are byte-identical. Rollback is
   a revert of one native hunk; the profiles of §2.5 must then be reverted too.
-- **The 5.4 template's premise.** It is config-gated on DEVELOP=y; a 5.4 build with a
-  different config fails closed (no block → W1 refusal after S2). The template's provenance
-  is the two-image disassembly, recorded in the source.
+- **The 5.4 template's premise.** It is a measured row for the 5.4 series (both sampled
+  images, §1.1), not a config-gated check. An unseen 5.4 build whose config drops
+  `enforcing` (DEVELOP=n) would get the wrong fallback; no sampled image does. A config
+  premise check applied to every no-BTF selinux template (5.10 included) would be the
+  symmetric hardening if that risk ever needs closing — a separate item, not a 5.4 special
+  case.
 - **Side-effect bytes.** With the enforcing-field target the value's byte 1
   (checkreqprot) and byte 3 (policycap[0]) become nonzero. The 5.10 page path already
   clobbers the same relative bytes (its value is a direct-map address), so this class is
@@ -374,7 +383,7 @@ star:   base  = 0x20080000 + 0x3321148 = 0x23321148
 |---|---|---|
 | `selinux_layout` template | 5.10 only, `(0, 2)` | + 5.4 `(1, 2)` (value byte) |
 | BTF guard | rejects `enforcing != 0` and a `disabled` field | accepts any coherent `(e, i−e)` |
-| native `selinux_enforcing_offset()` | default 0, never read | read; profile fact; 5.4-without-block refuses W1 |
+| native `selinux_enforcing_offset()` | default 0, never read | read; profile fact, else release fallback (5.4 → 1, otherwise 0) |
 | native `selinux_initialized_offset()` | profile value or release 2/1 | unchanged semantics (value byte) |
 | Kotlin validator | `enforcing` must be 0 | 0..7, `enforcing + initialized < 8` |
 | `pick_w1_scratch` input | raw initialized offset | value-relative byte (same algorithm) |
