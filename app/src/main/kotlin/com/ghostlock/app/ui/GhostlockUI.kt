@@ -979,22 +979,32 @@ private fun ReportDeveloperStep(actions: GhostlockActions) {
 /** Developer options is on: the system generates the report from its own UI. */
 @Composable
 private fun ReportGenerateStep(state: GhostlockUiState, actions: GhostlockActions) {
-    if (state.crashShellAvailable) {
-        TextButton(
-            modifier = Modifier.fillMaxWidth(),
-            text = stringResource(R.string.report_generate_via_shizuku),
-            enabled = !state.bugreportGenerating,
-            colors = ButtonDefaults.textButtonColorsPrimary(),
-            onClick = actions::onReportGenerateBugreport,
+    /* Always present: an unavailable shell greys the action out and says why,
+     * instead of removing the route the user came here for. The verdict is
+     * re-read while the sheet is open, so starting Shizuku or granting the
+     * permission flips the button in place. */
+    TextButton(
+        modifier = Modifier.fillMaxWidth(),
+        text = stringResource(R.string.report_generate_via_shizuku),
+        enabled = state.crashShellAvailable && !state.bugreportGenerating,
+        colors = ButtonDefaults.textButtonColorsPrimary(),
+        onClick = actions::onReportGenerateBugreport,
+    )
+    if (!state.crashShellAvailable) {
+        Text(
+            text = stringResource(R.string.shizuku_status_not_running),
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
-        if (state.bugreportGenerating) {
-            Text(
-                text = stringResource(R.string.report_generating_bugreport),
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-        }
+    }
+    if (state.bugreportGenerating) {
+        Text(
+            text = stringResource(R.string.report_generating_bugreport),
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
     }
     Text(
         text = stringResource(R.string.report_generate_fallback),

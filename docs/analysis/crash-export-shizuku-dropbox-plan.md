@@ -139,3 +139,19 @@ Conclusion: on MIUI/HyperOS the no-root crash channel that works is the **vendor
 surfaced by the generated bugreport**; pstore/DropBox is empty on this ROM and the app's facts now
 say so. The venus reporter's next crash should use 附加错误报告 → 通过 Shizuku 生成错误报告 on
 build 774+.
+
+**UI follow-up (2026-11-21).** Two corrections to the Generate step: the Shizuku button is no
+longer hidden when the shell is unavailable — it stays in place, greyed and non-clickable, with
+“请先启动 Shizuku，再回到本应用” underneath, so the route the user came for never disappears.
+And the verdict is now polled every 1.5 s while the report sheet is open: the Shizuku
+binder/permission listeners cover most events, but a grant made in the Shizuku manager does not
+notify the app, and starting or stopping the server should flip the button in place rather than on
+the next app start. The poll stops when the sheet closes (`onRunLogPickerDismiss`/`onClearRunLogs`)
+and is cheap (a binder ping plus a permission check per tick).
+
+**Device (diting, 776).** With the report sheet on the Generate step and the server up, the button
+is enabled; killing the server greyed it and revealed “请先启动 Shizuku，再回到本应用” within one
+tick, and a tap on it is a no-op (focus and the app log unchanged — note the button's *text* node
+still reports `enabled=true`; the clickable parent is where the disabled semantics live). Restarting
+the server re-enabled it and removed the reason line within ~2 s, with the same sheet open; closing
+the sheet to the home stops the poll.

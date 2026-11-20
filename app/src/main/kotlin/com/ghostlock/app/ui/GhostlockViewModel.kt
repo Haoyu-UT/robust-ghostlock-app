@@ -56,11 +56,14 @@ import com.ghostlock.app.domain.usecase.SelectCpuPairUseCase
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -95,6 +98,8 @@ sealed interface GhostlockEffect {
 }
 
 private const val OverwriteSummaryLimit = 12
+/** How often the report sheet re-reads the Shizuku verdict while it is open. */
+private const val CrashVerdictPollMs = 1_500L
 
 /** True when the evidence already carries a kernel log or a full imported report. */
 private fun CrashEvidenceInfo?.hasKernelEvidence(): Boolean =
@@ -199,6 +204,8 @@ class GhostlockViewModel(
     private var pendingProfileWrite: PendingProfileWrite? = null
     /** The imported bugreport, reduced in memory for the current report sheet only. */
     private var pendingImport: ImportedEvidence? = null
+    /** The report sheet's Shizuku-verdict poll; alive only while the sheet is open. */
+    private var crashVerdictJob: Job? = null
     /** URI of a just-written profile awaiting the "use it?" confirmation. */
     private var pendingSelectUri: String? = null
 
@@ -760,7 +767,37 @@ class GhostlockViewModel(
                 )
             }
             if (direct) openReportDestination()
+            startCrashVerdictPolling()
         }
+    }
+
+    /**
+     * The Generate step's Shizuku button follows a verdict that changes while
+     * the sheet is open: the user can start or stop the server, or grant the
+     * permission in another app. The binder/permission listeners catch most
+     * events; this poll makes the verdict live anyway (a grant made in the
+     * Shizuku manager does not notify us), and it stops with the sheet.
+     */
+    private fun startCrashVerdictPolling() {
+        if (crashVerdictJob?.isActive == true) return
+        crashVerdictJob = viewModelScope.launch {
+            while (isActive) {
+                val status = runCatching { repository.crashShellStatus() }
+                    .getOrDefault(ShizukuStatus.NOT_RUNNING)
+                val available = status != ShizukuStatus.NOT_RUNNING
+                if (mutableState.value.crashShellAvailable != available) {
+                    mutableState.update { it.copy(crashShellAvailable = available) }
+                }
+                if (!mutableState.value.runLogPickerVisible) break
+                delay(CrashVerdictPollMs)
+            }
+            crashVerdictJob = null
+        }
+    }
+
+    private fun stopCrashVerdictPolling() {
+        crashVerdictJob?.cancel()
+        crashVerdictJob = null
     }
 
     /**
@@ -1078,6 +1115,7 @@ class GhostlockViewModel(
         /* The import owns the sheet until it ends; a tap outside or Back must
          * not drop a running parse (its result would have nowhere to go). */
         if (mutableState.value.bugreportImporting) return
+        stopCrashVerdictPolling()
         pendingImport = null
         mutableState.update { it.copy(runLogPickerVisible = false) }
     }
@@ -1087,6 +1125,7 @@ class GhostlockViewModel(
         pendingImport = null
         viewModelScope.launch {
             runCatching { repository.clearRunLogs() }
+            stopCrashVerdictPolling()
             mutableState.update { it.copy(runLogs = emptyList(), runLogPickerVisible = false) }
             send(GhostlockEffect.Toast(R.string.run_log_cleared))
         }
