@@ -19,4 +19,12 @@ interface IGhostlockUserService {
      * Writes the entry text into `sink`; returns the bytes written, 0 when the
      * tag exists but the entry is empty, and -1 when the tag is absent. */
     long writeDropboxLastKmsg(in ParcelFileDescriptor sink) = 5;
+
+    /* Generates a fresh system bug report with the on-device `bugreportz`
+     * command and streams the resulting zip into `sink`. Returns immediately;
+     * the service runs the generation on a thread and closes the sink when
+     * done (EOF for the reader), so the app can import the report as it
+     * arrives. Shell may run bugreportz; it may not read the shell app's
+     * bugreports directory, which is why the service streams it. */
+    void startBugreport(in ParcelFileDescriptor sink) = 6;
 }

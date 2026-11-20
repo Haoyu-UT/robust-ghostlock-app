@@ -733,8 +733,11 @@ class GhostlockViewModel(
                     )
                 }
             }
-            val direct = pending != null ||
-                evidence.hasKernelEvidence() || evidence.hasShellCapture()
+            /* Only a kernel log in hand skips the choice. A shell capture
+             * without one is partial (boot facts only), and the choice screen
+             * is where a system report — including the Shizuku-generated one
+             * for ROMs without the Developer-options entry — is still offered. */
+            val direct = pending != null || evidence.hasKernelEvidence()
             val shown = pending?.toInfo() ?: evidence
             mutableState.update {
                 it.copy(
@@ -863,6 +866,34 @@ class GhostlockViewModel(
                 if (inFlow) openReportDestination()
             } else {
                 send(GhostlockEffect.Toast(R.string.bugreport_import_failed))
+            }
+        }
+    }
+
+    /**
+     * The Generate step's shell route: a ROM without the Developer-options
+     * "Take bug report" entry (or a user with no computer) still gets a real
+     * system report. The service generates it with `bugreportz` and streams the
+     * zip into the importer; the app never stores the hundreds of megabytes.
+     */
+    fun onReportGenerateBugreport() {
+        if (mutableState.value.bugreportGenerating || mutableState.value.bugreportImporting) return
+        mutableState.update { it.copy(bugreportGenerating = true) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val imported = runCatching { repository.generateBugreport() }.getOrNull()
+            val inFlow = mutableState.value.runLogPickerVisible
+            mutableState.update {
+                it.copy(
+                    bugreportGenerating = false,
+                    crashEvidence = imported?.toInfo() ?: it.crashEvidence,
+                )
+            }
+            if (imported != null) {
+                pendingImport = imported
+                send(GhostlockEffect.Toast(R.string.bugreport_import_done))
+                if (inFlow) openReportDestination()
+            } else {
+                send(GhostlockEffect.Toast(R.string.report_generate_failed))
             }
         }
     }
@@ -2129,6 +2160,8 @@ class GhostlockViewModel(
                 vrKoSelinuxBlock = snapshot.vrKoSelinuxBlock,
                 shizukuEnabled = snapshot.shizukuEnabled,
                 shizukuStatus = snapshot.shizukuStatus,
+                crashShellAvailable =
+                    repository.crashShellStatus() != ShizukuStatus.NOT_RUNNING,
                 profileInvalidPaths = loaded?.invalidPaths ?: emptySet(),
                 /* The fresh resolution is the authority; the snapshot's copy
                  * covers the no-pair case where no config was resolved here. */

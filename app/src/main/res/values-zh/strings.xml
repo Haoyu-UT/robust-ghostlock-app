@@ -164,6 +164,10 @@
     <string name="report_saved">已保存：%1$s</string>
     <string name="report_saved_toast">报告已保存：%1$s</string>
     <string name="report_shizuku_not_running">Shizuku 未运行；启动后重新导出即可附上内核日志</string>
+    <string name="report_generate_via_shizuku">通过 Shizuku 生成错误报告（约 2 分钟）</string>
+    <string name="report_generating_bugreport">正在生成错误报告…（约 2 分钟）</string>
+    <string name="report_generate_failed">无法生成错误报告</string>
+    <string name="report_generate_fallback">开发者选项中没有「错误报告」选项（部分系统未提供）？可在电脑上执行「adb bugreport report.zip」，再回到这里导入该文件。</string>
     <string name="report_share">分享报告</string>
     <string name="report_share_chooser">分享报告</string>
 

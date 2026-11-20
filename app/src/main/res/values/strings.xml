@@ -164,6 +164,10 @@
     <string name="report_saved">Saved: %1$s</string>
     <string name="report_saved_toast">Report saved: %1$s</string>
     <string name="report_shizuku_not_running">Shizuku is not running; start it and export again to include the kernel log</string>
+    <string name="report_generate_via_shizuku">Generate the report via Shizuku (about 2 minutes)</string>
+    <string name="report_generating_bugreport">Generating the bug report… (about 2 minutes)</string>
+    <string name="report_generate_failed">Could not generate the bug report</string>
+    <string name="report_generate_fallback">No “Take bug report” entry in Developer options (some ROMs omit it)? On a computer run “adb bugreport report.zip”, then import that file here.</string>
     <string name="report_share">Share report</string>
     <string name="report_share_chooser">Share report</string>
 

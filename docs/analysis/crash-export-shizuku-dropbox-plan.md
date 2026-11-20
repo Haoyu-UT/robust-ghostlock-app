@@ -64,3 +64,47 @@ further changes.
   deliberately untouched, so the run environment (shell) does not change silently.
 - The permission prompt on export is user-initiated; a denied dialog falls through to the existing
   choice flow after the 20 s bound.
+
+## Follow-up 2026-11-21: the Generate step's missing Developer-options entry
+
+Some ROMs ship Developer options **without** the "Take bug report" entry — the tester's screenshot
+of that page (NAS, 2026-11-20) shows only "Bug report handler". The wizard's Generate step assumed
+the entry and dead-ended.
+
+Since shell is exactly what those users already have through Shizuku, the Generate step now offers
+it directly: **Generate the report via Shizuku**. `GhostlockUserService.startBugreport` runs the
+on-device `bugreportz -p` (the zipped form; the flat one is deprecated), parses its `OK:<path>`
+line (`BugreportzOutput`), and streams the zip through a pipe into the app's importer — no 300 MB
+copy is stored, and the app needs no storage permission. The report lives under the shell app's
+private bugreports directory, which is why only the service can read it. Measured on the diting
+(HyperOS, 5.10.236): `bugreportz` 1 m 49 s, 368 864 412 B, and `BugreportImporter.extract`
+consumes it in 1.16 s, keeping `stability-last_kmsg`, `mtdoops.md`, `md_history.txt`,
+`last_logcat.txt` and the main kernel log.
+
+The step also carries the universal fallback for devices without a shell: `adb bugreport
+report.zip` on a computer, then import the file. A device without Shizuku keeps only the
+Developer-options route and the fallback text; the button is hidden when no shell is reachable
+(`crashShellAvailable` in the UI state).
+
+Reachability fix in the same pass: the export used to go straight to the destination when *any*
+shell capture existed, so the Generate step — and the new Shizuku generator — was unreachable
+exactly where the shell capture had no kernel log (the diting/venus DropBox-absent case). The flow
+now skips the choice only when a **kernel log** is in hand; a partial shell capture shows the
+choice, whose "Attach a bug report" leads to the Generate step. That also puts a full bugreport —
+including the MIUI stability zips that can hold the previous boot's kernel log — one tap away on
+shell-capable devices.
+
+Tests: the existing importer test plus the new `BugreportzOutputTest` (OK line, FAIL line, empty);
+the streaming path and the wizard advance are device-gated on the diting.
+
+**Device result (diting, 5.10.236, HyperOS, build 774, 2026-11-21).** Report sheet → Choice (the
+partial shell capture no longer skips it) → Attach → Generate shows “通过 Shizuku 生成错误报告”
+plus the adb fallback; tapping it raised the Shizuku permission prompt, and after the grant:
+`I GhostLock: bugreport generate: bugreport-shizuku-9275ec29.zip 104606 ms, ok=true`. The wizard
+advanced to the destination picker and the saved bundle (6,279,916 B, md5 `ff98888b…`) carries
+`last-crash/20261121-002135-import/` with `kernel-log.txt` 2,097,086 B, `stability-last_kmsg`
+337,360 B, `mtdoops.md`, `md_history.txt`, `last_logcat.txt` and `crash_evidence=yes`. The
+`stability-last_kmsg` entries came out of the MIUI stability reboot zips — the previous boot's
+kernel log, the channel that matters on devices whose pstore/DropBox are empty (the venus). The
+duchamp runs 774 with no Shizuku: the button is hidden and the step keeps the Developer-options
+route plus the adb fallback.

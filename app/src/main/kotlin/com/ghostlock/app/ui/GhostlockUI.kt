@@ -174,6 +174,10 @@ data class GhostlockUiState(
     /** The newest crash-evidence capture, if any. */
     val crashEvidence: CrashEvidenceInfo? = null,
     val bugreportImporting: Boolean = false,
+    /** A shell is generating a system bug report for the report flow. */
+    val bugreportGenerating: Boolean = false,
+    /** Shizuku (shell or root) is available to the crash/report path. */
+    val crashShellAvailable: Boolean = false,
     /** The report flow's current screen. */
     val reportWizardStep: ReportWizardStep = ReportWizardStep.Choice,
     /**
@@ -280,6 +284,7 @@ interface GhostlockActions {
     fun onClearRunLogs()
     fun onExportReportBundle()
     fun onAddBugreport()
+    fun onReportGenerateBugreport()
     fun onOpenDeveloperOptions()
     fun onOpenAboutPhone()
     fun onReportNext()
@@ -917,7 +922,7 @@ private fun RunLogPickerDialog(
                 when (step) {
                     ReportWizardStep.Choice -> ReportChoiceStep(state, actions)
                     ReportWizardStep.Developer -> ReportDeveloperStep(actions)
-                    ReportWizardStep.Generate -> ReportGenerateStep(actions)
+                    ReportWizardStep.Generate -> ReportGenerateStep(state, actions)
                     ReportWizardStep.Import -> ReportImportStep(state, actions)
                     ReportWizardStep.Export -> ReportExportStep(state, actions)
                 }
@@ -973,11 +978,33 @@ private fun ReportDeveloperStep(actions: GhostlockActions) {
 
 /** Developer options is on: the system generates the report from its own UI. */
 @Composable
-private fun ReportGenerateStep(actions: GhostlockActions) {
+private fun ReportGenerateStep(state: GhostlockUiState, actions: GhostlockActions) {
+    if (state.crashShellAvailable) {
+        TextButton(
+            modifier = Modifier.fillMaxWidth(),
+            text = stringResource(R.string.report_generate_via_shizuku),
+            enabled = !state.bugreportGenerating,
+            colors = ButtonDefaults.textButtonColorsPrimary(),
+            onClick = actions::onReportGenerateBugreport,
+        )
+        if (state.bugreportGenerating) {
+            Text(
+                text = stringResource(R.string.report_generating_bugreport),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+    }
+    Text(
+        text = stringResource(R.string.report_generate_fallback),
+        style = MiuixTheme.textStyles.body2,
+        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+    )
     TextButton(
         modifier = Modifier.fillMaxWidth(),
         text = stringResource(R.string.report_open_developer),
-        colors = ButtonDefaults.textButtonColorsPrimary(),
         onClick = actions::onOpenDeveloperOptions,
     )
 }

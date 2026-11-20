@@ -357,6 +357,7 @@ private fun GhostlockRoute(
             override fun onClearRunLogs() = viewModel.onClearRunLogs()
             override fun onExportReportBundle() = viewModel.onExportReportBundle()
             override fun onAddBugreport() = viewModel.onAddBugreport()
+            override fun onReportGenerateBugreport() = viewModel.onReportGenerateBugreport()
             override fun onOpenDeveloperOptions() = viewModel.onOpenDeveloperOptions()
             override fun onOpenAboutPhone() = viewModel.onOpenAboutPhone()
             override fun onReportNext() = viewModel.onReportNext()

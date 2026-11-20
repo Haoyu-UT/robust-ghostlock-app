@@ -476,6 +476,25 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override fun crashShellStatus(): ShizukuStatus = shizukuRunner.crashAccessStatus()
 
+    override suspend fun generateBugreport(): ImportedEvidence? {
+        if (shizukuRunner.crashAccessStatus() == ShizukuStatus.PERMISSION_REQUIRED) {
+            withContext(Dispatchers.Main) { shizukuRunner.requestPermission() }
+            shizukuRunner.awaitCrashAccess(CRASH_SHIZUKU_TIMEOUT_MS)
+        }
+        val stream = shizukuRunner.openBugreportStream() ?: return null
+        val bootId = currentBootId()
+        return stream.use {
+            val name = "bugreport-shizuku-${bootId.take(8)}.zip"
+            val started = System.nanoTime()
+            runCatching { BugreportImporter.extract(it.stream, name, bootId) }
+                .also { evidence ->
+                    val elapsed = (System.nanoTime() - started) / 1_000_000
+                    Log.i("GhostLock", "bugreport generate: $name ${elapsed} ms, ok=${evidence != null}")
+                }
+                .getOrNull()
+        }
+    }
+
     private suspend fun readCrashFacts(dir: File): Map<String, String>? {
         if (shizukuRunner.crashAccessStatus() == ShizukuStatus.READY) {
             val facts = shizukuRunner.collectCrash(dir)

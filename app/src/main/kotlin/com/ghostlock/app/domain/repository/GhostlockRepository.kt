@@ -245,6 +245,14 @@ interface GhostlockRepository {
     /** The crash collector's Shizuku view (accepts a root-run server); run gating is unchanged. */
     fun crashShellStatus(): ShizukuStatus
 
+    /**
+     * Generates a fresh system bug report through the shell (Shizuku or root)
+     * and returns it reduced. The on-device route for ROMs whose Developer
+     * options has no “Take bug report” entry, and for users with no computer.
+     * Null when no shell is available or the generation failed.
+     */
+    suspend fun generateBugreport(): ImportedEvidence?
+
     /** The newest automatic capture on disk, without touching the device. */
     suspend fun latestCrashEvidence(): CrashEvidenceInfo?
 

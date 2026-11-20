@@ -7,6 +7,7 @@ import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import androidx.annotation.Keep
+import com.ghostlock.app.data.BugreportzOutput
 import com.ghostlock.app.data.CrashEvidenceStore
 import com.ghostlock.app.data.DropboxKmsg
 import com.ghostlock.app.data.ManagerScanner
@@ -30,6 +31,9 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
          * capped separately: DropBox itself keeps at most 1000 entries. */
         const val MAX_DROPBOX_BYTES = 4L * 1024 * 1024
         const val MAX_DROPBOX_LISTING_BYTES = 2L * 1024 * 1024
+        /* A full bugreport takes ~2 minutes on the rigs; 10 is the ceiling
+         * before the subprocess is killed and the app gets an empty stream. */
+        const val REPORT_TIMEOUT_MINUTES = 10L
     }
 
     override fun runExploit(
@@ -357,6 +361,61 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
         process.destroy()
         DropboxKmsg.isPresent(text.toString())
     }.getOrDefault(false)
+
+    /**
+     * Generates a fresh bug report with `bugreportz` and streams the zip into
+     * `sink`. Returns immediately; the generation runs on a thread and the sink
+     * is closed at the end (EOF for the app), so a report that cannot be made
+     * is an empty stream, never a hang.
+     */
+    override fun startBugreport(sink: ParcelFileDescriptor) {
+        require(Process.myUid() == Process.SHELL_UID || Process.myUid() == 0) {
+            "the bug report must be generated as shell or root, uid=${Process.myUid()}"
+        }
+        Thread({
+            var report: File? = null
+            var streamed = false
+            try {
+                val process = ProcessBuilder("/system/bin/bugreportz", "-p")
+                    .redirectErrorStream(true)
+                    .start()
+                val output = StringBuilder()
+                var ok = false
+                process.inputStream.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        output.append(line).append('\n')
+                        if (line.startsWith("FAIL:")) break
+                        if (line.startsWith("OK:")) {
+                            ok = true
+                            break
+                        }
+                    }
+                }
+                if (!process.waitFor(REPORT_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
+                    process.destroyForcibly()
+                }
+                if (!ok) return@Thread
+                val path = BugreportzOutput.parsePath(output.toString()) ?: return@Thread
+                val file = File(path)
+                /* Only the file bugreportz itself just printed is ever deleted,
+                 * and only from its own output directory. */
+                if (!file.isFile || !file.path.contains("/bugreports/")) return@Thread
+                report = file
+                file.inputStream().use { input ->
+                    ParcelFileDescriptor.AutoCloseOutputStream(sink).use { out ->
+                        input.copyTo(out, 64 * 1024)
+                        out.flush()
+                    }
+                }
+                streamed = true
+            } catch (_: Throwable) {
+                /* The sink close in finally is the app's end-of-stream signal. */
+            } finally {
+                if (!streamed) runCatching { sink.close() }
+                report?.let { runCatching { it.delete() } }
+            }
+        }, "gl-bugreport").start()
+    }
 
     override fun destroy() {
         if (!running.get()) kotlin.system.exitProcess(0)
