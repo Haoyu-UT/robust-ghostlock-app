@@ -16,6 +16,7 @@ import com.ghostlock.app.domain.model.ProfileConfig
 import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.RootManagerCandidate
+import com.ghostlock.app.domain.model.ShizukuStatus
 import com.ghostlock.app.domain.model.StrideProbe
 import com.ghostlock.app.domain.model.UserProfileFile
 import com.ghostlock.app.domain.model.VrKoMode
@@ -230,6 +231,19 @@ interface GhostlockRepository {
      * itself cannot be written.
      */
     suspend fun collectCrashEvidence(): CrashEvidenceInfo?
+
+    /**
+     * User-initiated capture: requests the Shizuku permission when that is all
+     * that stands between the app and a shell, then collects. The export flow
+     * calls this; the start-up capture stays silent.
+     */
+    suspend fun collectCrashEvidenceWithShizuku(): CrashEvidenceInfo?
+
+    /** Whether the Shizuku manager app is installed (drives the export hint). */
+    fun shizukuInstalled(): Boolean
+
+    /** The crash collector's Shizuku view (accepts a root-run server); run gating is unchanged. */
+    fun crashShellStatus(): ShizukuStatus
 
     /** The newest automatic capture on disk, without touching the device. */
     suspend fun latestCrashEvidence(): CrashEvidenceInfo?

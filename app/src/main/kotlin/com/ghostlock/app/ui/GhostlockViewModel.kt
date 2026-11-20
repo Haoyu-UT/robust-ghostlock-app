@@ -711,17 +711,27 @@ class GhostlockViewModel(
             val runs = runCatching { repository.listRunLogs() }.getOrDefault(emptyList())
             val pending = pendingImport
             var evidence = runCatching { repository.latestCrashEvidence() }.getOrNull()
-            /* Shizuku may have become ready after the start-up capture. Its
-             * pstore read is quick; retry before asking for a bug report.
-             * A pending import is already the user's explicit choice for this
-             * session, so it wins and needs no retry. */
-            if (pending == null && !evidence.hasKernelEvidence() &&
-                !evidence.hasShellCapture() &&
-                mutableState.value.shizukuStatus == ShizukuStatus.READY
-            ) {
-                runCatching { repository.collectCrashEvidence() }
+            /* The export sheet is the user asking for a report: the one place
+             * where requesting the Shizuku permission is appropriate. A READY
+             * server (shell or root) binds immediately; a permission prompt is
+             * awaited briefly. A server that is not running cannot be started
+             * from an app, so say so rather than exporting silently without the
+             * kernel log. A pending import is already an explicit choice and
+             * wins without the retry. */
+            if (pending == null && !evidence.hasKernelEvidence() && !evidence.hasShellCapture()) {
+                runCatching { repository.collectCrashEvidenceWithShizuku() }
                 evidence = runCatching { repository.latestCrashEvidence() }.getOrNull()
                     ?: evidence
+                if (!evidence.hasKernelEvidence() && !evidence.hasShellCapture() &&
+                    repository.shizukuInstalled() &&
+                    repository.crashShellStatus() == ShizukuStatus.NOT_RUNNING
+                ) {
+                    send(
+                        GhostlockEffect.ToastText(
+                            application.getString(R.string.report_shizuku_not_running),
+                        ),
+                    )
+                }
             }
             val direct = pending != null ||
                 evidence.hasKernelEvidence() || evidence.hasShellCapture()

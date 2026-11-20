@@ -47,6 +47,20 @@ internal object RootCrashCollector {
             echo "pstore.${'$'}f=missing" >> "${'$'}D/root-facts.txt"
           fi
         done
+        ls -l /sys/fs/pstore > "${'$'}D/pstore-listing.txt" 2>&1
+        # The kernel console as system_server saved it in DropBox; the same
+        # channel the Shizuku service reads, and what travels when pstore
+        # itself never captured the oops.
+        if dumpsys dropbox 2>/dev/null | command grep -q "SYSTEM_LAST_KMSG"; then
+          if timeout 10 dumpsys dropbox --print SYSTEM_LAST_KMSG > "${'$'}D/kernel-log.txt" 2>/dev/null && [ -s "${'$'}D/kernel-log.txt" ]; then
+            echo "dropbox.last_kmsg=ok:${'$'}(wc -c < "${'$'}D/kernel-log.txt")" >> "${'$'}D/root-facts.txt"
+          else
+            rm -f "${'$'}D/kernel-log.txt"
+            echo "dropbox.last_kmsg=failed" >> "${'$'}D/root-facts.txt"
+          fi
+        else
+          echo "dropbox.last_kmsg=absent" >> "${'$'}D/root-facts.txt"
+        fi
         chmod 644 "${'$'}D"/* 2>/dev/null
         exit 0
     """.trimIndent()

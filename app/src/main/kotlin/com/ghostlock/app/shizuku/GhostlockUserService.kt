@@ -3,13 +3,17 @@ package com.ghostlock.app.shizuku
 import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.os.Process
+import android.system.ErrnoException
 import android.system.Os
+import android.system.OsConstants
 import androidx.annotation.Keep
 import com.ghostlock.app.data.CrashEvidenceStore
+import com.ghostlock.app.data.DropboxKmsg
 import com.ghostlock.app.data.ManagerScanner
 import com.ghostlock.app.data.NativeProfileDocument
 import java.io.File
 import java.io.RandomAccessFile
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 @Keep
@@ -20,6 +24,12 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
         const val StatusMarker = "\u001eGLK_STATUS"
         const val StatusAck = "\u001eGLK_STATUS_ACK\n"
         const val StatusDisabled = "\u001eGLK_STATUS_DISABLED"
+
+        /* A console-ramoops entry is a few hundred KiB; 4 MiB is far above
+         * anything BootReceiver stores and still bounded. The listing read is
+         * capped separately: DropBox itself keeps at most 1000 entries. */
+        const val MAX_DROPBOX_BYTES = 4L * 1024 * 1024
+        const val MAX_DROPBOX_LISTING_BYTES = 2L * 1024 * 1024
     }
 
     override fun runExploit(
@@ -260,7 +270,27 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
         facts += "sys.boot.reason=" + prop("sys.boot.reason")
         facts += "sys.boot.reason.last=" + prop("sys.boot.reason.last")
         facts += "history=" + prop("persist.sys.boot.reason.history")
+        /* The directory is 0700 root on Android, so the app can neither list it
+         * nor tell an empty pstore from a denied one. stat() as shell/root can:
+         * "denied" means the node may exist but this reader may not look, and
+         * "exists:<size>" is what the analyst needs to decide whether a real
+         * pstore capture is even possible on this ROM. */
+        for (name in CrashEvidenceStore.PstoreNames) {
+            facts += "pstore.$name=" + pstoreFact(name)
+        }
         return facts.toTypedArray()
+    }
+
+    private fun pstoreFact(name: String): String = try {
+        "exists:" + Os.stat("/sys/fs/pstore/$name").st_size
+    } catch (e: ErrnoException) {
+        when (e.errno) {
+            OsConstants.EACCES, OsConstants.EPERM -> "denied"
+            OsConstants.ENOENT, OsConstants.ENOTDIR -> "missing"
+            else -> "error:" + e.errno
+        }
+    } catch (_: Throwable) {
+        "error"
     }
 
     /** Opens one of the allowlisted pstore nodes for the app to stream. */
@@ -273,6 +303,60 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
             )
         }.getOrNull()
     }
+
+    /**
+     * The previous boot's kernel console via DropBox (see [DropboxKmsg]). Shell
+     * may read DropBox; it may not read pstore. Returns -1 when the tag is
+     * absent, otherwise the bytes written into `out` (0 for an empty entry).
+     */
+    override fun writeDropboxLastKmsg(out: ParcelFileDescriptor): Long {
+        require(Process.myUid() == Process.SHELL_UID || Process.myUid() == 0) {
+            "crash evidence must be read as shell or root, uid=${Process.myUid()}"
+        }
+        return runCatching {
+            if (!dropboxHasLastKmsg()) return@runCatching -1L
+            val process = ProcessBuilder("/system/bin/dumpsys", "dropbox", "--print", DropboxKmsg.Tag)
+                .redirectErrorStream(true)
+                .start()
+            var total = 0L
+            ParcelFileDescriptor.AutoCloseOutputStream(out).use { sink ->
+                process.inputStream.use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (total < MAX_DROPBOX_BYTES) {
+                        val want = minOf(buffer.size.toLong(), MAX_DROPBOX_BYTES - total).toInt()
+                        val read = input.read(buffer, 0, want)
+                        if (read <= 0) break
+                        sink.write(buffer, 0, read)
+                        total += read
+                    }
+                }
+                sink.flush()
+            }
+            process.waitFor(10, TimeUnit.SECONDS)
+            process.destroy()
+            total
+        }.getOrDefault(0L)
+    }
+
+    private fun dropboxHasLastKmsg(): Boolean = runCatching {
+        val process = ProcessBuilder("/system/bin/dumpsys", "dropbox")
+            .redirectErrorStream(true)
+            .start()
+        val text = StringBuilder()
+        process.inputStream.use { input ->
+            val buffer = ByteArray(64 * 1024)
+            var total = 0L
+            while (total < MAX_DROPBOX_LISTING_BYTES) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                text.append(String(buffer, 0, read, Charsets.UTF_8))
+                total += read
+            }
+        }
+        process.waitFor(10, TimeUnit.SECONDS)
+        process.destroy()
+        DropboxKmsg.isPresent(text.toString())
+    }.getOrDefault(false)
 
     override fun destroy() {
         if (!running.get()) kotlin.system.exitProcess(0)

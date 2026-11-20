@@ -163,6 +163,7 @@
     <string name="report_import_needed">Import a bug report first, or choose “Export without a bug report”</string>
     <string name="report_saved">Saved: %1$s</string>
     <string name="report_saved_toast">Report saved: %1$s</string>
+    <string name="report_shizuku_not_running">Shizuku is not running; start it and export again to include the kernel log</string>
     <string name="report_share">Share report</string>
     <string name="report_share_chooser">Share report</string>
 

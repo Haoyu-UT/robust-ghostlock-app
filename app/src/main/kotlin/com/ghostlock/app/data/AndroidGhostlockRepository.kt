@@ -39,6 +39,7 @@ import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.RootManagerCandidate
 import com.ghostlock.app.domain.model.RunLogState
+import com.ghostlock.app.domain.model.ShizukuStatus
 import com.ghostlock.app.domain.model.StrideCandidateOption
 import com.ghostlock.app.domain.model.StrideProbe
 import com.ghostlock.app.domain.model.UserProfileFile
@@ -81,6 +82,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
         /* The probe runs up to ten leak rounds plus the spray setup. */
         const val ProbeTimeoutSeconds = 900L
+        /* The export flow's Shizuku permission dialog: long enough for a human,
+         * short enough that a denied/ignored dialog still falls through. */
+        const val CRASH_SHIZUKU_TIMEOUT_MS = 20_000L
         val AnsiEscape = Regex("\u001B\\[[0-9;]*m")
         const val PrefForceAttackTest = "force_attack_test"
         /* Second way: W1-only run followed by the DirtyFrag page-cache stage. */
@@ -452,8 +456,28 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         capture?.toInfo()
     }
 
+    /**
+     * The export flow's capture. Opening the report sheet is a user action, so
+     * asking for the Shizuku permission here is appropriate; the start-up
+     * capture must not prompt and keeps calling [collectCrashEvidence].
+     */
+    override suspend fun collectCrashEvidenceWithShizuku(): CrashEvidenceInfo? {
+        if (shizukuRunner.crashAccessStatus() == ShizukuStatus.PERMISSION_REQUIRED) {
+            withContext(Dispatchers.Main) { shizukuRunner.requestPermission() }
+            shizukuRunner.awaitCrashAccess(CRASH_SHIZUKU_TIMEOUT_MS)
+        }
+        return collectCrashEvidence()
+    }
+
+    override fun shizukuInstalled(): Boolean = runCatching {
+        appContext.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0)
+        true
+    }.getOrDefault(false)
+
+    override fun crashShellStatus(): ShizukuStatus = shizukuRunner.crashAccessStatus()
+
     private suspend fun readCrashFacts(dir: File): Map<String, String>? {
-        if (shizukuRunner.status() == com.ghostlock.app.domain.model.ShizukuStatus.READY) {
+        if (shizukuRunner.crashAccessStatus() == ShizukuStatus.READY) {
             val facts = shizukuRunner.collectCrash(dir)
             if (!facts.isNullOrEmpty() && !facts["capture_boot_id"].isNullOrEmpty()) return facts
         }

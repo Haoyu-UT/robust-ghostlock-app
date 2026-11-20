@@ -163,6 +163,7 @@
     <string name="report_import_needed">请先导入错误报告，或选择「不附加，直接导出」</string>
     <string name="report_saved">已保存：%1$s</string>
     <string name="report_saved_toast">报告已保存：%1$s</string>
+    <string name="report_shizuku_not_running">Shizuku 未运行；启动后重新导出即可附上内核日志</string>
     <string name="report_share">分享报告</string>
     <string name="report_share_chooser">分享报告</string>
 
