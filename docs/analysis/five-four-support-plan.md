@@ -46,9 +46,11 @@ pre-device gate is QEMU and the real gate is that report's next run.
    kprobe gate.
 4. **KernelSnitch.** The venus page-free route removes the leak from that device's path.
    For the page path this plan carries (a) a conditioned second scan phase over
-   `[48 GiB, the model end)`, including the cached-bank tail, and (b) the 5.4 slab-order
-   fact: the venus/star `mm_struct` slab is **order 1** (8 KiB, 8 objects), while the page
-   path assumes order 3 (32 KiB, 34 objects).
+   `[48 GiB, the model end)`, including the cached-bank tail, and (b) a correction about
+   the slab order: it is a runtime function of the boot's possible-CPU count — measured at
+   1 vCPU: order 1/8 objects; at the phone's 8 vCPUs: order 3/34 objects, so the page path's
+   compiled 32 KiB geometry matches the real devices (the 1-vCPU QEMU dump was not the
+   phone).
 5. **The 5.4 row joins the trusted release fallback.** The native already derives the
    selinux layout from the release when a profile has no `selinux` block (initialized 2
    below 6.6, 1 from 6.6). 5.4 joins that table as a measured row — `enforcing = 1`,
@@ -301,22 +303,25 @@ at 48 GiB, so a rooted device whose banks extend above 48 GiB still misses. Phas
 gated on `source=span`: with a cache it scans `banks ∩ [phase1_ceiling, g_direct_map_end)`.
 `apply_iomem_cache()`'s own sanity bound (`span < DIRECT_MAP_END − DIRECT_MAP_BASE`) stays.
 
-#### 2.6.4 The 5.4 slab order (page path)
+#### 2.6.4 The slab order is a runtime fact (page path)
 
-The venus and star `mm_struct` caches are **order 1**: QEMU `/sys/kernel/slab/mm_struct`
-reports `object_size 920`, `objs_per_slab 8`, `slab_size 960` (8 × 960 = 7,680 ≤ 8 KiB).
-The diting's is order 3 (960-byte stride, 34 objects per 32 KiB). `prepare_kernel_page()`
-hardcodes the order-3 geometry: `MM_ORDER = 3`, `ORDER3_SIZE` drives `mm_objs_per_slab`,
-the child-pool sizes, `base = leaked & ~(ORDER3_SIZE−1)`, the send loop and the stride
-probe's offsets. On 5.4 that rounds to the wrong slab base and sizes the pools 4× too
-large.
+The venus/star `mm_struct` **stride** is 960 (`object_size 920`, `slab_size 960`) — the same
+as the diting. The **order** is not an image fact: SLUB's `calculate_order()` uses
+`min_objects = 4 × (fls(nr_cpu_ids)+1)`, so the same Image yields different orders at
+different possible-CPU counts. Measured on the venus Image (2026-11-20): 1 vCPU →
+`objs_per_slab 8`, `order 1`; the phone's 8 vCPUs → **`objs_per_slab 34`, `order 3`** —
+the same 32 KiB order-3 slab as the diting, i.e. the page path's compiled `ORDER3_SIZE`
+geometry matches the real devices. The earlier 2026-11-17 QEMU dump (`qemu-runtime.txt`)
+booted at 1 vCPU, which is why it read order 1; it is not the phone (`slab-order.txt` in
+both port dirs records the 1-vs-8 measurement).
 
-Design: a profile fact (proposal: `kernelsnitch.mm_slab_order`, default 3) consumed by the
-spray geometry; the base rounding uses the actual slab size; the stride probe uses the
-slab-local offset. The non-tcp payload fits an 8 KiB slab (max offset `0x1300` < `0x2000`);
-the tcp layout (`0x5800`) does not, but tcp is infeasible on 5.x anyway. This is deferred
-from the venus's critical path (page-free) and is required only if a unit falls back to
-the page path (the star's second-region premise failing).
+Residual risk: a boot with a different possible-CPU count (e.g. `maxcpus=4`, or a future
+SoC) would change the order, and `mm_objs_per_slab`, the base rounding and the stride probe
+would then be wrong. The durable hardening (S8) is to carry the measured
+`objs_per_slab`/order as a profile fact (default 3), read on the device or on a faithful
+QEMU boot — never inferred from the image or from a 1-vCPU boot. It is not a blocker for
+the 5.4 phones: their 8-CPU order is 3, and both devices now take the page-free route
+anyway.
 
 #### 2.6.5 Star status
 
@@ -350,7 +355,7 @@ the only end-to-end 5.4 gate available.
 | S5 | KernelSnitch phase 2 + bank tail + tests | `src/core/kernelsnitch/kernelsnitch.h`, `src/core/attack/ops.cpp` |
 | S6 | QEMU W1 gate | `scripts/`, `external/port/five-four-tools/` |
 | S7 | the venus reporter run | external |
-| S8 | slab-order fact (deferred; the page-path fallback) | `src/core/kernel/constants.hpp`, `src/core/support/util.cpp`, the profile schema |
+| S8 | slab-order fact (deferred hardening; order 3 at the phones' 8 CPUs, a risk only for a different possible-CPU count) | `src/core/kernel/constants.hpp`, `src/core/support/util.cpp`, the profile schema |
 
 Order: S1 → S2 → S3 → S4 (they ship together; a profile with the new block is refused by
 an old app and misread by an old native) → S6/G2 → G3 → S7. S5 is independent of S1–S4 and
@@ -387,8 +392,8 @@ can land in parallel; S8 last.
    record the upstream source (5.4.y `security/selinux/include/security.h`) when available.
 2. The star's 8250 premise (no 8250 device on the unit) and the kprobe readback gate
    before its profile claims page-free.
-3. The slab-order fact's shape (`mm_slab_order` vs `objs_per_slab`) and whether the venus's
-   page path is ever needed after page-free.
+3. The slab-order fact's shape (`mm_slab_order` vs `objs_per_slab`) if a fallback path with a
+   different possible-CPU count ever needs it; the 8-CPU phones are order 3.
 4. Whether the venus candidate is bundled after the reporter gate — an operator decision,
    outside this plan.
 
