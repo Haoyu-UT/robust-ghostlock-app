@@ -108,3 +108,34 @@ advanced to the destination picker and the saved bundle (6,279,916 B, md5 `ff988
 kernel log, the channel that matters on devices whose pstore/DropBox are empty (the venus). The
 duchamp runs 774 with no Shizuku: the button is hidden and the step keeps the Developer-options
 route plus the adb fallback.
+
+## Crash-capture device test (diting, 2026-11-21): which channel actually holds an oops
+
+A deliberate panic (`echo c > /proc/sysrq-trigger`; the rig's `/proc/sys/kernel/sysrq` is 0 and
+`panic_on_oops` 0, but the proc trigger bypasses the sysrq mask) rebooted the phone in ~40 s. After
+the reboot:
+
+- **pstore is empty** (root `ls /sys/fs/pstore` — the directory has never held a file on this ROM),
+  and DropBox has **no `SYSTEM_LAST_KMSG`**. The shell capture records the facts correctly —
+  `pstore.*=missing`, `dropbox.last_kmsg=absent` — so the DropBox channel added in this plan is a
+  no-op on this ROM; the app now says so instead of the old undifferentiated "not readable".
+- **The vendor stability recorder did capture the panic**: a fresh
+  `/data/miuilog/stability/reboot/-1_ke_eee7c901…zip` (188,130,549 B) appeared with
+  `temp/last_kmsg` (630,172 B) containing `sysrq: Trigger a crash`,
+  `Kernel panic - not syncing: sysrq triggered crash`, the call trace
+  (`__handle_sysrq`/`write_sysrq_trigger`) and the panic tail (including
+  `PHYS_OFFSET: 0x80000000`).
+- **The Generate-via-Shizuku route pulled it in**: `bugreport generate: bugreport-shizuku-c020a5b0.zip
+  108433 ms, ok=true`; the saved bundle (6,003,265 B, md5 `afa703cb…`) carries
+  `last-crash/20261121-003053-import/stability-last_kmsg` (630,172 B — the crash's `temp/last_kmsg`)
+  and `crash-excerpts.txt` (502,498 B) with the panic markers.
+- **A real oops is on the same channel**: an older stability zip already in the report
+  (`stability-last_kmsg-1`, 337,608 B, from the 2026-11-20 10:43 crash) contains
+  `Unable to handle kernel paging request at virtual address 0030322d31310a46`,
+  `Internal error: Oops: 96000004 [#1]` and `Kernel panic - not syncing: Oops` — a genuine fault,
+  not the sysrq marker.
+
+Conclusion: on MIUI/HyperOS the no-root crash channel that works is the **vendor stability zip,
+surfaced by the generated bugreport**; pstore/DropBox is empty on this ROM and the app's facts now
+say so. The venus reporter's next crash should use 附加错误报告 → 通过 Shizuku 生成错误报告 on
+build 774+.
