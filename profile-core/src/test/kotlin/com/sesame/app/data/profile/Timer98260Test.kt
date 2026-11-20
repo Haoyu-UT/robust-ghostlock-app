@@ -12,6 +12,7 @@ import org.junit.Test
 class Timer98260Test {
     private fun realBlock() = valueMapOf(
         "version" to 1L,
+        "trigger" to "killable",
         "timer_site_lower_21bit" to 507136L,
         "timer_object_size" to 264L,
         "cred_request_size" to 168L,
@@ -70,6 +71,40 @@ class Timer98260Test {
         assertEquals(0xffffffc00aa42b90uL, config.dataSymbols["selinux_state"])
         assertEquals(5L, config.cred?.capsCount)
         assertEquals(4L, config.cred!!.sidOffset)
+    }
+
+    @Test
+    fun `the trigger is carried into the config`() {
+        val (core, coreErrors) = Timer98260.parse(
+            realBlock() + valueMapOf("trigger" to "core_state"),
+        )
+        assertTrue(coreErrors.toString(), coreErrors.isEmpty())
+        assertEquals(TimerTrigger.CORE_STATE, core!!.trigger)
+        val (fake, fakeErrors) = Timer98260.parse(fakeBlock())
+        assertTrue(fakeErrors.toString(), fakeErrors.isEmpty())
+        assertEquals(TimerTrigger.KILLABLE, fake!!.trigger)
+    }
+
+    @Test
+    fun `the trigger is validated`() {
+        fun errorsOf(block: Map<String, Any?>) = Timer98260.validate(block)
+
+        // a legacy real-only block predates the key and keeps the default
+        assertTrue(errorsOf(realBlock() - "trigger").isEmpty())
+        // a fake block must carry it
+        assertTrue(
+            errorsOf(fakeBlock() - "trigger")
+                .any { it.fieldPath == "timer_98260.trigger" },
+        )
+        // unknown or non-string values are refused
+        assertTrue(
+            errorsOf(realBlock() + valueMapOf("trigger" to "both"))
+                .any { it.fieldPath == "timer_98260.trigger" },
+        )
+        assertTrue(
+            errorsOf(realBlock() + valueMapOf("trigger" to 2L))
+                .any { it.fieldPath == "timer_98260.trigger" },
+        )
     }
 
     @Test

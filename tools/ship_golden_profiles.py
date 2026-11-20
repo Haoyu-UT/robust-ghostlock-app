@@ -493,6 +493,7 @@ def fact_mismatches(entry, asset_path):
 TIMER_BLOCK = "timer_98260"
 TIMER_TOP_KEYS = [
     "version",
+    "trigger",
     "timer_site_lower_21bit", "timer_object_size", "cred_request_size", "cred_alloc_size", "cred_uid_offset",
     "static_timer_site", "task_alloc_site_lower_21bit", "task_alloc_size", "task_cred_offset",
     "selinux_state", "panic_on_warn", "root_user", "init_user_ns",

