@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">GhostLock</string>
+    <string name="app_name">Sesame</string>
     <string name="action_run">执行</string>
     <string name="action_running">执行中…</string>
     <string name="advanced_settings">高级选项</string>
@@ -448,7 +448,7 @@
     <!-- 运行状态通知：前台服务让攻击进程在 KernelSU 管理器切到前台时不被冻结。 -->
     <string name="run_notif_channel_name">运行状态</string>
     <string name="run_notif_channel_description">攻击进度与结果</string>
-    <string name="run_notif_running_title">GhostLock 正在运行</string>
+    <string name="run_notif_running_title">Sesame 正在运行</string>
     <string name="run_notif_running_text">攻击进行中。请保持应用在前台；KernelSU 管理器可能会切到前台。</string>
     <string name="run_notif_success_title">Root 已就绪</string>
     <string name="run_notif_success_text_ghostlock">KernelSU 已加载，SELinux 已恢复。</string>
@@ -458,7 +458,7 @@
     <string name="reboot_recommended_title">建议重启</string>
     <string name="reboot_recommended_message">本次运行修改了 SELinux 策略能力，可能导致网络流量被拦截。请重启设备以恢复。</string>
     <string name="run_notif_permission_title">允许发送通知？</string>
-    <string name="run_notif_permission_message">GhostLock 用一条通知显示运行状态，并在其他应用（例如 KernelSU 管理器）切到前台时保持攻击进程继续运行。拒绝后运行仍可继续，但状态只能在应用内查看。</string>
+    <string name="run_notif_permission_message">Sesame 用一条通知显示运行状态，并在其他应用（例如 KernelSU 管理器）切到前台时保持攻击进程继续运行。拒绝后运行仍可继续，但状态只能在应用内查看。</string>
     <string name="run_notif_permission_allow">允许</string>
     <string name="run_notif_permission_later">暂不</string>
     <string name="run_status_root_active">Root 已就绪</string>

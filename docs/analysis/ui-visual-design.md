@@ -417,12 +417,12 @@ parse session becomes navigable state.
 
 ### 7.1 The static prototype (V0)
 
-`app/src/debug/kotlin/com/ghostlock/app/ui/PrototypeActivity.kt` renders every surface with mock
+`app/src/debug/kotlin/com/sesame/app/ui/PrototypeActivity.kt` renders every surface with mock
 data; `app/src/debug/AndroidManifest.xml` declares it, so no release build contains either file.
 Launch on the device:
 
 ```sh
-adb shell am start -n com.ghostlock.app/.ui.PrototypeActivity
+adb shell am start -n com.sesame.app/.ui.PrototypeActivity
 ```
 
 The bottom switcher selects 首页 / 参数 / 校验 / 生成 / 日志; on Home a second row selects the nine

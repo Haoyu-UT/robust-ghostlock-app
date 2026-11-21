@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">GhostLock</string>
+    <string name="app_name">Sesame</string>
     <string name="action_run">Run</string>
     <string name="action_running">Running…</string>
     <string name="advanced_settings">Advanced options</string>
@@ -449,7 +449,7 @@
          the cached (freezable) state while the KernelSU manager is in front. -->
     <string name="run_notif_channel_name">Run status</string>
     <string name="run_notif_channel_description">Attack progress and result</string>
-    <string name="run_notif_running_title">GhostLock is running</string>
+    <string name="run_notif_running_title">Sesame is running</string>
     <string name="run_notif_running_text">Attack in progress. Keep the app open; the KernelSU manager may come to the front.</string>
     <string name="run_notif_success_title">Root active</string>
     <string name="run_notif_success_text_ghostlock">KernelSU loaded and SELinux restored.</string>
@@ -459,7 +459,7 @@
     <string name="reboot_recommended_title">Reboot recommended</string>
     <string name="reboot_recommended_message">This run modified SELinux policy capabilities, which can block network traffic. Reboot the device to restore them.</string>
     <string name="run_notif_permission_title">Allow notifications?</string>
-    <string name="run_notif_permission_message">GhostLock shows the run status in a notification, and keeps the attack running when another app (such as the KernelSU manager) comes to the front. Without this permission the run still works, but its status is only visible inside the app.</string>
+    <string name="run_notif_permission_message">Sesame shows the run status in a notification, and keeps the attack running when another app (such as the KernelSU manager) comes to the front. Without this permission the run still works, but its status is only visible inside the app.</string>
     <string name="run_notif_permission_allow">Allow</string>
     <string name="run_notif_permission_later">Not now</string>
     <string name="run_status_root_active">Root active</string>

@@ -18,10 +18,10 @@ the post-root repairs`, 2026-11-21).
 | one state bag | `GhostlockUiState`: **88 fields**, of which **16** are `*Visible` booleans and **15** are dialog fields | `GhostlockUI.kt:110` |
 | one action bus | `GhostlockActions`: **87 methods** | `GhostlockUI.kt:276` |
 | one ViewModel | **2,985 lines**, 83 `onXxx` overrides, **36 private `var`s**, one `MutableStateFlow` | `GhostlockViewModel.kt:144`, `:149` |
-| UI sources | `GhostlockUI.kt` 2,043 lines, `AdvancedUI.kt` 1,384, UI package 7,647 | `app/src/main/kotlin/com/ghostlock/app/ui/` |
+| UI sources | `GhostlockUI.kt` 2,043 lines, `AdvancedUI.kt` 1,384, UI package 7,647 | `app/src/main/kotlin/com/sesame/app/ui/` |
 | navigation | two truths (16 booleans **and** a `NavBackStack`), three parallel mappings | `:382` `navigationPath`, `:420` `syncNavigationPath`, `:431` `closeScreen` |
 | dialogs | one 15-field bus with a 6-variant `DialogType` shared by ~50 call sites | `:657` |
-| UI tests | 4 files, all pure helpers; **none** references `GhostlockUiState` | `app/src/test/kotlin/com/ghostlock/app/ui/` |
+| UI tests | 4 files, all pure helpers; **none** references `GhostlockUiState` | `app/src/test/kotlin/com/sesame/app/ui/` |
 | state restoration | no `SavedStateHandle`, no `rememberSaveable` | — |
 
 ### 1.2 The four structural causes
@@ -310,7 +310,7 @@ python3 tools/ship_golden_profiles.py --check   # untouched, but run: the bundle
 | N2 | trigger each dialog kind (route picker, overwrite, notice, input, stride, phys prompt, notification permission) | same text and buttons; the answer reaches the same flow |
 | N3 | the support plan's S5 (star document → `ProfileBlocked` with the reason; 759-style crafted states; a valid profile → `Ready`) | its own gate |
 | N4 | the same navigation sweep + a full chain run (Ready → run → `KernelSU ready`, store `completed`) + a blocked run + the validation report on a deliberately broken profile | both, and every error names its path |
-| N5 | `adb shell am kill com.ghostlock.app` on each screen; relaunch | the stack and the last-run state restore |
+| N5 | `adb shell am kill com.sesame.app` on each screen; relaunch | the stack and the last-run state restore |
 
 **Screenshot matrix (N0, ~35 captures).** Home in 9 verdict states; the validation report (valid,
 invalid, blocked); Advanced, Parameters (source cards), LoadConfig, Builtin, MergePreview, Legacy,
