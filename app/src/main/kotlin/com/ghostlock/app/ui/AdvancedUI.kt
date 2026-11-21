@@ -188,6 +188,15 @@ internal fun AdvancedScreen(
             contentPadding = pageContentPadding(paddingValues),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item(key = "runSettings") {
+                Card {
+                    ArrowPreference(
+                        title = stringResource(R.string.run_settings_title),
+                        summary = stringResource(R.string.run_settings_summary),
+                        onClick = actions::onOpenRunSettings,
+                    )
+                }
+            }
             item(key = "forceAttack") {
                 Card {
                     SwitchPreference(

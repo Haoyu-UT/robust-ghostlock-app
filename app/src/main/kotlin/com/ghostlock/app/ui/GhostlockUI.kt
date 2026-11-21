@@ -111,6 +111,8 @@ data class GhostlockUiState(
     val kernelRelease: String = "",
     val socName: String = "",
     val kernelSupported: Boolean = false,
+    /** The kernel is covered but has no usable physical-memory pair (MTK). */
+    val devicePairMissing: Boolean = false,
     /**
      * The imported copy cannot be read, so there is no profile and no run: the
      * home names the real cause and sends the user to re-import instead of
@@ -235,6 +237,10 @@ interface GhostlockActions {
     fun onRun()
     fun onProfileInvalid()
     fun onStatusClick()
+    fun onShowDeviceInfo()
+    fun onOpenLastRunLog()
+    fun onOpenRunSettings()
+    fun onCloseRunSettings()
     fun onCloseExecutionSheet()
     fun onCopyLogs()
     fun onExportRunLog()
@@ -326,6 +332,7 @@ private fun closeScreen(screen: Screen, actions: GhostlockActions) {
         Screen.Main -> Unit
         Screen.VrKo -> actions.onCloseVrKo()
         Screen.Advanced -> actions.onCloseAdvanced()
+        Screen.RunSettings -> actions.onCloseRunSettings()
         Screen.About -> actions.onCloseAbout()
         Screen.Measurements -> actions.onCloseMeasurements()
         Screen.Parameters -> actions.onCloseParameters()
@@ -386,6 +393,9 @@ internal fun GhostlockApp(
                     entry<Screen.Advanced>(swipeDismiss = swipeBack) {
                         AdvancedScreen(state = state, actions = actions)
                     }
+                    entry<Screen.RunSettings>(swipeDismiss = swipeBack) {
+                        RunSettingsScreen(state = state, actions = actions)
+                    }
                     entry<Screen.About>(swipeDismiss = swipeBack) {
                         AboutScreen(onBack = actions::onCloseAbout)
                     }
@@ -432,24 +442,7 @@ private fun MainScreen(
     state: GhostlockUiState,
     actions: GhostlockActions,
 ) {
-    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = "GhostLock",
-                scrollBehavior = scrollBehavior,
-            )
-        },
-    ) { paddingValues ->
-        MainContent(
-            state = state,
-            actions = actions,
-            scrollBehavior = scrollBehavior,
-            scaffoldPadding = paddingValues,
-            modifier = Modifier.fillMaxSize(),
-        )
-    }
+    HomeScreen(state = state, actions = actions)
 }
 
 @Composable

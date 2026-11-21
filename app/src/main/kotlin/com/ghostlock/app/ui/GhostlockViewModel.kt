@@ -1684,6 +1684,39 @@ class GhostlockViewModel(
         showNotice(title, message)
     }
 
+    fun onShowDeviceInfo() {
+        val s = state.value
+        mutableState.update {
+            it.copy(
+                dialog = AppDialog.Notice(
+                    titleRes = R.string.home_device_info_title,
+                    message = listOf(s.deviceName, s.socName, s.kernelRelease)
+                        .filter { it.isNotBlank() }
+                        .joinToString("\n"),
+                ),
+            )
+        }
+    }
+
+    /** Opens the run sheet on the last run's retained log. */
+    fun onOpenLastRunLog() {
+        if (state.value.logLines.isEmpty()) return
+        mutableState.update {
+            it.copy(
+                executionSheetVisible = true,
+                executionSheetDismissible = !running,
+            )
+        }
+    }
+
+    fun onOpenRunSettings() {
+        nav.push(Screen.RunSettings)
+    }
+
+    fun onCloseRunSettings() {
+        nav.pop()
+    }
+
     fun onCloseExecutionSheet() {
         if (running && !state.value.executionSheetDismissible) return
         mutableState.update { it.copy(executionSheetVisible = false) }
@@ -2098,6 +2131,7 @@ class GhostlockViewModel(
                 kernelRelease = snapshot.kernelRelease,
                 socName = snapshot.socName,
                 kernelSupported = snapshot.kernelSupported,
+                devicePairMissing = snapshot.devicePairMissing,
                 cpuPairLabels = snapshot.cpuPairLabels,
                 cpuPairIndex = snapshot.selectedCpuPair,
                 safeModeEnabled = snapshot.safeModeEnabled,

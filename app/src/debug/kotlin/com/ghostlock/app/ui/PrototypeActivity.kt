@@ -89,14 +89,14 @@ private enum class ProtoScreen(val label: String) {
     RunSheet("日志"),
 }
 
-private enum class StatusKind { Success, Pending, Action, Blocked }
+private enum class ProtoStatusKind { Success, Pending, Action, Blocked }
 
 private data class StatusMock(
     val chip: String,
     val title: String,
     val summary: String,
     val detail: String?,
-    val kind: StatusKind,
+    val kind: ProtoStatusKind,
     val barLabel: String,
 )
 
@@ -106,7 +106,7 @@ private val statusMocks = listOf(
         title = "受支持",
         summary = "配置已就绪",
         detail = "内置 5.10.236 · select_stack · 有效",
-        kind = StatusKind.Success,
+        kind = ProtoStatusKind.Success,
         barLabel = "执行",
     ),
     StatusMock(
@@ -114,7 +114,7 @@ private val statusMocks = listOf(
         title = "通过 Shizuku 执行",
         summary = "Shizuku 未运行",
         detail = null,
-        kind = StatusKind.Pending,
+        kind = ProtoStatusKind.Pending,
         barLabel = "配置 Shizuku",
     ),
     StatusMock(
@@ -122,7 +122,7 @@ private val statusMocks = listOf(
         title = "配置需要修正",
         summary = "2 项参数无效",
         detail = null,
-        kind = StatusKind.Action,
+        kind = ProtoStatusKind.Action,
         barLabel = "查看问题",
     ),
     StatusMock(
@@ -130,7 +130,7 @@ private val statusMocks = listOf(
         title = "需要物理内存参数",
         summary = "请提供 vendor_boot/dtbo 并重新解析（联发科）",
         detail = null,
-        kind = StatusKind.Action,
+        kind = ProtoStatusKind.Action,
         barLabel = "去补充",
     ),
     StatusMock(
@@ -138,7 +138,7 @@ private val statusMocks = listOf(
         title = "需要加载配置",
         summary = "加载或生成配置后可执行",
         detail = null,
-        kind = StatusKind.Action,
+        kind = ProtoStatusKind.Action,
         barLabel = "去生成",
     ),
     StatusMock(
@@ -146,7 +146,7 @@ private val statusMocks = listOf(
         title = "配置无法读取",
         summary = "所选文件无法读取，请重新导入",
         detail = null,
-        kind = StatusKind.Blocked,
+        kind = ProtoStatusKind.Blocked,
         barLabel = "去导入",
     ),
     StatusMock(
@@ -154,7 +154,7 @@ private val statusMocks = listOf(
         title = "配置需要修正",
         summary = "the profile's kernel_phys_* map does not name diting",
         detail = null,
-        kind = StatusKind.Blocked,
+        kind = ProtoStatusKind.Blocked,
         barLabel = "去处理",
     ),
     StatusMock(
@@ -162,7 +162,7 @@ private val statusMocks = listOf(
         title = "不支持",
         summary = "未找到匹配 5.10.236 的配置",
         detail = null,
-        kind = StatusKind.Blocked,
+        kind = ProtoStatusKind.Blocked,
         barLabel = "生成配置",
     ),
     StatusMock(
@@ -170,7 +170,7 @@ private val statusMocks = listOf(
         title = "配置解析失败",
         summary = "unexpected end of input at 'cred'",
         detail = null,
-        kind = StatusKind.Blocked,
+        kind = ProtoStatusKind.Blocked,
         barLabel = "查看",
     ),
 )
@@ -329,35 +329,35 @@ private fun StatusCard(status: StatusMock) {
     val dark = isSystemInDarkTheme()
     val dynamic = MiuixTheme.isDynamicColor
     val container = when (status.kind) {
-        StatusKind.Success -> when {
+        ProtoStatusKind.Success -> when {
             dynamic -> MiuixTheme.colorScheme.secondaryContainer
             dark -> Color(0xFF1A3825)
             else -> Color(0xFFDFFAE4)
         }
 
-        StatusKind.Pending -> if (dark) Color(0xFF2C2C2C) else Color(0xFFF2F2F2)
+        ProtoStatusKind.Pending -> if (dark) Color(0xFF2C2C2C) else Color(0xFFF2F2F2)
 
-        StatusKind.Action -> when {
+        ProtoStatusKind.Action -> when {
             dynamic -> MiuixTheme.colorScheme.tertiaryContainer
             dark -> Color(0xFF3E2F1B)
             else -> Color(0xFFFFF0DB)
         }
 
-        StatusKind.Blocked -> MiuixTheme.colorScheme.errorContainer
+        ProtoStatusKind.Blocked -> MiuixTheme.colorScheme.errorContainer
     }
     val iconTint = when (status.kind) {
-        StatusKind.Success -> if (dynamic) MiuixTheme.colorScheme.primary else Color(0xFF36D167)
-        StatusKind.Pending -> secondary()
-        StatusKind.Action ->
+        ProtoStatusKind.Success -> if (dynamic) MiuixTheme.colorScheme.primary else Color(0xFF36D167)
+        ProtoStatusKind.Pending -> secondary()
+        ProtoStatusKind.Action ->
             if (dynamic) MiuixTheme.colorScheme.onTertiaryContainer else Color(0xFFF5A623)
 
-        StatusKind.Blocked ->
+        ProtoStatusKind.Blocked ->
             if (dynamic) MiuixTheme.colorScheme.onErrorContainer else Color(0xFFF72727)
     }
     val icon = when (status.kind) {
-        StatusKind.Success -> Icons.Rounded.CheckCircleOutline
-        StatusKind.Pending -> Icons.Rounded.RemoveCircleOutline
-        StatusKind.Action, StatusKind.Blocked -> Icons.Rounded.ErrorOutline
+        ProtoStatusKind.Success -> Icons.Rounded.CheckCircleOutline
+        ProtoStatusKind.Pending -> Icons.Rounded.RemoveCircleOutline
+        ProtoStatusKind.Action, ProtoStatusKind.Blocked -> Icons.Rounded.ErrorOutline
     }
     Card(
         modifier = Modifier.fillMaxWidth(),

@@ -481,4 +481,27 @@
     <string name="run_status_failed">未获得 root</string>
     <string name="run_notif_open_manager">打开 KernelSU 管理器</string>
     <string name="run_notif_manager_missing">未找到 KernelSU 管理器，或它没有启动界面。</string>
+    <!-- Home (V1) -->
+    <string name="home_load_summary">选择已有的 .conf 文件</string>
+    <string name="home_last_run">上次运行</string>
+    <string name="home_export_report_summary">日志、崩溃证据与当前配置</string>
+    <string name="home_action_shizuku">配置 Shizuku</string>
+    <string name="home_action_issues">查看问题</string>
+    <string name="home_action_generate">去生成</string>
+    <string name="home_action_import">去导入</string>
+    <string name="home_action_supplement">去补充</string>
+    <string name="home_action_fix">去处理</string>
+    <string name="home_action_view">查看</string>
+    <string name="home_invalid_count">%1$d 项参数无效</string>
+    <string name="home_pair_missing_title">需要物理内存参数</string>
+    <string name="home_pair_missing_summary">请提供 vendor_boot/dtbo 并重新解析（联发科）</string>
+    <string name="home_resolution_failed_title">配置解析失败</string>
+    <string name="home_source_builtin">内置</string>
+    <string name="home_source_external">外部</string>
+    <string name="home_device_info_title">设备信息</string>
+    <string name="home_run_none">还没有运行记录</string>
+    <string name="home_run_done">已完成</string>
+    <string name="home_run_failed">未完成</string>
+    <string name="run_settings_title">运行设置</string>
+    <string name="run_settings_summary">CPU 核组、安全模式、Shizuku、vr.ko</string>
 </resources>

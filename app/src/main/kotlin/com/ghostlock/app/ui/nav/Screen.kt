@@ -10,6 +10,7 @@ internal sealed interface Screen : NavKey {
     data object Main : Screen
     data object VrKo : Screen
     data object Advanced : Screen
+    data object RunSettings : Screen
     data object About : Screen
     data object Measurements : Screen
     data object Parameters : Screen

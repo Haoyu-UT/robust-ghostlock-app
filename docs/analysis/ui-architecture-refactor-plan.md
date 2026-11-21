@@ -369,7 +369,14 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   ViewModel split, one screen per commit.
 - [ ] **N5** — `SavedStateHandle`, coroutines-test, home-card Compose tests.
 - [ ] delete `GhostlockUiState`, `GhostlockActions`, `GhostlockUI.kt`, `AdvancedUI.kt`.
-- [ ] **V1–V4** — the surfaces in `ui-visual-design.md` §6, in its order (V1 between N4a and N4b).
+- [x] **V1** — Home. *(2026-11-21: landed before N3 with a pure `supportStatusOf(state)` mapping —
+  the stored verdict with a generation is still N3. Identity line + device dialog, the verdict
+  card, the acquisition card (生成配置 / 加载配置), the run group (上次运行 / 导出报告 /
+  高级选项) and the pinned bar; settings moved to Advanced → 运行设置. 9 `SupportStatusTest` cases;
+  device check on the diting. `FieldsInvalid` opens Parameters until the validation report
+  (N4a).)*
+- [ ] **V2–V4** — Parameters, the generation flow, and the run sheet / run settings polish /
+  report header (`ui-visual-design.md` §6).
 
 ## 10. Decisions needed (operator sign-off)
 
