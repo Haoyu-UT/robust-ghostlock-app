@@ -403,6 +403,14 @@ private fun GhostlockExecutionSheet(
             }
         },
         content = {
+            if (!state.executionSheetDismissible) {
+                Text(
+                    text = stringResource(R.string.action_running),
+                    modifier = Modifier.padding(bottom = 8.dp),
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
             LogPanel(
                 lines = state.logLines,
                 modifier = Modifier
@@ -410,28 +418,35 @@ private fun GhostlockExecutionSheet(
                     .heightIn(min = 240.dp, max = 520.dp)
                     .navigationBarsPadding(),
             )
-            /* The run's visible verdict, and the explicit way into the
-             * KernelSU manager once the run is over. The manager itself is
-             * never auto-launched by the app: on a late-load ROM its own
-             * restart is what takes the foreground mid-handoff. */
-            if (state.executionSheetDismissible && state.runStatus != RunStatus.Idle) {
+            /* The run's visible verdict and the two terminal actions. The
+             * manager itself is never auto-launched by the app: on a late-load
+             * ROM its own restart is what takes the foreground mid-handoff. */
+            if (state.executionSheetDismissible) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = stringResource(
-                            if (state.runStatus == RunStatus.Success) {
-                                R.string.run_status_root_active
-                            } else {
-                                R.string.run_status_failed
-                            },
-                        ),
-                        modifier = Modifier.weight(1f),
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    if (state.runStatus != RunStatus.Idle) {
+                        Text(
+                            text = stringResource(
+                                if (state.runStatus == RunStatus.Success) {
+                                    R.string.run_status_root_active
+                                } else {
+                                    R.string.run_status_failed
+                                },
+                            ),
+                            modifier = Modifier.weight(1f),
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                    TextButton(
+                        text = stringResource(R.string.run_log_export),
+                        onClick = actions::onExportRunLog,
                     )
                     TextButton(
                         text = stringResource(R.string.run_notif_open_manager),
