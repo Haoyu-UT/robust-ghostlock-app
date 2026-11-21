@@ -3,6 +3,7 @@ package com.ghostlock.app.ui
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircleOutline
@@ -34,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -209,18 +212,10 @@ private fun VariantChips(selected: Int, onSelect: (Int) -> Unit) {
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         statusMocks.forEachIndexed { index, mock ->
-            TextButton(
-                text = mock.chip,
-                onClick = { onSelect(index) },
-                colors = if (index == selected) {
-                    ButtonDefaults.textButtonColorsPrimary()
-                } else {
-                    ButtonDefaults.textButtonColors()
-                },
-            )
+            Chip(text = mock.chip, selected = index == selected) { onSelect(index) }
         }
     }
 }
@@ -231,21 +226,41 @@ private fun ProtoSwitcher(current: ProtoScreen, onSelect: (ProtoScreen) -> Unit)
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 2.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
         ProtoScreen.entries.forEach { screen ->
-            TextButton(
-                text = screen.label,
-                onClick = { onSelect(screen) },
-                colors = if (screen == current) {
-                    ButtonDefaults.textButtonColorsPrimary()
-                } else {
-                    ButtonDefaults.textButtonColors()
-                },
-            )
+            Chip(text = screen.label, selected = screen == current) { onSelect(screen) }
         }
     }
+}
+
+/** A text-only action: primary colour, no container. */
+@Composable
+private fun LinkButton(text: String, onClick: () -> Unit) {
+    Text(
+        text = text,
+        color = MiuixTheme.colorScheme.primary,
+        fontSize = 15.sp,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+    )
+}
+
+/** A compact selectable chip for the prototype's switchers. */
+@Composable
+private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text = text,
+        color = if (selected) Color.White else MiuixTheme.colorScheme.onSurface,
+        fontSize = 13.sp,
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) MiuixTheme.colorScheme.primary else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+    )
 }
 
 /* ---------- Home ---------- */
@@ -400,9 +415,9 @@ private fun ParametersMock() {
                     modifier = Modifier.padding(top = 2.dp),
                 )
                 Row(modifier = Modifier.padding(top = 8.dp)) {
-                    TextButton(text = "查看问题", onClick = {})
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(text = "导出配置", onClick = {})
+                    LinkButton(text = "查看问题", onClick = {})
+                    Spacer(Modifier.width(4.dp))
+                    LinkButton(text = "导出配置", onClick = {})
                 }
             }
         }
@@ -441,14 +456,16 @@ private fun ParametersMock() {
 @Composable
 private fun ValidationMock() {
     MockScreen(title = "配置需要修正") {
-        Text(text = "2 项参数无效", fontSize = 14.sp, color = secondary())
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "2 项参数无效",
+                fontSize = 14.sp,
+                color = secondary(),
+                modifier = Modifier.weight(1f),
+            )
+            LinkButton(text = "导出当前配置", onClick = {})
+        }
         Spacer(Modifier.height(8.dp))
-        TextButton(
-            text = "导出当前配置",
-            onClick = {},
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
             insideMargin = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
@@ -490,7 +507,7 @@ private fun ErrorRow(path: String, rule: String) {
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
-        TextButton(text = "复制", onClick = {})
+        LinkButton(text = "复制", onClick = {})
     }
 }
 
@@ -504,18 +521,10 @@ private fun GenerationMock() {
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             listOf("1 来源", "2 解析", "3 确认", "4 保存").forEachIndexed { index, label ->
-                TextButton(
-                    text = label,
-                    onClick = { step = index + 1 },
-                    colors = if (step == index + 1) {
-                        ButtonDefaults.textButtonColorsPrimary()
-                    } else {
-                        ButtonDefaults.textButtonColors()
-                    },
-                )
+                Chip(text = label, selected = step == index + 1) { step = index + 1 }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -619,9 +628,9 @@ private fun GenSave() {
         Column {
             Text(text = "已保存 · 5.10.236-ghostlock.conf", fontSize = 15.sp)
             Row(modifier = Modifier.padding(top = 8.dp)) {
-                TextButton(text = "导入此配置", onClick = {})
-                Spacer(Modifier.width(8.dp))
-                TextButton(text = "完成", onClick = {})
+                LinkButton(text = "导入此配置", onClick = {})
+                Spacer(Modifier.width(4.dp))
+                LinkButton(text = "完成", onClick = {})
             }
         }
     }
@@ -642,8 +651,8 @@ private fun RunSheetMock() {
                 fontSize = 15.sp,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(
-                text = if (finished) "运行中" else "完成",
+            LinkButton(
+                text = "切换状态",
                 onClick = { finished = !finished },
             )
         }
@@ -670,9 +679,9 @@ private fun RunSheetMock() {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
         ) {
-            TextButton(text = "打开管理器", onClick = {})
-            Spacer(Modifier.width(8.dp))
-            TextButton(text = "导出报告", onClick = {})
+            LinkButton(text = "打开管理器", onClick = {})
+            Spacer(Modifier.width(4.dp))
+            LinkButton(text = "导出报告", onClick = {})
         }
     }
 }

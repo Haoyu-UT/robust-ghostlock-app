@@ -323,7 +323,11 @@ One large title per screen. Section headers inside a page are 14 sp / 600, secon
 
 - **Primary**: filled, full width, only in the pinned bar (Home) or as the flow's forward action
   (generation, report). One per screen.
-- **Secondary**: text or outlined (`TextButton`), for row actions (查看问题, 导出配置, 复制).
+- **Secondary**: text links, not buttons. Miuix's `TextButton` is a filled pill by default
+  (`ButtonDefaults.textButtonColors()`); a secondary action is a primary-coloured `Text` with a
+  click modifier and 8 dp padding, so it never competes with the filled primary.
+- **Chips** (step selectors, prototype switchers): 16 dp radius, 13 sp, primary container when
+  selected, no container otherwise.
 - **Destructive**: error-coloured text button inside a 危险操作 section, always followed by a
   confirm dialog. Never in the primary band, never between benign rows.
 - Disabled actions explain themselves in the row summary, not with a toast.
