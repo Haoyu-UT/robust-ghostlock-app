@@ -366,17 +366,23 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   Phys / Route / Plan / Lock / Overwrite — carries every pending choice; `parseDialogStage` and the
   twelve `pending*` variables are gone, and so is `PendingConfirmation`. Cancelling a choice resets
   the step. Device: generation → local image → the payload/boot dialog → cancel → back.)*
-- [ ] **N3** — `SupportStatus` (the support plan, re-homed) + editor state holder.
-  *In progress (2026-11-21): the three-state model is live (`Ready | AccessPending | Missing`,
-  5 tests); D1 (dead `describe()` clauses) and D3 (layer-notice machinery) are deleted; the legacy
-  cleanup UI, its state/actions/strings and the dead Home composables are removed. Open: the
-  repository-side `UserProfileStore`/coverage removal, the universal pair rule, the transactional
-  import with its rejection surface, D7 (run consumes the resolved config) and D8 (snapshot stops
-  resolving). When those land, `support-status-state-plan.md` is deleted.*
-- [ ] **N4** — delete the three editor screens (§3.7), then per-screen states/actions and the
-  ViewModel split, one screen per commit.
-- [ ] **N5** — `SavedStateHandle`, coroutines-test, home-card Compose tests.
-- [ ] delete `GhostlockUiState`, `GhostlockActions`, `GhostlockUI.kt`, `AdvancedUI.kt`.
+- [x] **N3** — the support verdict. *(2026-11-21: three-state model `Ready | AccessPending |
+  Missing`; D1/D3 deleted; the legacy store, its migration/cleanup UI and the stored-overrides
+  layer removed; import is transactional with a field-path rejection dialog; the physical pair is
+  required for every device; D7 (the run consumes the resolved profile) and D8 (`snapshot()` stops
+  resolving) done. `support-status-state-plan.md` deleted per the operator decision.)*
+- [x] **N4** — editor deletion and the state split. *(2026-11-21: the three editor screens and the
+  editing plumbing are gone; `SessionState` + `ReportState` + `OverlayState` + `GenerationState` +
+  `BuiltinState` with per-screen actions; the god state and action bus are deleted; the shell takes
+  the slices. Device-checked on the diting.)*
+- [ ] **N5** — `SavedStateHandle` (the one remaining feature), coroutines-test and the Compose
+  tests. *Tests were deferred by the operator; the unit-test sources compile.*
+- [x] **V2** — Parameters hub: current source/release/route card, builtin picker, docs, export,
+  danger row; the load-config screen is deleted.
+- [x] **V4** — run sheet: 运行中 line, verdict footer with 导出报告 and 打开管理器, tone tags no
+  longer rendered. The report wizard carries its step indicator.
+- **NAS (2026-11-21):** `ghostlock-builds/2026-11-21-ui-refactor-812/` — APK (versionCode 812,
+  commit `91364724`), README, MD5/SHA256 sums verified on the share.
 - [x] **V1** — Home. *(2026-11-21: landed before N3 with a pure `supportStatusOf(state)` mapping —
   the stored verdict with a generation is still N3. Identity line + device dialog, the verdict
   card, the acquisition card (生成配置 / 加载配置), the run group (上次运行 / 导出报告 /
@@ -388,8 +394,6 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   保存; the parse no longer opens the run log sheet; the generated document waits on the save
   step instead of opening the SAF picker itself. Route/plan/phys/overwrite choices are still
   dialogs over step 3 until N2b. Device: step 1, the failed step with its last line and retry.)*
-- [ ] **V2–V4** — Parameters, and the run sheet / report header polish
-  (`ui-visual-design.md` §6).
 
 ## 10. Decisions needed (operator sign-off)
 
