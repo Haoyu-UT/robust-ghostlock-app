@@ -1419,6 +1419,11 @@ class GhostlockViewModel(
                 PreflightResult.Passed -> Unit
             }
             if (!beginOperation()) return@launch
+            /* A new run is a new log: the sheet must never open on the
+             * previous operation's lines (the generation flow's, typically).
+             * Without this the list accumulated across operations and read as
+             * "nothing new during execution". */
+            clearLog()
             send(GhostlockEffect.KeepScreenAwake(true))
             mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(status = RunStatus.Running))) }
             /* A foreground service keeps the app's uid out of the cached
@@ -2231,6 +2236,7 @@ class GhostlockViewModel(
 
     private suspend fun runParse(request: ParseRequest) {
         if (!beginOperation(showLogSheet = false)) return
+        clearLog()
         mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Parsing)) }
         try {
             when (
@@ -2727,6 +2733,13 @@ class GhostlockViewModel(
         mutableState.update { it.copy(
             session = it.session.copy(run = it.session.run.copy(logLines = it.session.run.logLines + uiLine)),
         ) }
+    }
+
+    /** Starts a fresh log for the operation that is about to run. */
+    private fun clearLog() {
+        mutableState.update {
+            it.copy(session = it.session.copy(run = it.session.run.copy(logLines = emptyList())))
+        }
     }
 
     private fun beginOperation(showLogSheet: Boolean = true): Boolean {
