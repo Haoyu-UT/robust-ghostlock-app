@@ -2,8 +2,9 @@
 
 **Status 2026-11-21: research plan, branch-local.** This file lives only on `feat/dirtyfrag-5x`.
 If the experiment is dropped, the branch and this plan go with it; it is not a product design and
-changes nothing until a gate below says it should. **G1 measured, G2–G4 passed (2026-11-21)** — see the result blocks under each gate; only
-the device gate (G5) remains.
+changes nothing until a gate below says it should. **G1 measured, G2–G4 passed (2026-11-21)** — see the result blocks under each gate. G4's
+module build is valid only where the vendor's `struct module` matches (checked against the ROM
+modules; a 6.1 device probe panicked because it did not). Only the device gate (G5) remains.
 
 ## The question
 
@@ -198,6 +199,18 @@ check is real: a corrupted `module_layout` CRC is refused (`disagrees about vers
 shape the chain: module signing is **off** (`# CONFIG_MODULE_SIG is not set`), and CFI built by
 clang 21 runs on the clang-11.0.2 kernels (the module's indirect calls and the kernel's call to
 its init both pass).
+
+**G4b — a real-device probe, and its correction (2026-11-21, off-target).** The same module was
+loaded on the POCO (`duchamp`, 6.1.138) at hand. It **panicked the kernel**: that vendor build's
+`struct module` is 1088 B (its BTF says so) against ACK's 1024 — `init` sits at the same offset
+but `exit` and the layout fields do not, and patching `module_layout`'s CRC had masked exactly
+the check that would have refused it. The 5.4 targets were then re-examined the same way: their
+own vendor modules (from the two ROMs) carry a 896 B `struct module` with `name`/`init`/`exit` at
+the same offsets as the ACK-built module, so the 5.4 passes rest on layout evidence rather than on
+the patched CRC. The rule that comes out of it: **an ACK-only module is valid only when the
+vendor's layout matches**, and a patched `module_layout` CRC is never proof of compatibility.
+Verify a candidate against a vendor `.ko` from the target ROM (section size and relocation
+offsets) before trusting it; on 6.1+ the Image BTF gives the full member map.
 
 ### G5 — device (owner)
 
