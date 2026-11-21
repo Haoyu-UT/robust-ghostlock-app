@@ -397,8 +397,9 @@ The support plan is **not superseded**; it is the most developed part of this pl
 The full visual spec is `ui-visual-design.md` (2026-11-21); these decisions are settled and
 constrain N3 and V1:
 
-- **Generation-first Home.** 生成配置 stays a first-class card on Home; the device card collapses
-  to one identity line; settings move behind 高级选项 → 运行设置.
+- **Generation-first Home.** One 获取配置 card stays on Home with both acquisition paths
+  (生成配置, 加载配置); the device card collapses to one identity line; settings move behind
+  高级选项 → 运行设置.
 - **Log export lives on Home**, as a row in the run group (上次运行 / 导出报告 / 高级选项), not a
   button in the action band. The run sheet's result card keeps the same entry; both reach one flow.
 - **One pinned action bar** whose label follows `SupportStatus`; four visual variants

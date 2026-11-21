@@ -247,6 +247,10 @@ generation is current) and:
 All strings land in both `values/` and `values-zh/`; the English reason from the resolver is
 shown verbatim after the localized summary (diagnostic, like the run log).
 
+Action destinations follow `ui-visual-design.md` §3.1.1: 生成配置 and 加载配置 live on Home's
+acquisition card, so `KernelUnsupported`/`CopyUnreadable` land there rather than on Parameters, and
+`FieldsInvalid` opens the validation report.
+
 ## 5. Decisions (operator sign-off)
 
 - **D1 — `describe()` log format.** Drop the two dead clauses (`imported=…`, `overrides=…`) and

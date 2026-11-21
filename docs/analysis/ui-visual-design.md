@@ -31,7 +31,7 @@ slices being ordered as §6 below.
 | Every element has the same card weight | all captures | cards group rows; one accent (§4) |
 | 导出报告 is a filled button in the action band | `ui-before-home-bottom.png` | a row in the run group; same flow from the run sheet |
 | The device card takes a quarter of the first screen, kernel wraps mid-number | `ui-before-home.png` | one identity line + a dialog (§3.1) |
-| The same flow has two doors (生成配置 on Home, 加载配置 → 解析… in Parameters) | home + parameters captures | generation is one card on Home; Parameters links to it |
+| The same flow has two doors (生成配置 on Home, 加载配置 → 解析… in Parameters) | home + parameters captures | one 获取配置 card on Home: 生成配置 / 加载配置 |
 | The first Parameters card renders as a bare title | `ui-before-params.png` | fixed in V2 (it is a bug, not a design) |
 | The destructive 取消外部配置 is a neutral full-width button between benign rows | `ui-before-loadconfig.png` | 危险操作 section, error colour, confirm (§3.2) |
 | The editor renders one card per scalar field | `ui-before-editor.png` | editor deleted; validation report (§3.4) |
@@ -50,11 +50,9 @@ slices being ordered as §6 below.
 │    配置已就绪                                     │
 │    内置 5.10.236 · select_stack · 有效            │   detail line
 ├──────────────────────────────────────────────────┤
-│ 生成配置                                          │
-│ 为本机内核从 OTA 链接或本地镜像生成配置           │
-│ ┌────────────────────┐ ┌────────────────────┐    │
-│ │     OTA 链接       │ │     本地镜像       │    │
-│ └────────────────────┘ └────────────────────┘    │
+│ 获取配置                                          │
+│   生成配置   从 OTA 链接或本地镜像             ›  │
+│   加载配置   选择已有的 .conf 文件             ›  │
 ├──────────────────────────────────────────────────┤
 │ 上次运行   完成 · 2 分钟前                      › │
 │ 导出报告   日志、崩溃证据与当前配置             › │
@@ -67,9 +65,10 @@ slices being ordered as §6 below.
   ⓘ opens `AppDialog.Notice` with the three full values (the old `DeviceInfoCard` contents).
 - **Status card.** Title, summary, detail line. The detail is the current source · route ·
   validity when a profile resolved; empty otherwise. One of four variants (§3.1.1).
-- **Generation card.** Title, summary, two buttons: `OTA 链接` (opens the link input step) and
-  `本地镜像` (opens the SAF picker through the existing effect). It never moves; it is the second
-  card on the screen in every state.
+- **Acquisition card.** Two rows, always present — this is the generation-first surface:
+  生成配置 opens the generation flow at its source step (OTA link / local image), 加载配置 opens
+  the SAF picker for an existing `.conf` through the existing effect. Both acquisition paths are
+  one tap from Home; there is no second door in Parameters.
 - **Run group.** Three rows in one card: 上次运行 (opens the run log/sheet for the last run),
   导出报告 (opens the report flow), 高级选项 (pushes Advanced). Rows, not buttons.
 - **Pinned bar.** One filled button, height 52 dp, label and destination from the status table.
@@ -96,12 +95,14 @@ The titles and summaries come from `support-status-state-plan.md` §4, with one 
 the editor deleted the count replaces it. The detail line is new and always the current source.
 
 Bar destinations: 执行 → run; 配置 Shizuku → the Shizuku permission flow; 查看问题 → Validation;
-去补充 / 生成配置 / 去生成 → the generation flow; 去导入 → Parameters → 加载配置文件;
+去补充 / 生成配置 / 去生成 → the generation flow; 去导入 → the 加载配置 row on Home;
 去处理 / 查看 → Parameters (or Validation when the status carries errors).
 
-### 3.2 Parameters — the profile hub
+### 3.2 Parameters — the profile manager
 
-`参数配置` absorbs today's 加载配置 screen; one hub, one fewer screen.
+Acquisition lives on Home (§3.1); Parameters manages what is loaded. Today's 加载配置 screen
+dissolves: its load action is Home's 加载配置 row, its parse actions are the generation flow, and
+its builtin list lands here.
 
 ```
 参数配置
@@ -110,9 +111,7 @@ Bar destinations: 执行 → run; 配置 Shizuku → the Shizuku permission flow
 │ 5.10.236 · select_stack · 有效                   │
 │ [ 查看问题 ]                     [ 导出配置 ]    │
 └──────────────────────────────────────────────────┘
-┌ 配置来源 ────────────────────────────────────────┐
-│ 生成配置                                      ›  │
-│ 加载配置文件                                  ›  │
+┌ 其他来源 ────────────────────────────────────────┐
 │ 内置配置                                      ›  │
 └──────────────────────────────────────────────────┘
 ┌ 危险操作 ────────────────────────────────────────┐
@@ -120,11 +119,13 @@ Bar destinations: 执行 → run; 配置 Shizuku → the Shizuku permission flow
 └──────────────────────────────────────────────────┘
 ```
 
-- The source card always has content (the empty-card bug is fixed here): name, release, route,
-  validity; 查看问题 appears only when errors exist; 导出配置 is the SAF export of the current copy.
+- The current-config card always has content (the empty-card bug is fixed here): name, release,
+  route, validity; 查看问题 appears only when errors exist; 导出配置 is the SAF export of the
+  current copy.
+- 内置配置 is the one acquisition path kept off Home: a builtin is chosen automatically when it
+  matches, so selecting one by hand is an override, not a first-run action.
 - There is no 编辑配置 entry. The flow is 导出 → edit in a text editor → 重新导入.
 - 取消外部配置 is an error-coloured text button in its own 危险操作 section; it confirms.
-- 生成配置 here opens the same generation flow as Home.
 
 ### 3.3 Generation flow — one screen, four steps
 
@@ -319,10 +320,13 @@ guards them.
 | key | zh | en |
 |---|---|---|
 | `home_device_info` | 设备信息 | Device info |
+| `home_acquisition_title` | 获取配置 | Get a profile |
 | `home_generate_title` | 生成配置 | Generate profile |
-| `home_generate_summary` | 为本机内核从 OTA 链接或本地镜像生成配置 | Generate a profile for this kernel from an OTA link or a local image |
-| `home_generate_ota` | OTA 链接 | OTA link |
-| `home_generate_image` | 本地镜像 | Local image |
+| `home_generate_summary` | 从 OTA 链接或本地镜像 | From an OTA link or a local image |
+| `home_load_title` | 加载配置 | Load profile |
+| `home_load_summary` | 选择已有的 .conf 文件 | Choose an existing .conf file |
+| `generation_source_ota` | OTA 链接 | OTA link |
+| `generation_source_image` | 本地镜像 | Local image |
 | `home_last_run` | 上次运行 | Last run |
 | `home_export_report` | 导出报告 | Export report |
 | `home_export_report_summary` | 日志、崩溃证据与当前配置 | Logs, crash evidence and the current profile |
@@ -343,7 +347,8 @@ guards them.
 | `validation_empty` | 没有发现问题 | No issues found |
 | `params_current` | 当前配置 | Current profile |
 | `params_view_issues` | 查看问题 | View issues |
-| `params_source` | 配置来源 | Profile source |
+| `params_other_sources` | 其他来源 | Other sources |
+| `params_builtin` | 内置配置 | Bundled profiles |
 | `params_danger` | 危险操作 | Dangerous |
 | `run_settings_title` | 运行设置 | Run settings |
 
@@ -362,9 +367,9 @@ V-slices carry no structural change; each is a UI commit series with the screens
 | **N2** | typed dialogs + `ParseState` (plan §3.3) | N1 |
 | **N3** | `SupportStatus` + `FieldsInvalid(errors)` (support plan) | N1 |
 | **N4a** | delete the editor screens; land the validation report (§3.4) | N3 |
-| **V1** | Home (§3.1) — identity line, status card, generation card, run group, pinned bar | N4a |
+| **V1** | Home (§3.1) — identity line, status card, acquisition card, run group, pinned bar | N4a |
 | **N4b** | per-screen states/actions, ViewModel split (plan §3.5) | V1 |
-| **V2** | Parameters hub (§3.2), absorbing LoadConfig | N4b |
+| **V2** | Parameters manager (§3.2); LoadConfig dissolves — load → Home, parse → the generation flow, builtin → Parameters | N4b |
 | **V3** | generation flow (§3.3) | N2, V1 |
 | **V4** | run sheet (§3.5), Advanced/run settings (§3.6), report header (§3.7) | N4b |
 | **N5** | durability and tests | V1–V4 |
