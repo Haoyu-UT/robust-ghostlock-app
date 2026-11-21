@@ -542,10 +542,25 @@ namespace ghostlock::attack {
             "  umount -l /system/bin/lmkd 2>/dev/null\n"
             "  echo '[*] cleared a stale /system/bin/lmkd mount' >>\"$LOG\"\n"
             "fi\n"
+            /* The policy dump/reload exists only to prepare a policy for the
+             * late-load below. After a KernelSU late-load the running policy
+             * cannot be serialized again (measured 2026-11-21: on 6.1 and 6.12
+             * `/sys/fs/selinux/policy` answers EINVAL once kernelsu is live,
+             * while the same domain reads it fine on a fresh boot). So when
+             * the module is already loaded, skip the fixup entirely: there is
+             * no late-load to prepare, and its failure used to abort a run
+             * that needed no policy work at all. */
+            "KSU_ALREADY=0\n"
             "if grep -q '^kernelsu[[:space:]]' /proc/modules 2>/dev/null; then\n"
+            "  KSU_ALREADY=1\n"
             "  echo '[+] KernelSU already loaded' >>\"$LOG\"\n"
             "fi\n"
-            "# step 1: restore policy\n"
+            "# step 1: restore policy (skipped when nothing will late-load)\n"
+            "FIXUP_RC=1\n"
+            "if [ \"$KSU_ALREADY\" -eq 1 ]; then\n"
+            "  echo '[*] policy fixup skipped: KernelSU already loaded' >>\"$LOG\"\n"
+            "  FIXUP_RC=0\n"
+            "else\n"
             /* The dump is a *working copy* -- patched in place, then handed to
              * load_policy -- never evidence, and nothing reads it afterwards.
              * It lives in the run's debug folder when the app asked for one, so
@@ -577,7 +592,6 @@ namespace ghostlock::attack {
             "  CONFIG=$(printf '\\\\0%%03o' \"$((CONFIG | 192))\" || return 1)\n"
             "  printf '%%b' \"$CONFIG\" | dd of=\"$POLICY\" bs=1 seek=23 count=1 conv=notrunc\n"
             "}\n"
-            "FIXUP_RC=1\n"
             "for i in $(seq 1 10); do\n"
             "  echo \"[*] fixup: attempt $i\" >>\"$LOG\"\n"
             "  if ! prepare_policy >>\"$LOG\" 2>&1; then\n"
@@ -619,6 +633,7 @@ namespace ghostlock::attack {
              * debug folder on every run. A failed fixup keeps the file, which
              * is why it is worth having next to that run's other dumps. */
             "if [ \"$FIXUP_RC\" -eq 0 ]; then rm -f \"$POLICY\"; fi\n"
+            "fi\n"
             "KVER=$(uname -r | cut -d. -f1-2)\n"
             "AVER=$(uname -r | grep -o 'android[0-9]*' | head -1)\n"
             "if [ -z \"$AVER\" ] || [ -z \"$KVER\" ]; then\n"
