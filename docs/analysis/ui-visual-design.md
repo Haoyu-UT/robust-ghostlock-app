@@ -162,12 +162,30 @@ inline expansions of this step, not dialogs:
 - stride → the recommendation rows inline (the existing `StridePicker` content);
 - overwrite → a confirm at the bottom of the step.
 
-**4 保存** — two explicit destinations:
+**4 保存** — the profile always becomes a file first. There is no in-memory "apply":
+
 ```
-[ 导出配置 ]   给其他设备或留档（SAF）
-[ 用于本机 ]   立即作为当前配置并返回首页
+保存配置
+保存为文件后，用「加载配置」导入才会生效。
+[ 保存到文件 ]                     ← SAF CreateDocument, suggested name from the release
 ```
-The export is the default; `用于本机` requires a valid profile and says what it replaces.
+
+After a successful save:
+
+```
+已保存 · 5.10.236-ghostlock.conf
+[ 导入此配置 ]             [ 完成 ]
+```
+
+- 保存到文件 is mandatory and is the only way out of the step. A generated profile that is not
+  imported never becomes the active profile.
+- 导入此配置 is a shortcut for the picker, not a second activation path: it calls the same import
+  (copy to app storage, select, refetch) with the URI the save just returned. If the read-back
+  fails, it falls back to 加载配置.
+- 完成 returns Home with the status card unchanged; the file stays on the card until imported.
+- Why: one activation path and one source of truth. Validation, the copy, the selection and the
+  migration run identically whether the profile came from generation, another device, or a text
+  editor — and the user always has the file before anything else can consume it.
 
 Back goes one step; the session survives navigation away and back (it is `ParseState`, not a dialog).
 
@@ -335,6 +353,11 @@ guards them.
 | `home_load_summary` | 选择已有的 .conf 文件 | Choose an existing .conf file |
 | `generation_source_ota` | OTA 链接 | OTA link |
 | `generation_source_image` | 本地镜像 | Local image |
+| `generation_save` | 保存到文件 | Save to file |
+| `generation_save_hint` | 保存为文件后，用「加载配置」导入才会生效。 | Save the file first; it takes effect only after you load it. |
+| `generation_saved` | 已保存 · %1$s | Saved · %1$s |
+| `generation_import_now` | 导入此配置 | Load this profile |
+| `generation_done` | 完成 | Done |
 | `home_last_run` | 上次运行 | Last run |
 | `home_export_report` | 导出报告 | Export report |
 | `home_export_report_summary` | 日志、崩溃证据与当前配置 | Logs, crash evidence and the current profile |
