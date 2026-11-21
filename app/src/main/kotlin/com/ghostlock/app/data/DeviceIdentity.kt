@@ -42,6 +42,18 @@ internal object DeviceIdentity {
         systemProperty("ro.product.bootimage.device"),
     ).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
+    /**
+     * The SoC identity, manufacturer first (`Qualcomm SM8475`, `MediaTek MT6989`).
+     * Blank properties collapse away; the caller treats an empty result as
+     * "unknown platform" and applies no platform-specific rule.
+     */
+    fun socName(): String = listOf(
+        systemProperty("ro.soc.manufacturer"),
+        systemProperty("ro.soc.model"),
+    ).map { it.trim() }
+        .filter { it.isNotEmpty() && !it.contains("unknown", true) && !it.contains("null", true) }
+        .joinToString(" ")
+
     /** The primary identity followed by the fallbacks, deduplicated. */
     fun candidates(primary: String?, aliases: List<String>): List<String> =
         (listOfNotNull(primary?.trim()) + aliases.map { it.trim() })

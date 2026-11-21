@@ -23,6 +23,9 @@ import com.ghostlock.app.data.ScratchInAnchor
 import com.ghostlock.app.data.decision
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.customCpuPairHint
+import com.ghostlock.app.domain.model.generationPhysComplete
+import com.ghostlock.app.domain.model.isMediaTekSoc
+import com.ghostlock.app.domain.model.isQualcommSoc
 import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
 import com.ghostlock.app.domain.model.LogTone
@@ -2218,16 +2221,9 @@ class GhostlockViewModel(
         )
     }
 
-    private fun isMediaTek(): Boolean {
-        val soc = kernelSnapshot?.socName?.lowercase(Locale.ROOT).orEmpty()
-        return soc.contains("mediatek") || soc.contains("mtk") ||
-                soc.contains("dimensity") || soc.contains("helio")
-    }
+    private fun isMediaTek(): Boolean = isMediaTekSoc(kernelSnapshot?.socName.orEmpty())
 
-    private fun isQualcomm(): Boolean {
-        val soc = kernelSnapshot?.socName?.lowercase(Locale.ROOT).orEmpty()
-        return soc.contains("qualcomm") || soc.contains("qti") || soc.contains("snapdragon")
-    }
+    private fun isQualcomm(): Boolean = isQualcommSoc(kernelSnapshot?.socName.orEmpty())
 
     private fun mediatekDocUrl(): String =
         "https://github.com/YuKongA/ghostlock-app/blob/main/docs/kernel_profiles/" +
@@ -2348,11 +2344,17 @@ class GhostlockViewModel(
             showPhysPrompt(next, after = result)
             return
         }
-        if (!result.physLoadPresent || !result.physOffsetPresent) {
-            /* The pair is required for every device: a profile without it is
-             * rejected at import, so generation must not produce one. */
+        if (!generationPhysComplete(
+                kernelSnapshot?.socName.orEmpty(),
+                result.physLoadPresent,
+                result.physOffsetPresent,
+            )
+        ) {
+            /* Generation must produce a profile the runtime can accept: the
+             * sidecar the platform advice asked for was skipped. What each
+             * platform must supply differs — see generationPhysComplete. */
             appendLog(
-                "warning: the physical pair is incomplete; attach the missing image and re-parse",
+                "warning: the physical layout is incomplete; attach the missing image and re-parse",
             )
             val mediaTek = isMediaTek()
             showNotice(

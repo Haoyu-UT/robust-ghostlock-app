@@ -18,6 +18,7 @@ import com.ghostlock.app.domain.model.ProfileImportResult
 import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.ProfileFieldNode
 import com.ghostlock.app.domain.model.ProfileLayers
+import com.ghostlock.app.domain.model.physPairErrors
 import com.ghostlock.app.domain.repository.ProfileConfigController
 
 /**
@@ -52,6 +53,14 @@ internal class AndroidProfileConfigController(
      */
     private val deviceCodename: String? = Build.DEVICE,
     private val deviceAliases: List<String> = DeviceIdentity.aliases(),
+    /**
+     * The SoC identity (`ro.soc.manufacturer` + `ro.soc.model`). Import
+     * verification needs it because the physical pair requirement is a
+     * platform fact: MediaTek has no compiled default for either half, while
+     * Qualcomm resolves the offset from its DRAM-base default and only the
+     * load must come from xbl_config/uefi. Injectable so host tests pin it.
+     */
+    private val socName: String = DeviceIdentity.socName(),
     /** Pins the source for an editor session; null follows the stored choice. */
     forcedSelection: ProfileSelection? = null,
 ) : ProfileConfigController {
@@ -607,8 +616,14 @@ internal class AndroidProfileConfigController(
             errors += "the profile copy cannot be read"
         }
         config.invalidPaths.sorted().forEach { errors += "$it: invalid" }
-        if (config.physLoad == null) errors += "kernel_phys_load: missing for this device"
-        if (config.physOffset == null) errors += "kernel_phys_offset: missing for this device"
+        /* Only a layout the runtime cannot resolve is a rejection: on MediaTek
+         * both halves are required, elsewhere the compiled default fills a
+         * null (the bundled profiles for those devices carry nulls). */
+        errors += physPairErrors(
+            socName,
+            loadPresent = config.physLoad != null,
+            offsetPresent = config.physOffset != null,
+        )
         return errors
     }
 
