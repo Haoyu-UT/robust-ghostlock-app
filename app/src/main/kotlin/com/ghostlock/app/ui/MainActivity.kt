@@ -373,8 +373,6 @@ private fun GhostlockRoute(
 
             override fun onOpenParameters() = viewModel.onOpenParameters()
             override fun onCloseParameters() = viewModel.onCloseParameters()
-            override fun onOpenLoadConfig() = viewModel.onOpenLoadConfig()
-            override fun onCloseLoadConfig() = viewModel.onCloseLoadConfig()
             override fun onSelectProfileFile() = viewModel.onSelectProfileFile()
             override fun onClearExternalProfile() = viewModel.onClearExternalProfile()
             override fun onOpenMergePreview() = viewModel.onOpenMergePreview()

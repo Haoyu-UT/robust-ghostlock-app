@@ -252,7 +252,7 @@
     <string name="debug_profile_override_warning">请不要试图修改默认参数，除非您知道您自己在做什么。</string>
     <string name="override_title">编辑配置</string>
     <string name="parameters">参数配置</string>
-    <string name="parameters_summary">加载配置与参数覆盖</string>
+    <string name="parameters_summary">当前配置、内置来源与导出</string>
     <string name="measurements_title">测量数据</string>
     <string name="measurements_summary">由 root 实测的内核数据（只读）</string>
     <string name="measurements_readonly">这些事实来自一次完整运行的 root 阶段，不会自动应用。主界面的合并按钮可以把事实写进一份导出配置。</string>

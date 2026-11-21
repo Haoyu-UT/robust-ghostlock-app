@@ -435,15 +435,6 @@ class GhostlockViewModel(
         nav.pop()
     }
 
-    /** Opens the configuration-loading screen (source selection). */
-    fun onOpenLoadConfig() {
-        nav.push(Screen.LoadConfig)
-    }
-
-    fun onCloseLoadConfig() {
-        nav.pop()
-    }
-
     /** Picks an SD-card profile document; selecting it wins over the bundle. */
     fun onSelectProfileFile() {
         send(GhostlockEffect.PickDocument(DocumentRequest.SelectProfile))

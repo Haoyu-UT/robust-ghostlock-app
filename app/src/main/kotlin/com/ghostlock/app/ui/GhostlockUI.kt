@@ -242,8 +242,6 @@ interface GhostlockActions {
     fun onDebugKernelLogChanged(enabled: Boolean)
     fun onOpenParameters()
     fun onCloseParameters()
-    fun onOpenLoadConfig()
-    fun onCloseLoadConfig()
     fun onOpenMergePreview()
     fun onCloseMergePreview()
     fun onExportMergedProfile()
@@ -263,7 +261,6 @@ private fun closeScreen(screen: Screen, actions: GhostlockActions) {
         Screen.About -> actions.onCloseAbout()
         Screen.Measurements -> actions.onCloseMeasurements()
         Screen.Parameters -> actions.onCloseParameters()
-        Screen.LoadConfig -> actions.onCloseLoadConfig()
         Screen.Builtin -> actions.onCloseBuiltinProfiles()
         Screen.MergePreview -> actions.onCloseMergePreview()
     }
@@ -330,9 +327,6 @@ internal fun GhostlockApp(
                     }
                     entry<Screen.Parameters>(swipeDismiss = swipeBack) {
                         ParameterScreen(state = state, actions = actions)
-                    }
-                    entry<Screen.LoadConfig>(swipeDismiss = swipeBack) {
-                        LoadConfigScreen(state = state, actions = actions)
                     }
                     entry<Screen.Builtin>(swipeDismiss = swipeBack) {
                         BuiltinProfileScreen(state = state, actions = actions)

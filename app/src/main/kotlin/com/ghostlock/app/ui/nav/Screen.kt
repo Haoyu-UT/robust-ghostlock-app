@@ -15,7 +15,6 @@ internal sealed interface Screen : NavKey {
     data object About : Screen
     data object Measurements : Screen
     data object Parameters : Screen
-    data object LoadConfig : Screen
     data object Builtin : Screen
     data object MergePreview : Screen
 }

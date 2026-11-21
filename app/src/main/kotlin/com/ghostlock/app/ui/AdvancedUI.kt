@@ -1,6 +1,8 @@
 package com.ghostlock.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -13,7 +15,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
@@ -271,26 +275,47 @@ internal fun ParameterScreen(
             contentPadding = pageContentPadding(paddingValues),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item(key = "loaded") {
-                ProfileHintBanner(
-                    text = if (state.importedProfilePresent) {
-                        stringResource(R.string.profile_kind_external)
-                    } else if (!state.executionHasProfile) {
-                        stringResource(R.string.profile_not_loaded)
-                    } else {
-                        stringResource(
-                            R.string.builtin_profile_label,
-                            state.activeBuiltinProfile ?: stringResource(R.string.load_builtin_auto),
+            item(key = "current") {
+                Card {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = stringResource(R.string.profile_source_title),
+                            fontSize = 12.sp,
+                            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.68f),
                         )
-                    },
-                )
+                        Text(
+                            text = when {
+                                state.importedProfilePresent ->
+                                    stringResource(R.string.profile_kind_external)
+                                state.executionHasProfile ->
+                                    stringResource(R.string.profile_kind_builtin)
+                                else -> stringResource(R.string.profile_not_loaded)
+                            },
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        val detail = listOfNotNull(
+                            state.executionRelease.takeIf { it.isNotBlank() },
+                            state.profileRoute?.takeIf { it.isNotBlank() },
+                        ).joinToString(" · ")
+                        if (detail.isNotEmpty()) {
+                            Text(
+                                text = detail,
+                                fontSize = 14.sp,
+                                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+                    }
+                }
             }
-            item(key = "load") {
+            item(key = "builtin") {
                 Card {
                     ArrowPreference(
-                        title = stringResource(R.string.load_config_title),
-                        summary = stringResource(R.string.load_config_summary),
-                        onClick = actions::onOpenLoadConfig,
+                        title = stringResource(R.string.load_builtin_profile),
+                        summary = stringResource(R.string.load_builtin_summary),
+                        onClick = actions::onOpenBuiltinProfiles,
                     )
                 }
             }
@@ -306,124 +331,28 @@ internal fun ParameterScreen(
                     )
                 }
             }
-        }
-    }
-}
-
-/**
- * Configuration loading: the import/parse buttons, the builtin picker and the
- * list of verbatim user-imported documents (export, rename, delete).
- */
-@Composable
-internal fun LoadConfigScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
-) {
-    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = stringResource(R.string.load_config_title),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(onClick = actions::onCloseLoadConfig) {
-                        Icon(
-                            imageVector = MiuixIcons.Back,
-                            contentDescription = stringResource(R.string.action_back),
-                        )
-                    }
-                },
-            )
-        },
-    ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .imePadding()
-                .scrollEndHaptic()
-                .overScrollVertical()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            contentPadding = pageContentPadding(
-                paddingValues, top = 0.dp, bottom = 0.dp, horizontalMin = 0.dp,
-            ),
-        ) {
-            item(key = "top-space") { Spacer(Modifier.height(12.dp)) }
-            item(key = "source") {
-                val details = when {
-                    state.importedProfilePresent -> stringResource(R.string.profile_kind_external)
-                    state.activeBuiltinProfile != null || state.executionHasProfile ->
-                        stringResource(R.string.profile_kind_builtin)
-
-                    else -> stringResource(R.string.profile_not_loaded)
-                }
-                ProfileHintBanner(
-                    title = stringResource(R.string.profile_source_title),
-                    text = details,
-                    modifier = Modifier.preferencePageItem(),
-                )
-            }
-            item(key = "select-profile") {
-                Card(modifier = Modifier.preferencePageItem()) {
-                    ArrowPreference(
-                        title = stringResource(R.string.select_profile_file),
-                        summary = stringResource(R.string.select_profile_summary),
-                        onClick = actions::onSelectProfileFile,
-                    )
-                }
-            }
             if (state.importedProfilePresent) {
-                item(key = "clear-external") {
-                    TextButton(
-                        text = stringResource(R.string.clear_external_profile),
-                        onClick = actions::onClearExternalProfile,
-                        modifier = Modifier.preferencePageItem(),
-                    )
+                item(key = "danger") {
+                    Card {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { actions.onClearExternalProfile() }
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.clear_external_profile),
+                                fontSize = 16.sp,
+                                color = Color(0xFFF72727),
+                            )
+                        }
+                    }
                 }
-            }
-            item(key = "parse-ota") {
-                Card(modifier = Modifier.preferencePageItem()) {
-                    ArrowPreference(
-                        title = stringResource(R.string.action_parse_ota),
-                        onClick = actions::onParseOta,
-                    )
-                }
-            }
-            item(key = "parse-image") {
-                Card(modifier = Modifier.preferencePageItem()) {
-                    ArrowPreference(
-                        title = stringResource(R.string.action_parse),
-                        onClick = actions::onParseImage,
-                    )
-                }
-            }
-            item(key = "builtin") {
-                Card(modifier = Modifier.preferencePageItem()) {
-                    ArrowPreference(
-                        title = stringResource(R.string.load_builtin_profile),
-                        summary = stringResource(R.string.load_builtin_summary),
-                        onClick = actions::onOpenBuiltinProfiles,
-                        endActions = {
-                            if (state.executionHasProfile && !state.importedProfilePresent &&
-                                state.activeBuiltinProfile == null
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.user_profile_loaded_badge),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = OverrideHighlight,
-                                )
-                            }
-                        },
-                    )
-                }
-            }
-            item(key = "bottom-space") {
-                Spacer(Modifier.height(24.dp).navigationBarsPadding())
             }
         }
     }
 }
-
 
 private fun formatProfileTime(millis: Long): String =
     SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))

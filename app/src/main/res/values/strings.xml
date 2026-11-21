@@ -252,7 +252,7 @@
     <string name="debug_profile_override_warning">Do not change default parameters unless you know exactly what you are doing.</string>
     <string name="override_title">Edit configuration</string>
     <string name="parameters">Parameter configuration</string>
-    <string name="parameters_summary">Load configuration and parameter overrides</string>
+    <string name="parameters_summary">Current profile, bundled sources and export</string>
     <string name="measurements_title">Measured data</string>
     <string name="measurements_summary">Root-measured kernel facts, read-only</string>
     <string name="measurements_readonly">Facts recorded from a completed run\'s root phase. Nothing here is applied automatically; use the merge on the main screen to put a fact into a profile you export.</string>
