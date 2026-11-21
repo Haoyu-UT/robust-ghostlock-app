@@ -252,7 +252,9 @@ device needs a different chain", not "another series of device runs".
 - A ROM preflight table per device (G3) — **done 2026-11-21** — and an ABI verdict per kernel
   (G4) — **done 2026-11-21, pass on both**.
 - If G1–G4 pass, an L-level plan for a module-delivery DirtyFrag pipeline alongside the module-free
-  one — that is a separate design, not this file.
+  one — that is a separate design, not this file. **Written 2026-11-22:**
+  `module-magisk-implementation-plan.md` (the module as the SELinux switch, Magisk as the
+  userspace manager, and the additive profile design).
 
 ## Risks
 
