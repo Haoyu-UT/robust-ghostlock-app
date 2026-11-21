@@ -222,24 +222,27 @@ never validates anything itself. A new way for the inputs to change is a new tri
 the whole refresh model. There is no file observer: the app's copy is app-private and changes only
 through import, so editing the original externally requires a re-import, which is itself a trigger.
 
-### 3.5 Run sheet
+### 3.5 Run sheet — a log window
 
 ```
-运行                                         00:12
-W1 ✓    W2 ●    W3 ○
+日志                                  运行中 · 00:12
 ────────────────────────────────────────────────────
-[ run log, monospace, auto-scroll ]
+[W1] …
+[W2] …
 ────────────────────────────────────────────────────
 完成 · KernelSU ready        [ 打开管理器 ] [ 导出报告 ]
 ```
 
-- Header: state (运行中 / 完成 / 失败), elapsed, and the three-stage indicator.
-- The log is monospace 13 sp, collapsible after completion (default collapsed to the last 20 lines
-  with 展开全部).
-- The result card appears only at terminal state; it carries 打开管理器 and 导出报告 (the same
-  report flow as Home).
-- Still not dismissible while running; the close control appears with the result.
-- Failure shows the exit code and the first actionable line (the run store's verdict), not a toast.
+- The log is the surface. Monospace 13 sp, auto-scroll while running, copy in the header — the
+  current sheet's shape, kept.
+- One status line at the top: state and elapsed while running, the terminal verdict after
+  (from the run store, not from a parallel UI state).
+- **No stage indicator.** W1/W2/W3 already appear as log lines and in the run-state record; a
+  separate stepper would be a second truth about progress, and the two would drift.
+- No default collapse. The log is the evidence; the sheet opens on it and stays on it.
+- Not dismissible while running; the close control appears with the terminal status.
+- Footer at terminal state: the verdict line plus 打开管理器 and 导出报告 (the same report flow as
+  Home). A failure shows the exit code and the store's state — the log above explains it.
 
 ### 3.6 Advanced and run settings
 
@@ -329,7 +332,7 @@ One large title per screen. Section headers inside a page are 14 sp / 600, secon
 
 - Keep the current navigation transitions; no new animation.
 - The status card and the bar label change in place when the verdict changes; no cross-fade needed.
-- The run sheet's stage indicator updates in place; the log auto-scrolls only while running.
+- The run sheet's status line updates in place; the log auto-scrolls only while running.
 
 ### 4.7 Accessibility
 
