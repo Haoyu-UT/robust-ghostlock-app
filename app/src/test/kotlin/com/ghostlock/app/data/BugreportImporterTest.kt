@@ -147,8 +147,10 @@ class BugreportImporterTest {
     fun `nested stability zip keeps only the pure-text evidence`() {
         val nested = zipRaw(
             "temp/last_kmsg" to
-                "Kernel panic - not syncing: test\nCall trace:\n rt_mutex_adjust_prio_chain+0x188\n"
-                    .toByteArray(),
+                ("Kernel panic - not syncing: test\n" +
+                    "Call trace:\n" +
+                    " rt_mutex_adjust_prio_chain+0x188\n" +
+                    "[  312638.352673] tail\n").toByteArray(),
             "temp/md_history" to "1) OS3.0.3.0|2026-11-14 16:24:22|kpanic|oops\n".toByteArray(),
             "log/mtdoops.md" to "## Index: 1\n### LOG TYPE: LAST KMSG\n".toByteArray(),
             "temp/last_logcat" to "11-14 16:39:21 I app: last logcat line\n".toByteArray(),
@@ -158,7 +160,7 @@ class BugreportImporterTest {
         val evidence = extract(
             zipRaw(
                 "bugreport-test.txt" to mainText.toByteArray(),
-                "FS/data/miuilog/stability/reboot/event.zip" to nested,
+                "FS/data/miuilog/stability/reboot/-1_ke_abc123_unknown_stable_venus_OS2.0.6.0.UKBCNXM_1794794400_123456789.zip" to nested,
             ),
         )
         assertNotNull(evidence)
@@ -170,9 +172,41 @@ class BugreportImporterTest {
         assertFalse(evidence.files.containsKey("minidump.gz"))
         assertFalse(evidence.files.containsKey("last_tzlog_key"))
         assertEquals("yes", evidence.facts["crash_evidence"])
-        assertTrue(evidence.facts["origin.stability-last_kmsg"].orEmpty().contains("event.zip!temp/last_kmsg"))
+        assertTrue(
+            evidence.facts["origin.stability-last_kmsg"].orEmpty()
+                .contains("1794794400_123456789.zip!temp/last_kmsg"),
+        )
+        assertEquals("1794794400", evidence.facts["nested.zip_epoch.stability-last_kmsg"])
+        assertEquals("312638", evidence.facts["nested.last_uptime.stability-last_kmsg"])
+        assertFalse(evidence.facts.containsKey("nested.stale.stability-last_kmsg"))
         assertTrue(evidence.text("stability-last_kmsg").contains("rt_mutex_adjust_prio_chain"))
         assertTrue(evidence.crashEvidence)
+    }
+
+    @Test
+    fun `a stability zip outside the crashed boot window is stale`() {
+        val nested = zipRaw(
+            "temp/last_kmsg" to
+                ("=== Dump occured at 2022-03-21 4:58:56 ===\n" +
+                    "[  312638.352673] tail\n").toByteArray(),
+        )
+        val evidence = extract(
+            zipRaw(
+                "bugreport-test.txt" to mainText.toByteArray(),
+                "FS/data/miuilog/stability/reboot/-1_ke_old_unknown_stable_venus_OS2.0.6.0.UKBCNXM_1794000000_987654321.zip" to nested,
+            ),
+        )
+        assertNotNull(evidence)
+        evidence!!
+        assertFalse(evidence.files.containsKey("stability-last_kmsg"))
+        // Only the main text's own crash excerpt remains, as the heuristic flag.
+        assertEquals("heuristic", evidence.facts["crash_evidence"])
+        assertEquals("1794000000", evidence.facts["nested.zip_epoch.stability-last_kmsg"])
+        assertEquals("312638", evidence.facts["nested.last_uptime.stability-last_kmsg"])
+        assertTrue(
+            evidence.facts["nested.stale.stability-last_kmsg"].orEmpty()
+                .contains("1794000000"),
+        )
     }
 
     @Test

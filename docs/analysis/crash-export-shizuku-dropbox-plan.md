@@ -179,3 +179,30 @@ build 777 (APK 22,910,129 B, md5 `6214b9801bea5fbfbedbfcbc5c593d0a`, sha256
 overview and the Chinese how-to, this design doc, and the two Generate-step screenshots
 (`ui-generate-enabled.png`, `ui-generate-disabled.png`). Every file is listed in `MD5SUMS` and
 `SHA256SUMS`; both sets verified on the share (`md5sum -c`).
+
+## Freshness gate for vendor stability zips (2026-11-21)
+
+The venus report of 2026-11-21 (build 777) claimed `crash_evidence=yes` while both imported
+`stability-last_kmsg` files were **byte-identical** (`md5 0478710c…`), began with a 2022 vendor
+header, and ended at a **312,638 s uptime** — from vendor zips dated Nov 13/15, a week before the
+Nov 21 `long_power_key` reset. The importer kept any nested `temp/last_kmsg` without asking which
+boot it belonged to.
+
+**Minimum fix (implemented, host-gated only).** A vendor stability zip counts as crash evidence
+only when its own filename epoch (`..._<epoch>_<rand>.zip`) falls inside the crashed boot's window
+derived from `persist.sys.boot.reason.history`: `[previous reboot, capture reboot + 120 s]`.
+Out-of-window files are dropped and recorded as `nested.stale.*`; every candidate keeps
+`nested.zip_epoch.*` and, for `stability-last_kmsg`, `nested.last_uptime.*` (the last `[<uptime>]`
+stamp), so a fresh zip carrying stale content is visible in the next report. There is no content
+rejection yet — that second check is only justified if the facts show it is needed.
+
+Tests: the nested-stability test now uses a realistic name inside the window and asserts the
+epoch, uptime and absence of a stale fact; a new test rejects an out-of-window zip and expects the
+`heuristic` flag. `:app:testDebugUnitTest` passes. **No device gate** — the phones are in A/B use;
+the change surfaces in the next exported report.
+
+Not covered by this minimum: `crash_evidence` can still be `yes` from the top-level
+`/mnt/rescue/` `last_kmsg` files and from the vendor reboot-records section (the venus report
+stays `yes` for those reasons). Making the flag mean "kernel text for this boot" is a separate
+decision; the next report's `nested.stale.*` / `nested.last_uptime.*` facts are what decide
+whether a content check is worth adding.

@@ -43,6 +43,10 @@ internal object BugreportImporter {
     private const val MaxNestedTotalBytes = 32L * 1024 * 1024
     private const val MaxEvidenceBytes = 48L * 1024 * 1024
     private const val MaxNestedZips = 8
+    /* A vendor stability zip is written at the crash, a moment before the
+     * capture boot's reboot entry; allow that margin when comparing. */
+    private const val NestedZipWindowSlackSeconds = 120L
+    private const val UptimeTailBytes = 64 * 1024
 
     private const val GenericBeforeLines = 64
     private const val GenericAfterLines = 256
@@ -73,6 +77,8 @@ internal object BugreportImporter {
     )
 
     private val Newline = byteArrayOf('\n'.code.toByte())
+    private val ZipEpochPattern = Regex("_(\\d{10})_\\d+\\.zip$", RegexOption.IGNORE_CASE)
+    private val UptimePattern = Regex("\\[\\s*(\\d+)\\.\\d+\\]")
     private val KernelLogHeaderBytes = KernelLogHeader.toByteArray(StandardCharsets.UTF_8)
     private val KernelLogEndHeaderBytes = "------ ".toByteArray(StandardCharsets.UTF_8)
     private val KernelLogEndBytes =
@@ -212,7 +218,9 @@ internal object BugreportImporter {
                                 nestedTotal,
                             )
                             nestedTotal += nested.keptBytes
-                            if (nested.crashEvidence) crashEvidence = true
+                            // The crash-evidence claim is decided after the
+                            // boot-reason history is known (see the freshness
+                            // gate below); the scan only collects.
                         } else {
                             outcomes["nested.duplicate.${entry.name}"] = "skipped"
                         }
@@ -246,6 +254,46 @@ internal object BugreportImporter {
         } catch (_: Exception) {
             return null
         }
+        /* Freshness gate (2026-11-21): a vendor stability zip is crash evidence
+         * only when its own epoch falls inside the crashed boot's window. The
+         * 2026-11-21 venus report attached two byte-identical stability logs
+         * from a week-old boot because the importer never compared the zip
+         * time with the boot history. Stale files are dropped; the facts keep
+         * their epoch and last uptime for diagnosis. */
+        val bootWindow = crashBootWindow(history)
+        if (bootWindow != null) {
+            outcomes["nested.boot_window"] = "${bootWindow.first},${bootWindow.second}"
+        }
+        var nestedFreshCrash = false
+        for (actual in sink.files.keys.toList()) {
+            val nestedCrashFile = actual.startsWith(NestedLastKmsgName) ||
+                actual.startsWith(MdHistoryName) ||
+                actual.startsWith(MtdoopsName)
+            if (!nestedCrashFile) continue
+            val outerName = outcomes["origin.$actual"].orEmpty().substringBefore('!')
+            val epoch = stabilityZipEpoch(outerName)
+            if (epoch != null) outcomes["nested.zip_epoch.$actual"] = epoch.toString()
+            if (actual.startsWith(NestedLastKmsgName)) {
+                lastUptimeSeconds(sink.files.getValue(actual))?.let {
+                    outcomes["nested.last_uptime.$actual"] = it.toString()
+                }
+            }
+            val fresh = epoch != null && bootWindow != null &&
+                epoch >= bootWindow.first && epoch <= bootWindow.second
+            if (fresh) {
+                nestedFreshCrash = true
+            } else {
+                sink.remove(actual)
+                outcomes["nested.file.$actual"] = "stale"
+                outcomes["nested.stale.$actual"] = when {
+                    epoch == null -> "zip name has no epoch: ${outerName.substringAfterLast('/')}"
+                    bootWindow == null -> "no boot-reason history"
+                    else -> "zip_epoch=$epoch outside [${bootWindow.first}, ${bootWindow.second}]"
+                }
+            }
+        }
+        if (nestedFreshCrash) crashEvidence = true
+
         val kernelLog = sink.contains(CrashEvidenceStore.KernelLogName)
         if (properties.isEmpty() && sink.files.isEmpty() && !kernelLog) return null
 
@@ -515,6 +563,13 @@ internal object BugreportImporter {
         fun putExact(name: String, bytes: ByteArray) {
             files[name] = bytes
             total += bytes.size
+        }
+
+        /** Drops a file the freshness gate rejected. */
+        fun remove(name: String): Boolean {
+            val data = files.remove(name) ?: return false
+            total -= data.size
+            return true
         }
 
         private fun uniqueName(base: String): String {
@@ -940,6 +995,38 @@ internal object BugreportImporter {
         return lower.startsWith("fs/") &&
             lower.contains("/stability/reboot/") &&
             lower.endsWith(".zip")
+    }
+
+    /** Epoch seconds from a vendor stability zip name: `..._<epoch>_<rand>.zip`. */
+    private fun stabilityZipEpoch(path: String): Long? {
+        val base = path.substringAfterLast('/')
+        val match = ZipEpochPattern.find(base) ?: return null
+        return match.groupValues[1].toLongOrNull()
+    }
+
+    /**
+     * The crashed boot's window in epoch seconds, from
+     * `persist.sys.boot.reason.history` (newest first): the previous entry's
+     * time is the boot that crashed, the newest is the capture boot's start.
+     * Null when the report carries no usable history.
+     */
+    private fun crashBootWindow(history: String?): Pair<Long, Long>? {
+        val epochs = history.orEmpty().lineSequence()
+            .mapNotNull { line -> line.substringAfterLast(',').trim().toLongOrNull() }
+            .filter { it > 1_000_000_000L }
+            .distinct()
+            .sortedDescending()
+            .toList()
+        if (epochs.size < 2) return null
+        return epochs[1] to epochs[0] + NestedZipWindowSlackSeconds
+    }
+
+    /** The last `[<uptime>.<us>]` stamp in a kernel log, for the freshness fact. */
+    private fun lastUptimeSeconds(bytes: ByteArray): Long? {
+        val from = (bytes.size - UptimeTailBytes).coerceAtLeast(0)
+        val text = String(bytes, from, bytes.size - from, StandardCharsets.ISO_8859_1)
+        val match = UptimePattern.findAll(text).lastOrNull() ?: return null
+        return match.groupValues[1].toLongOrNull()
     }
 
     private fun propertyIndex(src: ByteArray, length: Int): Int {
