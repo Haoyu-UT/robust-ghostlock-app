@@ -2,9 +2,12 @@
 
 **Status 2026-11-21: research plan, branch-local.** This file lives only on `feat/dirtyfrag-5x`.
 If the experiment is dropped, the branch and this plan go with it; it is not a product design and
-changes nothing until a gate below says it should. **G1 measured, G2–G4 passed (2026-11-21)** — see the result blocks under each gate. G4's
-module build is valid only where the vendor's `struct module` matches (checked against the ROM
-modules; a 6.1 device probe panicked because it did not). Only the device gate (G5) remains.
+changes nothing until a gate below says it should. **G1 measured, G2–G4 passed (2026-11-21); G4c
+(the same route on a real 5.10 phone) measured 2026-11-22** — see the result blocks under each
+gate. G4's module build is valid only where the vendor's `struct module` matches (checked against
+the ROM modules; a 6.1 device probe panicked because it did not; on the 5.10 diting an 8-byte
+offset shift is masked by the kernel's own CFI jump-table rewrite, but a missing `.plt` and a
+CFI-stripped init are refused or reset the phone). Only the device gate (G5) remains.
 
 ## The question
 
@@ -217,6 +220,23 @@ the kernel's own compatibility paths. `IGNORE_MODVERSIONS`/`IGNORE_VERMAGIC` are
 `MODULE_FORCE_LOAD` off. The rule: reproduce the config **and the host tooling**, verify the
 layout against the ROM's modules or BTF, and never treat a patched `module_layout` CRC as a
 pass. The full table is in the gate's evidence folder.
+
+**G4c — the same route on a real 5.10 phone (2026-11-22, off-target).** The probe module was
+rebuilt for the `diting` (`5.10.236-android12-9-00003-gfb24cf99ad97-ab14313284`) from the ACK
+tree at its exact build, with the phone's own config (byte-identical to the stored copy) and the
+vendor clang-r416183b; the Image's CRCs came from `symvers-from-image.py` as at G4. Two things
+are 5.10-specific. First, the shared build tree's `.config` had drifted after its kernel build
+(`LTO_NONE`, no `CFI_CLANG`), which shrank `struct module` by the 8-byte `cfi_check` field and
+moved `init` to 0x188; the vendor `.ko` and the stock-config DWARF both say 0x190. Second, that
+shift is **masked at load**: `cfi_init()` rewrites `mod->init`/`mod->exit` from the module's
+`__cfi_jt_*` symbols, so a module with the wrong init offset still loads and runs (measured) —
+what matters is that the section fits the kernel's struct, and that the module carries the `.plt`
+sections the LTO build emits (a non-LTO build is refused before any layout question). The matrix
+itself is the 6.1 one: the vermagic release half, a missing `module_layout` entry and an empty
+`__versions` load; the magic half, a wrong CRC, exports and CFI are enforced; the force flags are
+dead; `kallsyms_lookup_name` is unexported and the kprobe method resolves the symbols; the module
+needs no signature (`CONFIG_MODULE_SIG` is not set). Stripping `__cfi_check` reset the phone —
+the 6.1 row-11 class. The full table is in the private repo's 2026-11-22 gate record.
 
 ## What this deliberately avoids
 
