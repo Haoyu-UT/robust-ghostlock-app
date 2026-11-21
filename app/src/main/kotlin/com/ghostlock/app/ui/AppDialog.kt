@@ -51,4 +51,14 @@ sealed interface AppDialog {
         override val titleRes: Int,
         val messageRes: Int,
     ) : AppDialog
+
+    /**
+     * A blocking, non-dismissible progress dialog for a long step that is part
+     * of the generation flow (the stride probe). It has no buttons: the step
+     * ends on its own, and back/tap must not leave the flow half-done.
+     */
+    data class Progress(
+        override val titleRes: Int,
+        val messageRes: Int,
+    ) : AppDialog
 }

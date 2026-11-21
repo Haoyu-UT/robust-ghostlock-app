@@ -2590,24 +2590,23 @@ class GhostlockViewModel(
             runningRelease in result.releases
         ) {
             appendLog("stride: probing the mm_struct slab on the running kernel")
-            /* The route/plan dialogs hide the log sheet so they stay tappable.
-             * The probe then runs for seconds to minutes with nothing on
-             * screen but the home; re-show the sheet (non-dismissible) and keep
-             * the screen awake for its duration so the wait is visible and the
-             * save prompt cannot be delayed by a sleeping activity. The parse
-             * operation has normally ended by now; if it has not, do not let
-             * its `running` flag hide the progress. */
-            if (!beginOperation()) {
-                mutableState.update {
-                    it.copy(
-                        session = it.session.copy(
-                            run = it.session.run.copy(
-                                running = true,
-                                sheetVisible = true,
-                                sheetDismissible = false,
-                            ),
+            /* The probe blocks for seconds to minutes. This is the generation
+             * flow's own wait, not an attack run, so it gets a dedicated
+             * non-dismissible progress dialog rather than the run log sheet
+             * (which is a developer view and should stay one). */
+            mutableState.update {
+                it.copy(
+                    overlay = it.overlay.copy(
+                        dialog = AppDialog.Progress(
+                            titleRes = R.string.gen_probing_title,
+                            messageRes = R.string.gen_probing_detail,
                         ),
-                    )
+                    ),
+                )
+            }
+            if (!beginOperation(showLogSheet = false)) {
+                mutableState.update {
+                    it.copy(session = it.session.copy(run = it.session.run.copy(running = true)))
                 }
             }
             send(GhostlockEffect.KeepScreenAwake(true))
@@ -2618,6 +2617,13 @@ class GhostlockViewModel(
             } finally {
                 send(GhostlockEffect.KeepScreenAwake(false))
                 endOperation()
+                mutableState.update { current ->
+                    if (current.overlay.dialog is AppDialog.Progress) {
+                        current.copy(overlay = current.overlay.copy(dialog = null))
+                    } else {
+                        current
+                    }
+                }
             }
         } else {
             null

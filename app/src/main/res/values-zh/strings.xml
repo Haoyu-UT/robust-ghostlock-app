@@ -486,6 +486,8 @@
     <string name="gen_step_confirm">3 确认</string>
     <string name="gen_step_save">4 保存</string>
     <string name="gen_parsing">正在解析…</string>
+    <string name="gen_probing_title">正在探测内核布局</string>
+    <string name="gen_probing_detail">KernelSnitch 正在读取堆布局以确定 slab 步长，通常需要几秒到一分钟，请保持此页面打开。</string>
     <string name="gen_confirm_hint">请选择路由与方案</string>
     <string name="gen_generated">配置已生成</string>
     <string name="gen_save_hint">保存为文件后，用「加载配置」导入才会生效。</string>

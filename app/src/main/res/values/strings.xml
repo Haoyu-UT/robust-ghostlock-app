@@ -487,6 +487,8 @@
     <string name="gen_step_confirm">3 Confirm</string>
     <string name="gen_step_save">4 Save</string>
     <string name="gen_parsing">Parsing…</string>
+    <string name="gen_probing_title">Probing the kernel layout</string>
+    <string name="gen_probing_detail">KernelSnitch is reading the heap layout to choose the slab stride. This usually takes a few seconds to a minute; keep this screen open.</string>
     <string name="gen_confirm_hint">Choose the route and plan</string>
     <string name="gen_generated">Profile generated</string>
     <string name="gen_save_hint">Save the file first; it takes effect only after you load it.</string>

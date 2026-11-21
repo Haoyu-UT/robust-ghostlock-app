@@ -71,6 +71,7 @@ import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
@@ -360,7 +361,11 @@ private fun GhostlockDialog(
     OverlayDialog(
         show = current != null,
         title = dialog?.let { stringResource(it.titleRes) },
-        onDismissRequest = actions::onDialogDismiss,
+        onDismissRequest = {
+            /* The probe's progress dialog is not dismissible: leaving it would
+             * strand the generation flow with the probe still running. */
+            if (dialog !is AppDialog.Progress) actions.onDialogDismiss()
+        },
         content = {
             when (dialog) {
                 is AppDialog.ListDialog -> {
@@ -535,6 +540,23 @@ private fun GhostlockDialog(
                             text = stringResource(dialog.dismissLabelRes),
                             colors = ButtonDefaults.textButtonColorsPrimary(),
                             onClick = actions::onDialogDismiss,
+                        )
+                    }
+                }
+
+                is AppDialog.Progress -> {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        InfiniteProgressIndicator()
+                        Text(
+                            text = stringResource(dialog.messageRes),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 16.dp),
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
                     }
                 }
