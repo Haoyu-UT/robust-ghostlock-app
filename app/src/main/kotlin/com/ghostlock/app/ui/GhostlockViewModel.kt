@@ -2350,21 +2350,16 @@ class GhostlockViewModel(
                 result.physOffsetPresent,
             )
         ) {
-            /* Generation must produce a profile the runtime can accept: the
-             * sidecar the platform advice asked for was skipped. What each
-             * platform must supply differs — see generationPhysComplete. */
+            /* Only MediaTek can reach this: its sidecars are the sole source
+             * of the pair and the runtime has no default to fall back on.
+             * Elsewhere the sidecar advice is optional. */
             appendLog(
                 "warning: the physical layout is incomplete; attach the missing image and re-parse",
             )
-            val mediaTek = isMediaTek()
             showNotice(
                 titleRes = R.string.parse_result_title,
-                messageRes = if (mediaTek) {
-                    R.string.parse_missing_phys_mediatek
-                } else {
-                    R.string.parse_missing_phys_hint
-                },
-                docUrl = if (mediaTek) mediatekDocUrl() else null,
+                messageRes = R.string.parse_missing_phys_mediatek,
+                docUrl = mediatekDocUrl(),
             )
             markGenerationFailed()
             return

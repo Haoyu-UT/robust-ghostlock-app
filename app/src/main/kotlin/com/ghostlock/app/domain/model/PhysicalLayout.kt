@@ -20,17 +20,17 @@ internal fun isQualcommSoc(socName: String): Boolean {
 
 /**
  * Whether the parse flow can finish with the physical layout the images
- * supplied. The rule is what each platform can actually provide:
+ * supplied. The rule is the same one import verification applies:
  *
  * - MediaTek has no reliable compiled default (the sampled fleet uses
  *   0x40000000, 0x40080000/+0x40000000 and 0x80000000), so both halves must
  *   come from vendor_boot/dtbo, and the native refuses an MTK profile without
  *   the load outright.
- * - Qualcomm reads the load from xbl_config/uefi; the offset stays null
- *   because the compiled DRAM-base default is the right one there. The bundled
- *   myron profile carries exactly that shape (a load map, a null offset).
- * - Every other platform has a compiled default for both halves and no
- *   sidecar to ask for.
+ * - Every other platform resolves both halves from its compiled defaults
+ *   (Qualcomm: `P0_KERNEL_PHYS_LOAD` / `QC_GKI_6_12_PHYS_LOAD` and
+ *   `P0_PHYS_OFFSET`), and its sidecars only ever supply the load — the offset
+ *   has no image source there at all. The sidecar advice stays on screen as a
+ *   convenience; skipping it must not fail generation.
  */
 internal fun generationPhysComplete(
     socName: String,
@@ -38,7 +38,6 @@ internal fun generationPhysComplete(
     offsetPresent: Boolean,
 ): Boolean = when {
     isMediaTekSoc(socName) -> loadPresent && offsetPresent
-    isQualcommSoc(socName) -> loadPresent
     else -> true
 }
 
