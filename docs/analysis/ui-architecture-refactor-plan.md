@@ -18,10 +18,10 @@ the post-root repairs`, 2026-11-21).
 | one state bag | `GhostlockUiState`: **88 fields**, of which **16** are `*Visible` booleans and **15** are dialog fields | `GhostlockUI.kt:110` |
 | one action bus | `GhostlockActions`: **87 methods** | `GhostlockUI.kt:276` |
 | one ViewModel | **2,985 lines**, 83 `onXxx` overrides, **36 private `var`s**, one `MutableStateFlow` | `GhostlockViewModel.kt:144`, `:149` |
-| UI sources | `GhostlockUI.kt` 2,043 lines, `AdvancedUI.kt` 1,384, UI package 7,647 | `app/src/main/kotlin/com/ghostlock/app/ui/` |
+| UI sources | `GhostlockUI.kt` 2,043 lines, `AdvancedUI.kt` 1,384, UI package 7,647 | `app/src/main/kotlin/com/sesame/app/ui/` |
 | navigation | two truths (16 booleans **and** a `NavBackStack`), three parallel mappings | `:382` `navigationPath`, `:420` `syncNavigationPath`, `:431` `closeScreen` |
 | dialogs | one 15-field bus with a 6-variant `DialogType` shared by ~50 call sites | `:657` |
-| UI tests | 4 files, all pure helpers; **none** references `GhostlockUiState` | `app/src/test/kotlin/com/ghostlock/app/ui/` |
+| UI tests | 4 files, all pure helpers; **none** references `GhostlockUiState` | `app/src/test/kotlin/com/sesame/app/ui/` |
 | state restoration | no `SavedStateHandle`, no `rememberSaveable` | — |
 
 ### 1.2 The four structural causes
@@ -176,8 +176,8 @@ sheet stays a global overlay whose visibility derives from `SessionState.run`, n
 The three editor screens are deleted (§3.7); `Validation` is new.
 
 ### 3.3 N2 — typed dialogs
-
-| file | change | reason |
+*Split at implementation (2026-11-21): **N2a** is the typed `AppDialog` model and the removal of
+the 15-field bus; **N2b** is `ParseState`, the parse flow's own step machine.*| file | change | reason |
 |---|---|---|
 | new `ui/dialog/AppDialog.kt` | `sealed interface AppDialog { Confirm, Choice, Notice, TextInput, Stride, Overwrite, NotificationPermission }` with typed item models | each dialog is one type |
 | new `ui/dialog/DialogController.kt` | `StateFlow<AppDialog?>`, `suspend fun ask(d): DialogResult`, `dismiss()`; one at a time via a mutex; cancellation releases the slot | call sites read as a question, not as postback fields |
@@ -310,7 +310,7 @@ python3 tools/ship_golden_profiles.py --check   # untouched, but run: the bundle
 | N2 | trigger each dialog kind (route picker, overwrite, notice, input, stride, phys prompt, notification permission) | same text and buttons; the answer reaches the same flow |
 | N3 | the support plan's S5 (star document → `ProfileBlocked` with the reason; 759-style crafted states; a valid profile → `Ready`) | its own gate |
 | N4 | the same navigation sweep + a full chain run (Ready → run → `KernelSU ready`, store `completed`) + a blocked run + the validation report on a deliberately broken profile | both, and every error names its path |
-| N5 | `adb shell am kill com.ghostlock.app` on each screen; relaunch | the stack and the last-run state restore |
+| N5 | `adb shell am kill com.sesame.app` on each screen; relaunch | the stack and the last-run state restore |
 
 **Screenshot matrix (N0, ~35 captures).** Home in 9 verdict states; the validation report (valid,
 invalid, blocked); Advanced, Parameters (source cards), LoadConfig, Builtin, MergePreview, Legacy,
@@ -348,15 +348,52 @@ code is touched. The full chain run at N4 is a functional regression check, not 
 ## 9. 进度 — progress
 
 - [ ] **N0** — characterization: nav/state mapping tests for what is pure today, the screenshot
-  matrix, the Robolectric/Miuix experiment, `tools/ui-matrix.sh`.
-- [ ] **N1** — typed navigation.
-- [ ] **N2** — typed dialogs + `ParseState`.
-- [ ] **N3** — `SupportStatus` (the support plan, re-homed) + editor state holder.
-- [ ] **N4** — delete the three editor screens (§3.7), then per-screen states/actions and the
-  ViewModel split, one screen per commit.
-- [ ] **N5** — `SavedStateHandle`, coroutines-test, home-card Compose tests.
-- [ ] delete `GhostlockUiState`, `GhostlockActions`, `GhostlockUI.kt`, `AdvancedUI.kt`.
-- [ ] **V1–V4** — the surfaces in `ui-visual-design.md` §6, in its order (V1 between N4a and N4b).
+  matrix, the Robolectric/Miuix experiment, `tools/ui-matrix.sh`. *(The pre-refactor screenshots
+  exist; the rest is open.)*
+- [x] **V0** — the static prototype (`ui-visual-design.md` §7.1), the look gate before any product
+  code moves. *(Build 789, debug, on the diting; the button hierarchy was corrected after review.)*
+- [x] **N1** — typed navigation. *(2026-11-21: `Screen` + `NavController`; the 12 screen flags,
+  `navigationPath`, `syncNavigationPath` and the stack reconciliation are gone. 5 unit tests;
+  device sweep through Advanced → Parameters → LoadConfig → Builtin, VrKo, Measurements, About,
+  the editor chain and the top-bar/system back.)*
+- [x] **N2a** — typed dialogs. *(2026-11-21: `AppDialog` (Notice/Confirm/ListDialog/Input/
+  NotificationPermission) is the one dialog field; `DialogType` and the 15 dialog fields are gone,
+  as is `onDialogDismissFinished`. The confirm label is now the dialog's own — the export prompt
+  used to render the Shizuku hint's "enable" label. Device: the parse source list, the URL input,
+  the manager picker with its leading row, and the parse-failure notice. The parse stage machine
+  stays for N2b.)*
+- [x] **N2b** — the parse state machine. *(2026-11-21: `ParseStep` — Idle / ModePick / SourcePick /
+  Phys / Route / Plan / Lock / Overwrite — carries every pending choice; `parseDialogStage` and the
+  twelve `pending*` variables are gone, and so is `PendingConfirmation`. Cancelling a choice resets
+  the step. Device: generation → local image → the payload/boot dialog → cancel → back.)*
+- [x] **N3** — the support verdict. *(2026-11-21: three-state model `Ready | AccessPending |
+  Missing`; D1/D3 deleted; the legacy store, its migration/cleanup UI and the stored-overrides
+  layer removed; import is transactional with a field-path rejection dialog; the physical pair is
+  required for every device; D7 (the run consumes the resolved profile) and D8 (`snapshot()` stops
+  resolving) done. `support-status-state-plan.md` deleted per the operator decision.)*
+- [x] **N4** — editor deletion and the state split. *(2026-11-21: the three editor screens and the
+  editing plumbing are gone; `SessionState` + `ReportState` + `OverlayState` + `GenerationState` +
+  `BuiltinState` with per-screen actions; the god state and action bus are deleted; the shell takes
+  the slices. Device-checked on the diting.)*
+- [ ] **N5** — `SavedStateHandle` (the one remaining feature), coroutines-test and the Compose
+  tests. *Tests were deferred by the operator; the unit-test sources compile.*
+- [x] **V2** — Parameters hub: current source/release/route card, builtin picker, docs, export,
+  danger row; the load-config screen is deleted.
+- [x] **V4** — run sheet: 运行中 line, verdict footer with 导出报告 and 打开管理器, tone tags no
+  longer rendered. The report wizard carries its step indicator.
+- **NAS (2026-11-21):** `ghostlock-builds/2026-11-21-ui-refactor-812/` — APK (versionCode 812,
+  commit `91364724`), README, MD5/SHA256 sums verified on the share.
+- [x] **V1** — Home. *(2026-11-21: landed before N3 with a pure `supportStatusOf(state)` mapping —
+  the stored verdict with a generation is still N3. Identity line + device dialog, the verdict
+  card, the acquisition card (生成配置 / 加载配置), the run group (上次运行 / 导出报告 /
+  高级选项) and the pinned bar; settings moved to Advanced → 运行设置. 5 `SupportStatusTest` cases;
+  device check on the diting. Corrected the same day to the three-state model —
+  `Ready | AccessPending | Missing` — after the operator established that import is transactional
+  and the physical pair is required for every device.)*
+- [x] **V3** — the generation flow. *(2026-11-21: a dedicated screen with 来源 / 解析 / 确认 /
+  保存; the parse no longer opens the run log sheet; the generated document waits on the save
+  step instead of opening the SAF picker itself. Route/plan/phys/overwrite choices are still
+  dialogs over step 3 until N2b. Device: step 1, the failed step with its last line and retry.)*
 
 ## 10. Decisions needed (operator sign-off)
 
@@ -378,19 +415,21 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   validation report replaces the "fix here" surface; the flow becomes export → edit → re-import.
   *Decided.*
 
-## 11. Relationship to `support-status-state-plan.md`
+## 11. The support-verdict plan (implemented and retired)
 
-The support plan is **not superseded**; it is the most developed part of this plan. Amendments:
+`support-status-state-plan.md` was implemented as N3 and **deleted on 2026-11-21** per the operator
+decision that it has no value once implemented; it remains in git history
+(`git show e768c6b9:docs/analysis/support-status-state-plan.md`). What survives into this plan:
 
-- Its §2.3 `home: StateFlow<HomeState>` becomes `session: StateFlow<SessionState>`; the verdict is
-  `session.support`, still with one writer.
-- Its editor-session split (§2.3 `EditorState`, §6 S2) is **withdrawn**: the editor is deleted
-  with H1 and `EditorIsolationTest` (2026-11-21). Its §2.1 `FieldsInvalid(paths)` becomes
-  `FieldsInvalid(errors)`, and the errors render in the validation report (§3.7).
-- Its §2.7 consumer table maps to per-screen actions (N4), not to one `GhostlockViewModel`.
-- Its §6 S1–S4 can start once N1 is in; the editor dependency is gone.
-- Its test matrix is adopted as-is, with `SupportRefetchRaceTest` requiring `kotlinx-coroutines-test`
-  (N5's dependency, pulled into N3).
+- The verdict has three states — `Ready | AccessPending | Missing` (`ui/SupportStatus.kt`).
+  Import is transactional, so a rejected profile never becomes the selection and Home has no
+  blocked/invalid state.
+- The physical pair is required for every device; generation fails rather than emit a pair-less
+  profile.
+- D1 (dead `describe()` clauses), D3 (layer-notice machinery), D7 (the run consumes the resolved
+  profile) and D8 (`snapshot()` stops resolving) are implemented.
+- The **validation report** survives as the import/generation rejection surface (N4a): it lists the
+  field paths and rules for a rejected import or a failed generation.
 
 ## 12. Visual/IA decisions recorded (2026-11-21)
 
@@ -405,8 +444,8 @@ constrain N3 and V1:
   URI. One source of truth (the file), one activation path (import).
 - **Log export lives on Home**, as a row in the run group (上次运行 / 导出报告 / 高级选项), not a
   button in the action band. The run sheet's result card keeps the same entry; both reach one flow.
-- **One pinned action bar** whose label follows `SupportStatus`; four visual variants
-  (success / pending / needs-action / blocked) carry the nine states.
+- **One pinned action bar** whose label follows `SupportStatus`; three visual variants
+  (success / pending / needs-action) carry the three states (Ready / AccessPending / Missing).
 - **The editor is deleted** (§3.7). The validation report names the path, the current value and
   the rule, with a copy action; the flow is export → edit → re-import.
 - **Cards group rows** (not one card per row); one accent colour; state colours only for state.

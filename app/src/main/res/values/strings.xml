@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <string name="app_name">GhostLock</string>
+    <string name="app_name">Sesame</string>
     <string name="action_run">Run</string>
     <string name="action_running">Running…</string>
     <string name="advanced_settings">Advanced options</string>
@@ -60,7 +60,7 @@
     <string name="parse_failed_fixed">This kernel already fixed the vulnerability</string>
     <string name="parse_failed_url">Invalid OTA URL</string>
     <string name="parse_missing_phys_hint">Missing kernel_phys_load; attach xbl_config.img or uefi.img and parse again to fill it</string>
-    <string name="parse_missing_phys_mediatek">Missing kernel_phys_load / kernel_phys_offset. MediaTek images carry no xbl_config or BTF, so the extractor cannot derive them from boot.img alone and the runtime fallback fails at W1. Easiest fix: parse again and attach vendor_boot.img. If that is refused (an unrecognized alignment pattern), run the separate tools/mtk-phys extractor on a rooted device instead, then set both in advanced overrides.</string>
+    <string name="parse_missing_phys_mediatek">Missing kernel_phys_load / kernel_phys_offset. MediaTek images carry no xbl_config or BTF, so the extractor cannot derive them from boot.img alone and the runtime fallback fails at W1. Parse again and attach vendor_boot.img (or dtbo.img when the vendor_boot alignment pattern is not recognized); both values come from the image\'s own DTB.</string>
     <string name="parse_result_title">Extraction result</string>
     <string name="parse_route_title">Multiple routes are available — choose one</string>
     <string name="parse_lock_title">Lock source — choose one</string>
@@ -252,7 +252,7 @@
     <string name="debug_profile_override_warning">Do not change default parameters unless you know exactly what you are doing.</string>
     <string name="override_title">Edit configuration</string>
     <string name="parameters">Parameter configuration</string>
-    <string name="parameters_summary">Load configuration and parameter overrides</string>
+    <string name="parameters_summary">Current profile, bundled sources and export</string>
     <string name="measurements_title">Measured data</string>
     <string name="measurements_summary">Root-measured kernel facts, read-only</string>
     <string name="measurements_readonly">Facts recorded from a completed run\'s root phase. Nothing here is applied automatically; use the merge on the main screen to put a fact into a profile you export.</string>
@@ -289,19 +289,6 @@
     <string name="merge_profile_value">Profile</string>
     <string name="merge_measured_value">Measured</string>
     <string name="merge_export">Export merged profile</string>
-    <string name="legacy_present_title">Legacy profiles found</string>
-    <string name="legacy_present_summary">Export them before the one-time cleanup</string>
-    <string name="legacy_title">Legacy profile data</string>
-    <string name="legacy_explainer">These documents and the stored override live in app data. Export what you need; the cleanup deletes them from the app. Nothing is deleted until you confirm.</string>
-    <string name="legacy_override_present">A stored parameter override exists and is no longer applied.</string>
-    <string name="legacy_export">Export</string>
-    <string name="legacy_export_with_override">Export with override</string>
-    <string name="legacy_cleanup">Delete legacy data</string>
-    <string name="legacy_cleanup_title">Delete legacy data</string>
-    <string name="legacy_cleanup_message">Delete every legacy document and the override? Unexported documents will be lost. This cannot be undone.</string>
-    <string name="legacy_cleanup_done">Legacy data deleted</string>
-    <string name="legacy_cleanup_failed">Could not delete legacy data</string>
-    <string name="legacy_empty">No legacy documents; only the stored override remains.</string>
     <string name="override_summary">Edit the parameters of the loaded profile</string>
     <string name="profile_docs">Profile documentation</string>
     <string name="profile_docs_summary">Field reference and validation rules on GitHub</string>
@@ -345,9 +332,6 @@
     <string name="user_profile_convert_failed">Could not export a v2 copy</string>
     <string name="loaded_user_profile">User profile: %1$s</string>
     <string name="builtin_profile_label">Built-in profile: %1$s</string>
-    <string name="layer_import_not_applied">Imported profile %1$s is loaded but not applied: this kernel has a bundled profile.</string>
-    <string name="layer_overrides_not_applied">Stored parameter overrides are disabled: they were written by a different build. Save them again in Parameters to re-enable.</string>
-    <string name="layer_notice_title">Profile not applied</string>
     <string name="user_profile_meta">%1$s · %2$s</string>
     <string name="user_profile_export">Export</string>
     <string name="user_profile_rename">Rename</string>
@@ -465,7 +449,7 @@
          the cached (freezable) state while the KernelSU manager is in front. -->
     <string name="run_notif_channel_name">Run status</string>
     <string name="run_notif_channel_description">Attack progress and result</string>
-    <string name="run_notif_running_title">GhostLock is running</string>
+    <string name="run_notif_running_title">Sesame is running</string>
     <string name="run_notif_running_text">Attack in progress. Keep the app open; the KernelSU manager may come to the front.</string>
     <string name="run_notif_success_title">Root active</string>
     <string name="run_notif_success_text_ghostlock">KernelSU loaded and SELinux restored.</string>
@@ -475,11 +459,42 @@
     <string name="reboot_recommended_title">Reboot recommended</string>
     <string name="reboot_recommended_message">This run modified SELinux policy capabilities, which can block network traffic. Reboot the device to restore them.</string>
     <string name="run_notif_permission_title">Allow notifications?</string>
-    <string name="run_notif_permission_message">GhostLock shows the run status in a notification, and keeps the attack running when another app (such as the KernelSU manager) comes to the front. Without this permission the run still works, but its status is only visible inside the app.</string>
+    <string name="run_notif_permission_message">Sesame shows the run status in a notification, and keeps the attack running when another app (such as the KernelSU manager) comes to the front. Without this permission the run still works, but its status is only visible inside the app.</string>
     <string name="run_notif_permission_allow">Allow</string>
     <string name="run_notif_permission_later">Not now</string>
     <string name="run_status_root_active">Root active</string>
     <string name="run_status_failed">Root not obtained</string>
     <string name="run_notif_open_manager">Open KernelSU manager</string>
     <string name="run_notif_manager_missing">KernelSU manager is not installed or has no launch screen.</string>
+    <!-- Home (V1) -->
+    <string name="home_load_summary">Choose an existing .conf file</string>
+    <string name="profile_import_rejected_title">Profile rejected</string>
+    <string name="home_last_run">Last run</string>
+    <string name="home_export_report_summary">Logs, crash evidence and the current profile</string>
+    <string name="home_action_shizuku">Set up Shizuku</string>
+    <string name="home_action_generate">Generate</string>
+    <string name="home_source_builtin">Builtin</string>
+    <string name="home_source_external">External</string>
+    <string name="home_device_info_title">Device info</string>
+    <string name="home_run_none">No run yet</string>
+    <string name="home_run_done">Completed</string>
+    <string name="home_run_failed">Failed</string>
+    <string name="run_settings_title">Run settings</string>
+    <string name="run_settings_summary">CPU pair, safe mode, Shizuku, vr.ko</string>
+    <!-- Generation flow (V3) -->
+    <string name="gen_step_source">1 Source</string>
+    <string name="gen_step_parse">2 Parse</string>
+    <string name="gen_step_confirm">3 Confirm</string>
+    <string name="gen_step_save">4 Save</string>
+    <string name="gen_parsing">Parsing…</string>
+    <string name="gen_probing_title">Probing the kernel layout</string>
+    <string name="gen_probing_detail">KernelSnitch is reading the heap layout to choose the slab stride. This usually takes a few seconds to a minute; keep this screen open.</string>
+    <string name="gen_confirm_hint">Choose the route and plan</string>
+    <string name="gen_generated">Profile generated</string>
+    <string name="gen_save_hint">Save the file first; it takes effect only after you load it.</string>
+    <string name="gen_save">Save to file</string>
+    <string name="gen_failed_hint">No profile was generated; check the input and retry.</string>
+    <string name="gen_retry">Start over</string>
+    <string name="gen_source_hint">The required images are determined after you choose.</string>
+    <string name="gen_local_summary">boot.img · ota.zip · vendor_boot · dtbo</string>
 </resources>

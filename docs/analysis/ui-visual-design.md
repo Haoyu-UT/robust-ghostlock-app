@@ -82,21 +82,16 @@ slices being ordered as §6 below.
 |---|---|---|---|---|
 | `Ready` | success (green) | 受支持 | 配置已就绪 | 执行 |
 | `AccessPending` | pending (neutral) | 通过 Shizuku 执行 | the Shizuku status line | 配置 Shizuku |
-| `FieldsInvalid` | needs action (amber) | 配置需要修正 | N 项参数无效 | 查看问题 |
-| `PhysicalPairMissing` | needs action (amber) | 需要物理内存参数 | 请提供 vendor_boot/dtbo 并重新解析（联发科） | 去补充 |
-| `ProfileMissing` | needs action (amber) | 需要加载配置 | 加载或生成配置后可执行 | 去生成 |
-| `CopyUnreadable` | blocked (red) | 配置无法读取 | 所选文件无法读取，请重新导入 | 去导入 |
-| `ProfileBlocked` | blocked (red) | 配置需要修正 | <reason, verbatim> | 去处理 |
-| `KernelUnsupported` | blocked (red) | 不支持 | 未找到匹配 <release> 的配置 | 生成配置 |
-| `ResolutionFailed` | blocked (red) | 配置解析失败 | <detail> | 查看 |
+| `Missing` | needs action (amber) | 需要加载配置 | 加载或生成配置后可执行 | 去生成 |
 
-The titles and summaries come from `support-status-state-plan.md` §4, with one change: its
-`FieldsInvalid` summary said "请修正标记的配置项", which referred to the editor's red fields; with
-the editor deleted the count replaces it. The detail line is new and always the current source.
+Three states only, corrected 2026-11-21 (see `support-status-state-plan.md`, "Model correction"):
+import is transactional and the physical pair is required for every device, so a rejected profile
+never reaches Home. The detail line is the current source (内置 / 外部) and the declared route when
+there is one. A rejected import or a failed generation is reported where it happens, with the field
+paths — not as a Home state.
 
-Bar destinations: 执行 → run; 配置 Shizuku → the Shizuku permission flow; 查看问题 → Validation;
-去补充 / 生成配置 / 去生成 → the generation flow; 去导入 → the 加载配置 row on Home;
-去处理 / 查看 → Parameters (or Validation when the status carries errors).
+Bar destinations: 执行 → run; 配置 Shizuku → the Shizuku permission flow; 去生成 → the generation
+flow.
 
 ### 3.2 Parameters — the profile manager
 
@@ -323,7 +318,11 @@ One large title per screen. Section headers inside a page are 14 sp / 600, secon
 
 - **Primary**: filled, full width, only in the pinned bar (Home) or as the flow's forward action
   (generation, report). One per screen.
-- **Secondary**: text or outlined (`TextButton`), for row actions (查看问题, 导出配置, 复制).
+- **Secondary**: text links, not buttons. Miuix's `TextButton` is a filled pill by default
+  (`ButtonDefaults.textButtonColors()`); a secondary action is a primary-coloured `Text` with a
+  click modifier and 8 dp padding, so it never competes with the filled primary.
+- **Chips** (step selectors, prototype switchers): 16 dp radius, 13 sp, primary container when
+  selected, no container otherwise.
 - **Destructive**: error-coloured text button inside a 危险操作 section, always followed by a
   confirm dialog. Never in the primary band, never between benign rows.
 - Disabled actions explain themselves in the row summary, not with a toast.
@@ -397,6 +396,7 @@ V-slices carry no structural change; each is a UI commit series with the screens
 
 | slice | content | depends on |
 |---|---|---|
+| **V0** | the static prototype (§7.1): `app/src/debug` only, mock data, no product code — the look gate | — |
 | **N1** | typed navigation (plan §3.2) | — |
 | **N2** | typed dialogs + `ParseState` (plan §3.3) | N1 |
 | **N3** | `SupportStatus` + `FieldsInvalid(errors)` (support plan) | N1 |
@@ -414,6 +414,24 @@ one surface that changes behavior rather than shape: the dialog chain becomes a 
 parse session becomes navigable state.
 
 ## 7. Verification
+
+### 7.1 The static prototype (V0)
+
+`app/src/debug/kotlin/com/sesame/app/ui/PrototypeActivity.kt` renders every surface with mock
+data; `app/src/debug/AndroidManifest.xml` declares it, so no release build contains either file.
+Launch on the device:
+
+```sh
+adb shell am start -n com.sesame.app/.ui.PrototypeActivity
+```
+
+The bottom switcher selects 首页 / 参数 / 校验 / 生成 / 日志; on Home a second row selects the nine
+status variants. Nothing is wired: buttons are no-ops except the switchers and the generation
+step chips. Its purpose is to judge layout and hierarchy on the phone before any product code
+moves — a screen that reads badly here is cheaper to change than after N1–N4.
+
+Captured 2026-11-21 on the diting (build 789, debug): Home Ready / invalid, Parameters,
+Validation, generation steps 1 and 4, run sheet.
 
 - **Screenshots per slice**, the state list in the refactor plan §6.2 plus: Home in the nine
   verdict states; the validation report valid/invalid/unreadable/failed; the generation flow at

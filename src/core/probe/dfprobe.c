@@ -40,7 +40,7 @@ static int send_one(int sk, int file_fd, off_t off, const uint8_t iv[16],
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ghostlock_app_data_DirtyfragProbe_nativeSendEspWrite(
+Java_com_sesame_app_data_DirtyfragProbe_nativeSendEspWrite(
         JNIEnv *env, jobject thiz, jstring path, jlong offset, jint spi, jint seq,
         jbyteArray ivArr, jint encap_port, jint sender_port) {
     (void)thiz;
@@ -83,7 +83,7 @@ out:
  * not expose it. Returns 0 on success, -errno otherwise. Used by the run-log
  * thread to keep its fsyncs off the route's cores. */
 JNIEXPORT jint JNICALL
-Java_com_ghostlock_app_data_NativeCpuPin_setThreadAffinity(
+Java_com_sesame_app_data_NativeCpuPin_setThreadAffinity(
         JNIEnv *env, jobject thiz, jint tid, jint cpu) {
     (void) env;
     (void) thiz;
