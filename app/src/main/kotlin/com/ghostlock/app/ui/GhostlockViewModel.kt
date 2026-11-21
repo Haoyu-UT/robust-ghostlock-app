@@ -27,7 +27,6 @@ import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.customCpuPairHint
 import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
-import com.ghostlock.app.domain.model.LegacyProfileState
 import com.ghostlock.app.domain.model.LogTone
 import com.ghostlock.app.domain.model.MeasuredKernelInfo
 import com.ghostlock.app.domain.model.MeasurementMergeRow
@@ -241,7 +240,6 @@ class GhostlockViewModel(
             markInterruptedRunLogs()
             applyRecommendedShizuku()
             maybeSuggestShizukuForW3()
-            refreshLegacyState()
         }
         /* Best effort and off the main path: a no-shell device still records
          * the boot it was on; a Shizuku/root device captures the pstore.
@@ -359,17 +357,6 @@ class GhostlockViewModel(
         mutableState.update { it.copy(mergeRows = rows) }
     }
 
-    private suspend fun refreshLegacyState() {
-        val legacy = runCatching { repository.legacyState() }.getOrNull() ?: LegacyProfileState()
-        mutableState.update {
-            it.copy(
-                legacyPresent = legacy.present,
-                legacyProfiles = legacy.profiles,
-                legacyOverridePresent = legacy.overridePresent,
-            )
-        }
-    }
-
     /** The pair actually resolved from the profile, when it beats the device pick. */
     private fun customCpuPairOf(config: ProfileConfig): CpuPair? {
         val snapshot = kernelSnapshot ?: return null
@@ -461,7 +448,6 @@ class GhostlockViewModel(
     /** Opens the configuration-loading screen (source selection). */
     fun onOpenLoadConfig() {
         nav.push(Screen.LoadConfig)
-        viewModelScope.launch(Dispatchers.IO) { refreshLegacyState() }
     }
 
     fun onCloseLoadConfig() {
@@ -571,58 +557,6 @@ class GhostlockViewModel(
                 )
             }
             send(GhostlockEffect.Toast(R.string.profile_rebased))
-        }
-    }
-
-    /* ---- legacy app-data cleanup ---- */
-
-    fun onOpenLegacyCleanup() {
-        nav.push(Screen.Legacy)
-        viewModelScope.launch(Dispatchers.IO) { refreshLegacyState() }
-    }
-
-    fun onCloseLegacyCleanup() {
-        mutableState.update { it.copy(legacyCleanupConfirm = false) }
-        nav.pop()
-    }
-
-    fun onLegacyExport(name: String, applyOverride: Boolean) {
-        val text = repository.legacyProfileDocument(name, applyOverride)
-        if (text == null) {
-            send(GhostlockEffect.Toast(R.string.export_failed))
-            return
-        }
-        requestProfileWrite(
-            PendingProfileWrite(
-                text = text,
-                /* A distinct name: the same release may already be exported as
-                 * the active profile, and the cleanup export must not replace it. */
-                suggestedName = "${name.substringBeforeLast('.').ifEmpty { "profile" }}" +
-                    "-legacy.conf",
-                selectAfterWrite = false,
-            ),
-        )
-    }
-
-    fun onLegacyCleanupRequest() {
-        mutableState.update { it.copy(legacyCleanupConfirm = true) }
-    }
-
-    fun onLegacyCleanupDismiss() {
-        mutableState.update { it.copy(legacyCleanupConfirm = false) }
-    }
-
-    fun onLegacyCleanupConfirm() {
-        mutableState.update { it.copy(legacyCleanupConfirm = false) }
-        viewModelScope.launch(Dispatchers.IO) {
-            val ok = runCatching { repository.finishLegacyCleanup() }.getOrDefault(false)
-            refreshLegacyState()
-            if (ok) nav.pop()
-            send(
-                GhostlockEffect.Toast(
-                    if (ok) R.string.legacy_cleanup_done else R.string.legacy_cleanup_failed,
-                ),
-            )
         }
     }
 
@@ -2508,7 +2442,6 @@ class GhostlockViewModel(
             return
         }
         refreshSnapshot()
-        refreshLegacyState()
         result.route?.let { appendLog("route: $it") }
         result.anchor?.let {
             appendLog(

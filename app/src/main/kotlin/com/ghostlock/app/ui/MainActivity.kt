@@ -391,14 +391,6 @@ private fun GhostlockRoute(
             override fun onOpenProfileDiff() = viewModel.onOpenProfileDiff()
             override fun onCloseProfileDiff() = viewModel.onCloseProfileDiff()
             override fun onRebaseToBundle() = viewModel.onRebaseToBundle()
-            override fun onOpenLegacyCleanup() = viewModel.onOpenLegacyCleanup()
-            override fun onCloseLegacyCleanup() = viewModel.onCloseLegacyCleanup()
-            override fun onLegacyExport(name: String, applyOverride: Boolean) =
-                viewModel.onLegacyExport(name, applyOverride)
-
-            override fun onLegacyCleanupRequest() = viewModel.onLegacyCleanupRequest()
-            override fun onLegacyCleanupConfirm() = viewModel.onLegacyCleanupConfirm()
-            override fun onLegacyCleanupDismiss() = viewModel.onLegacyCleanupDismiss()
             override fun onOpenBuiltinProfiles() = viewModel.onOpenBuiltinProfiles()
             override fun onCloseBuiltinProfiles() = viewModel.onCloseBuiltinProfiles()
             override fun onSelectBuiltinProfile(release: String?) =

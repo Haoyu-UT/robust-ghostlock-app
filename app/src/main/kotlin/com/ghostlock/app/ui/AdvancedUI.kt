@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -40,7 +39,6 @@ import com.ghostlock.app.domain.model.ProfileConfig
 import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.ProfileFieldNode
 import com.ghostlock.app.domain.model.ProfileLayers
-import com.ghostlock.app.domain.model.UserProfileFile
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -60,7 +58,6 @@ import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.icon.basic.Check
 import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonLocation
@@ -456,17 +453,6 @@ internal fun LoadConfigScreen(
                     )
                 }
             }
-            if (state.legacyPresent) {
-                item(key = "legacy") {
-                    Card(modifier = Modifier.preferencePageItem()) {
-                        ArrowPreference(
-                            title = stringResource(R.string.legacy_present_title),
-                            summary = stringResource(R.string.legacy_present_summary),
-                            onClick = actions::onOpenLegacyCleanup,
-                        )
-                    }
-                }
-            }
             item(key = "bottom-space") {
                 Spacer(Modifier.height(24.dp).navigationBarsPadding())
             }
@@ -474,18 +460,6 @@ internal fun LoadConfigScreen(
     }
 }
 
-
-private fun releaseSummary(releases: List<String>): String {
-    if (releases.isEmpty()) return ""
-    val head = releases.take(3).joinToString(", ")
-    return if (releases.size > 3) "$head +${releases.size - 3}" else head
-}
-
-private fun formatFileSize(bytes: Long): String = when {
-    bytes >= 1024 * 1024 -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
-    bytes >= 1024 -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
-    else -> "$bytes B"
-}
 
 private fun formatProfileTime(millis: Long): String =
     SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
@@ -1225,148 +1199,3 @@ internal fun ProfileDiffScreen(
     }
 }
 
-/**
- * One-time cleanup of the pre-measured-db storage: list what is there, export a
- * document (optionally with the stored override applied), and delete only after
- * an explicit confirmation.
- */
-@Composable
-internal fun LegacyCleanupScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
-) {
-    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = stringResource(R.string.legacy_title),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(onClick = actions::onCloseLegacyCleanup) {
-                        Icon(
-                            imageVector = MiuixIcons.Back,
-                            contentDescription = stringResource(R.string.action_back),
-                        )
-                    }
-                },
-            )
-        },
-    ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .scrollEndHaptic()
-                .overScrollVertical()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            contentPadding = pageContentPadding(paddingValues),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item(key = "explainer") {
-                ProfileHintBanner(
-                    text = stringResource(R.string.legacy_explainer),
-                    modifier = Modifier.preferencePageItem(),
-                )
-            }
-            if (state.legacyOverridePresent) {
-                item(key = "override") {
-                    ProfileHintBanner(
-                        text = stringResource(R.string.legacy_override_present),
-                        warning = true,
-                        modifier = Modifier.preferencePageItem(),
-                    )
-                }
-            }
-            if (state.legacyProfiles.isEmpty()) {
-                item(key = "empty") {
-                    ProfileHintBanner(
-                        text = stringResource(R.string.legacy_empty),
-                        modifier = Modifier.preferencePageItem(),
-                    )
-                }
-            }
-            items(state.legacyProfiles, key = { it.name }) { profile ->
-                Card(modifier = Modifier.preferencePageItem()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = profile.name,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MiuixTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = if (profile.parseError) {
-                                stringResource(R.string.user_profile_parse_error)
-                            } else {
-                                releaseSummary(profile.releases) + " · " +
-                                    formatFileSize(profile.sizeBytes)
-                            },
-                            style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            TextButton(
-                                text = stringResource(R.string.legacy_export),
-                                onClick = {
-                                    actions.onLegacyExport(profile.name, applyOverride = false)
-                                },
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (state.legacyOverridePresent) {
-                                TextButton(
-                                    text = stringResource(R.string.legacy_export_with_override),
-                                    onClick = {
-                                        actions.onLegacyExport(profile.name, applyOverride = true)
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            item(key = "cleanup") {
-                TextButton(
-                    text = stringResource(R.string.legacy_cleanup),
-                    onClick = actions::onLegacyCleanupRequest,
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    modifier = Modifier
-                        .preferencePageItem()
-                        .fillMaxWidth(),
-                )
-            }
-            item(key = "bottom-space") {
-                Spacer(Modifier.height(24.dp).navigationBarsPadding())
-            }
-        }
-    }
-    OverlayDialog(
-        show = state.legacyCleanupConfirm,
-        title = stringResource(R.string.legacy_cleanup_title),
-        summary = stringResource(R.string.legacy_cleanup_message),
-        onDismissRequest = actions::onLegacyCleanupDismiss,
-        content = {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                TextButton(
-                    modifier = Modifier.weight(1f),
-                    text = stringResource(R.string.cancel),
-                    onClick = actions::onLegacyCleanupDismiss,
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                TextButton(
-                    modifier = Modifier.weight(1f),
-                    text = stringResource(R.string.legacy_cleanup),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    onClick = actions::onLegacyCleanupConfirm,
-                )
-            }
-        },
-    )
-}

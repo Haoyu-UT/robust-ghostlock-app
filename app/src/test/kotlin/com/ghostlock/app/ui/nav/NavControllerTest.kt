@@ -71,7 +71,7 @@ class NavControllerTest {
         assertTrue(nav.popTo(Screen.Advanced))
 
         assertEquals(listOf(Screen.Main, Screen.Advanced), nav.backStack.toList())
-        assertFalse(nav.popTo(Screen.Legacy))
+        assertFalse(nav.popTo(Screen.Measurements))
         assertEquals(listOf(Screen.Main, Screen.Advanced), nav.backStack.toList())
     }
 }

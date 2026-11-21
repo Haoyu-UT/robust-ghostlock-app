@@ -9,14 +9,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,10 +25,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircleOutline
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,7 +35,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
@@ -66,25 +58,19 @@ import com.ghostlock.app.domain.model.ProfileLayers
 import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.ShizukuStatus
-import com.ghostlock.app.domain.model.UserProfileFile
 import com.ghostlock.app.domain.model.VrKoMode
 import com.ghostlock.app.ui.nav.NavController
 import com.ghostlock.app.ui.nav.Screen
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
-import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TextFieldDefaults
-import top.yukonga.miuix.kmp.basic.TopAppBar
-import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Copy
@@ -95,16 +81,11 @@ import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonLocation
 import top.yukonga.miuix.kmp.preference.RadioButtonPreference
-import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
-import top.yukonga.miuix.kmp.utils.PressFeedbackType
-import top.yukonga.miuix.kmp.utils.overScrollVertical
-import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 data class GhostlockUiState(
     val deviceName: String = "",
@@ -199,11 +180,6 @@ data class GhostlockUiState(
     val mergeRows: List<MeasurementMergeRow> = emptyList(),
     /** Diff of the editor session against the bundle. */
     val profileDiffRows: List<ProfileDiffRow> = emptyList(),
-    /** One-time legacy app-data cleanup. */
-    val legacyPresent: Boolean = false,
-    val legacyProfiles: List<UserProfileFile> = emptyList(),
-    val legacyOverridePresent: Boolean = false,
-    val legacyCleanupConfirm: Boolean = false,
 )
 
 
@@ -302,12 +278,6 @@ interface GhostlockActions {
     fun onOpenProfileDiff()
     fun onCloseProfileDiff()
     fun onRebaseToBundle()
-    fun onOpenLegacyCleanup()
-    fun onCloseLegacyCleanup()
-    fun onLegacyExport(name: String, applyOverride: Boolean)
-    fun onLegacyCleanupRequest()
-    fun onLegacyCleanupConfirm()
-    fun onLegacyCleanupDismiss()
     fun onOpenBuiltinProfiles()
     fun onCloseBuiltinProfiles()
     fun onSelectBuiltinProfile(release: String?)
@@ -333,7 +303,6 @@ private fun closeScreen(screen: Screen, actions: GhostlockActions) {
         Screen.Builtin -> actions.onCloseBuiltinProfiles()
         Screen.MergePreview -> actions.onCloseMergePreview()
         Screen.ProfileDiff -> actions.onCloseProfileDiff()
-        Screen.Legacy -> actions.onCloseLegacyCleanup()
         Screen.ProfileOverride -> actions.onCloseProfileOverrides()
         Screen.AdvancedOverride -> actions.onCloseAdvancedOverrides()
     }
@@ -412,9 +381,6 @@ internal fun GhostlockApp(
                     }
                     entry<Screen.ProfileDiff>(swipeDismiss = swipeBack) {
                         ProfileDiffScreen(state = state, actions = actions)
-                    }
-                    entry<Screen.Legacy>(swipeDismiss = swipeBack) {
-                        LegacyCleanupScreen(state = state, actions = actions)
                     }
                     entry<Screen.ProfileOverride>(swipeDismiss = swipeBack) {
                         ProfileOverrideScreen(state = state, actions = actions)
@@ -1425,369 +1391,6 @@ private fun GhostlockOverwriteDialog(
     )
 }
 
-@Composable
-private fun MainContent(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
-    scrollBehavior: ScrollBehavior,
-    scaffoldPadding: PaddingValues,
-    modifier: Modifier = Modifier,
-) {
-    LazyColumn(
-        modifier = modifier
-            .scrollEndHaptic()
-            .overScrollVertical()
-            .scrollEndHaptic()
-            .fillMaxHeight()
-            .nestedScroll(scrollBehavior.nestedScrollConnection)
-            .imePadding(),
-        contentPadding = pageContentPadding(scaffoldPadding),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item(key = "controls") {
-            ControlPanel(
-                state = state,
-                actions = actions,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        if (state.mergeRows.isNotEmpty()) {
-            item(key = "merge") {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    ArrowPreference(
-                        title = stringResource(R.string.merge_preview_title),
-                        summary = stringResource(R.string.merge_summary),
-                        onClick = actions::onOpenMergePreview,
-                    )
-                }
-            }
-        }
-        item(key = "export-run-log") {
-            TextButton(
-                modifier = Modifier.fillMaxWidth(),
-                text = stringResource(R.string.run_log_export),
-                onClick = actions::onExportRunLog,
-            )
-        }
-        item(key = "run") {
-            RunButton(
-                running = state.running,
-                supported = state.kernelSupported &&
-                        state.executionHasProfile &&
-                        (!state.shizukuEnabled ||
-                                state.shizukuStatus == ShizukuStatus.READY),
-                profileValid = state.profileInvalidPaths.isEmpty(),
-                labelRes = R.string.action_run,
-                onClick = actions::onRun,
-                onBlockedClick = actions::onProfileInvalid,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        /* The one-time legacy cleanup sits below the primary action, so it can
-         * never push the run button off a fresh screen. */
-        if (state.legacyPresent) {
-            item(key = "legacy") {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    ArrowPreference(
-                        title = stringResource(R.string.legacy_present_title),
-                        summary = stringResource(R.string.legacy_present_summary),
-                        onClick = actions::onOpenLegacyCleanup,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ControlPanel(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier = modifier) {
-        ActivationStatusCard(
-            supported = state.kernelSupported,
-            externalUnreadable = state.externalProfileUnreadable,
-            externalBlocked = state.importedProfilePresent &&
-                state.profileLayers?.externalError != null,
-            profileAvailable = state.executionHasProfile,
-            profileValid = state.profileInvalidPaths.isEmpty(),
-            shizukuEnabled = state.shizukuEnabled,
-            shizukuStatus = state.shizukuStatus,
-            onParametersClick = actions::onOpenParameters,
-            onShizukuClick = actions::onStatusClick,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        DeviceInfoCard(
-            deviceName = state.deviceName,
-            socName = state.socName,
-            kernelRelease = state.kernelRelease,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-        )
-        /* The profile-generation entry sits on the home: one sheet, OTA link
-         * or an on-device image, instead of the deep advanced page. */
-        Card(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-            ArrowPreference(
-                title = stringResource(R.string.home_generate_profile),
-                summary = stringResource(R.string.home_generate_profile_summary),
-                onClick = actions::onGenerateProfile,
-            )
-        }
-        Card(modifier = modifier.padding(top = 12.dp)) {
-            if (state.cpuPairLabels.isNotEmpty()) {
-                val customPair = state.customCpuPair
-                val customSummary = customPair?.let {
-                    stringResource(
-                        R.string.cpu_pair_custom,
-                        "${it.primary}, ${it.consumer}",
-                    )
-                }
-                OverlaySpinnerPreference(
-                    title = stringResource(R.string.cpu_pair_label),
-                    items = state.cpuPairLabels.map { DropdownItem(icon = null, title = it) },
-                    selectedIndex = if (customPair == null) state.cpuPairIndex else -1,
-                    summary = customSummary,
-                    showValue = customPair == null,
-                    onSelectedIndexChange = actions::onCpuPairSelected,
-                )
-            }
-            SwitchPreference(
-                checked = state.safeModeEnabled,
-                onCheckedChange = actions::onSafeModeChanged,
-                title = stringResource(R.string.safe_mode_label),
-                summary = stringResource(R.string.safe_mode_summary),
-            )
-            /* PROFILE-SUGGEST-01: the profile suggestion seeds the toggle but no
-             * longer hides it; an explicit user choice overrides either way. */
-            SwitchPreference(
-                checked = state.shizukuEnabled,
-                onCheckedChange = actions::onShizukuChanged,
-                title = stringResource(R.string.shizuku_label),
-                summary = stringResource(
-                    when {
-                        !state.shizukuEnabled -> R.string.shizuku_summary
-                        state.shizukuStatus == ShizukuStatus.READY -> R.string.shizuku_status_ready
-                        state.shizukuStatus == ShizukuStatus.PERMISSION_REQUIRED ->
-                            R.string.shizuku_status_permission_required
-
-                        state.shizukuStatus == ShizukuStatus.NOT_RUNNING ->
-                            R.string.shizuku_status_not_running
-
-                        else -> R.string.shizuku_status_checking
-                    },
-                ),
-            )
-            val tagMode = stringResource(vrKoModeLabelRes(state.vrKoTagClear))
-            val selinuxMode = stringResource(vrKoModeLabelRes(state.vrKoSelinuxBlock))
-            ArrowPreference(
-                title = stringResource(R.string.vr_ko_entry_label),
-                summary = stringResource(R.string.vr_ko_entry_summary, tagMode, selinuxMode),
-                onClick = actions::onOpenVrKo,
-            )
-        }
-        Card(modifier = modifier.padding(top = 12.dp)) {
-            ArrowPreference(
-                title = stringResource(R.string.advanced_settings),
-                summary = stringResource(R.string.advanced_settings_summary),
-                onClick = actions::onOpenAdvanced,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ActivationStatusCard(
-    supported: Boolean,
-    externalUnreadable: Boolean,
-    externalBlocked: Boolean,
-    profileAvailable: Boolean,
-    profileValid: Boolean,
-    shizukuEnabled: Boolean,
-    shizukuStatus: ShizukuStatus,
-    onParametersClick: () -> Unit,
-    onShizukuClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val accessReady = !shizukuEnabled || shizukuStatus == ShizukuStatus.READY
-    val ready = supported && profileAvailable && profileValid && accessReady
-    val missing = !supported || !profileAvailable
-    val (backgroundColor, title, icon) = when {
-        ready -> Triple(
-            when {
-                MiuixTheme.isDynamicColor -> MiuixTheme.colorScheme.secondaryContainer
-                isSystemInDarkTheme() -> Color(0xFF1A3825)
-                else -> Color(0xFFDFFAE4)
-            },
-            R.string.kernel_supported,
-            Icons.Rounded.CheckCircleOutline,
-        )
-
-        /* The selected document itself cannot be read: the resolver has no
-         * profile, and the fault is the selection, not the kernel. Checked
-         * before `missing` so the card never blames the kernel match. */
-        externalUnreadable -> Triple(
-            MiuixTheme.colorScheme.errorContainer,
-            R.string.kernel_external_unreadable,
-            Icons.Rounded.ErrorOutline,
-        )
-
-        /* A readable copy that produced no profile for this kernel (no entry
-         * for the release, schema too new, a merge refusal): the fault is the
-         * copy, not the kernel match. Invalid fields resolve a profile and go
-         * to the `else` branch with their red fields. */
-        externalBlocked -> Triple(
-            MiuixTheme.colorScheme.errorContainer,
-            R.string.kernel_profile_invalid,
-            Icons.Rounded.ErrorOutline,
-        )
-
-        missing -> Triple(
-            MiuixTheme.colorScheme.errorContainer,
-            if (!supported) R.string.kernel_unsupported else R.string.kernel_profile_required,
-            Icons.Rounded.RemoveCircleOutline,
-        )
-
-        else -> Triple(
-            when {
-                MiuixTheme.isDynamicColor -> MiuixTheme.colorScheme.tertiaryContainer
-                isSystemInDarkTheme() -> Color(0xFF3E2F1B)
-                else -> Color(0xFFFFF0DB)
-            },
-            if (!profileValid) R.string.kernel_profile_invalid else R.string.shizuku_label,
-            Icons.Rounded.ErrorOutline,
-        )
-    }
-    val summary = when {
-        ready && shizukuEnabled -> R.string.kernel_profile_ready_shizuku
-        ready -> R.string.kernel_profile_ready
-        externalUnreadable -> R.string.kernel_external_unreadable_summary
-        externalBlocked -> R.string.imported_profile_not_applicable_summary
-        !supported -> R.string.kernel_unsupported_summary
-        !profileAvailable -> R.string.kernel_profile_required_summary
-        !profileValid -> R.string.kernel_profile_invalid_summary
-        shizukuStatus == ShizukuStatus.PERMISSION_REQUIRED ->
-            R.string.shizuku_status_permission_required
-
-        else -> R.string.shizuku_status_not_running
-    }
-    val action = if (!externalUnreadable && !externalBlocked && supported &&
-        profileAvailable && profileValid && !accessReady
-    ) {
-        onShizukuClick
-    } else {
-        onParametersClick
-    }
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.defaultColors(color = backgroundColor),
-        onClick = action,
-        showIndication = true,
-        pressFeedbackType = PressFeedbackType.Tilt,
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 110.dp)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (MiuixTheme.isDynamicColor) {
-                    when (icon) {
-                        Icons.Rounded.CheckCircleOutline -> MiuixTheme.colorScheme.primary.copy(alpha = 0.8f)
-                        Icons.Rounded.RemoveCircleOutline ->
-                            MiuixTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
-
-                        else -> MiuixTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
-                    }
-                } else {
-                    when (icon) {
-                        Icons.Rounded.CheckCircleOutline -> Color(0xFF36D167)
-                        Icons.Rounded.RemoveCircleOutline -> Color(0xFFF5A623)
-                        else -> Color(0xFFF72727)
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .offset(x = 27.dp, y = 31.dp)
-                    .size(110.dp),
-            )
-            Column(
-                modifier = Modifier.padding(start = 16.dp, top = 14.dp, end = 120.dp, bottom = 14.dp),
-            ) {
-                Text(
-                    text = stringResource(title),
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(modifier = Modifier.height(1.dp))
-                Text(
-                    text = stringResource(summary),
-                    fontSize = 15.sp,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DeviceInfoCard(
-    deviceName: String,
-    socName: String,
-    kernelRelease: String,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier,
-        insideMargin = PaddingValues(16.dp),
-    ) {
-        SelectionContainer {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
-            ) {
-                DeviceInfoItem(
-                    title = stringResource(R.string.device_label),
-                    value = deviceName,
-                )
-                DeviceInfoItem(
-                    title = stringResource(R.string.soc_label),
-                    value = socName,
-                )
-                DeviceInfoItem(
-                    title = stringResource(R.string.kernel_label),
-                    value = kernelRelease,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DeviceInfoItem(
-    title: String,
-    value: String,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier = modifier) {
-        Text(
-            text = title,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Medium,
-            color = MiuixTheme.colorScheme.onSurface,
-        )
-        Text(
-            text = value,
-            modifier = Modifier.padding(top = 2.dp),
-            fontSize = 14.sp,
-            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.68f),
-        )
-    }
-}
-
 /* profile-ui: resolved execution view with auto-saved sparse overrides. */
 @Composable
 internal fun ExecutionEditor(
@@ -1828,36 +1431,6 @@ internal val OverrideHighlight = Color(0xFFF5A623)
 internal val FieldErrorHighlight = Color(0xFFE53935)
 
 internal fun isFieldInputInvalid(text: String): Boolean = text.trim().toLongOrNull() == null
-
-@Composable
-private fun RunButton(
-    running: Boolean,
-    supported: Boolean,
-    profileValid: Boolean,
-    labelRes: Int,
-    onClick: () -> Unit,
-    onBlockedClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(modifier = modifier) {
-        TextButton(
-            text = stringResource(if (running) R.string.action_running else labelRes),
-            enabled = supported && profileValid && !running,
-            colors = ButtonDefaults.textButtonColorsPrimary(),
-            onClick = onClick,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        /* A disabled TextButton consumes no pointer input, so this overlay
-         * explains why the run is blocked. */
-        if (!running && (!supported || !profileValid)) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .clickable { onBlockedClick() },
-            )
-        }
-    }
-}
 
 @Composable
 private fun LogPanel(
