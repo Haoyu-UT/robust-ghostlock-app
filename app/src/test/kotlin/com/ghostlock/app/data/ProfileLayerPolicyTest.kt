@@ -70,7 +70,6 @@ class ProfileLayerPolicyTest {
         assertFalse(layers.builtinSelected)
         assertFalse(layers.externalApplied)
         assertNull(layers.externalError)
-        assertFalse(layers.hasInactiveLayer)
     }
 
     @Test
@@ -89,7 +88,6 @@ class ProfileLayerPolicyTest {
         assertFalse(layers.bundledAuthoritative)
         assertTrue(layers.externalApplied)
         assertTrue(controller.importedProfileExists())
-        assertFalse(layers.hasInactiveLayer)
     }
 
     @Test

@@ -257,14 +257,6 @@ data class ProfileLayers(
     val bundledAuthoritative: Boolean = false,
     /** True when a builtin release was selected by hand instead of auto-matched. */
     val builtinSelected: Boolean = false,
-    /** Imported document that would feed the imported layer, if one is loaded. */
-    val imported: String? = null,
-    val importedApplied: Boolean = false,
-    /** Stored overrides exist for this release, whether or not they apply. */
-    val overridesPresent: Boolean = false,
-    val overridesApplied: Boolean = false,
-    /** Build that wrote the stored overrides, when it is not the running one. */
-    val overridesBuild: String? = null,
     /** Build identity of the running app (`BuildConfig.GIT_SHA`). */
     val build: String = "",
     /** Keys the resolved profile carries that no wire section declares. */
@@ -281,20 +273,6 @@ data class ProfileLayers(
      */
     val externalReadFailure: Boolean = false,
 ) {
-    /** True when something present was deliberately not applied. */
-    val hasInactiveLayer: Boolean
-        get() = (imported != null && !importedApplied) ||
-            (overridesPresent && !overridesApplied)
-
-    /**
-     * Whether this state owes the user the start-up notice, given the build
-     * they last acknowledged it for. Pure on purpose: the *caller* must pass the
-     * layers of a real resolution, because the notice states what has already
-     * happened — see PORT-PLAN §C.12b.
-     */
-    fun noticeDue(acknowledgedBuild: String?): Boolean =
-        hasInactiveLayer && build.isNotEmpty() && acknowledgedBuild != build
-
     /** Human-readable layer state; one clause per layer. */
     fun describe(): String = buildList {
         if (externalApplied || externalError != null) {
@@ -312,23 +290,6 @@ data class ProfileLayers(
                 bundledAuthoritative -> "builtin=$builtinRelease (bundled, authoritative)"
                 builtinSelected -> "builtin=$builtinRelease (selected by hand)"
                 else -> "builtin=$builtinRelease"
-            },
-        )
-        imported?.let { name ->
-            add(
-                if (importedApplied) {
-                    "imported=$name applied"
-                } else {
-                    "imported=$name SKIPPED (superseded by the bundled profile)"
-                },
-            )
-        }
-        add(
-            when {
-                !overridesPresent -> "overrides=none"
-                overridesApplied -> "overrides applied"
-                else -> "overrides DISABLED (written by build ${overridesBuild ?: "unknown"}, " +
-                    "running $build)"
             },
         )
         add("build=$build")

@@ -17,11 +17,6 @@ sealed interface AppDialog {
         val docUrl: String? = null,
         /** Offer "export log & report" on this dialog. */
         val exportLog: Boolean = false,
-        /**
-         * Non-null means the body is built from the inactive layers instead of
-         * [messageRes]: the start-up notice states what is present and unused.
-         */
-        val layerNotice: ProfileLayers? = null,
         val dismissLabelRes: Int = R.string.dialog_dismiss,
     ) : AppDialog
 

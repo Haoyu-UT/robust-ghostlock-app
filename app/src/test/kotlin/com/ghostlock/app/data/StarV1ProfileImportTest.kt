@@ -73,7 +73,6 @@ class StarV1ProfileImportTest {
         assertEquals("sigreturn", config.route)
         assertTrue(config.invalidPaths.toString(), config.invalidPaths.isEmpty())
         assertTrue(config.layers!!.externalApplied)
-        assertFalse(config.layers.hasInactiveLayer)
         /* An explicit version is left byte-for-byte alone. */
         assertEquals(file(primaryName).readText(), external.imported)
     }

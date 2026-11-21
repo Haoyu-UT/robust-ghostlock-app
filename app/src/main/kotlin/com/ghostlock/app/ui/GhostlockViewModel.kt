@@ -228,9 +228,6 @@ class GhostlockViewModel(
     /** URI of a just-written profile awaiting the "use it?" confirmation. */
     private var pendingSelectUri: String? = null
 
-    /** The layer notice is decided once per process, from the first resolution. */
-    private var layerNoticeChecked = false
-
     /** The notification rationale is offered once per process. */
     private var notificationRationaleShown = false
 
@@ -354,7 +351,6 @@ class GhostlockViewModel(
                 customCpuPair = customCpuPairOf(config),
             )
         }
-        if (!preserveEditing) maybeRaiseLayerNotice(config)
     }
 
     /** Recomputes the facts the home merge would change; cheap, runs on IO. */
@@ -370,27 +366,6 @@ class GhostlockViewModel(
                 legacyPresent = legacy.present,
                 legacyProfiles = legacy.profiles,
                 legacyOverridePresent = legacy.overridePresent,
-            )
-        }
-    }
-
-    /**
-     * The layers this config reports are the ones a run would use right now: the
-     * notice is driven by the resolution itself, never by a predicate the UI
-     * recomputes, so what it says has already happened (§C.12b). Once per build
-     * identity — the point is to tell the user what the update did, not to nag.
-     */
-    private fun maybeRaiseLayerNotice(config: ProfileConfig) {
-        val layers = config.layers ?: return
-        if (layerNoticeChecked) return
-        layerNoticeChecked = true
-        if (!layers.noticeDue(repository.layerNoticeAcknowledged())) return
-        mutableState.update {
-            it.copy(
-                dialog = AppDialog.Notice(
-                    titleRes = R.string.layer_notice_title,
-                    layerNotice = layers,
-                ),
             )
         }
     }
@@ -2196,9 +2171,6 @@ class GhostlockViewModel(
                 selectedManagerPackage = repository.selectedManagerPackage(),
             )
         }
-        /* At start-up, and from the resolution the run button was just judged
-         * on — the same one a run uses (§C.12b). */
-        loaded?.let(::maybeRaiseLayerNotice)
         refreshMergeRows()
     }
 
@@ -2823,11 +2795,6 @@ class GhostlockViewModel(
 
     private fun dismissDialog() {
         managerPickerOpen = false
-        /* Shown is as good as read: acknowledging on the way out keeps the
-         * notice to once per build however it was dismissed. */
-        (state.value.dialog as? AppDialog.Notice)?.layerNotice?.let {
-            repository.acknowledgeLayerNotice(it.build)
-        }
         mutableState.update { it.copy(dialog = null) }
     }
 

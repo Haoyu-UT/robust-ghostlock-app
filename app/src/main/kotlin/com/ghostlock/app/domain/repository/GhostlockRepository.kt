@@ -54,17 +54,6 @@ interface GhostlockRepository {
     /** The user's vr.ko SELinux-write-block choice (Auto recommends; On/Off are final). */
     fun setVrKoSelinuxBlock(mode: VrKoMode)
 
-    /**
-     * Build identity whose "layers were disabled" start-up notice the user has
-     * already seen; null when none. The notice fires once per build, because a
-     * new build is what disables the layers and the user has to be told once,
-     * not every launch (PORT-PLAN Phase 8 §C.12a/12b).
-     */
-    fun layerNoticeAcknowledged(): String?
-
-    /** Records that the start-up notice for [build] has been shown. */
-    fun acknowledgeLayerNotice(build: String)
-
     fun setShizukuEnabled(enabled: Boolean)
 
     /**

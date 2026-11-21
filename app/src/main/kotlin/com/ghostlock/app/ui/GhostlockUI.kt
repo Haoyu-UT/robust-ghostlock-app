@@ -219,23 +219,6 @@ enum class RunStatus { Idle, Running, Success, Failure }
 /** The profile-generation flow's step; the generation screen renders one at a time. */
 enum class GenerationStep { Idle, Parsing, Confirm, Save, Failed }
 
-/**
- * One line per layer that is present but deliberately not applied. Shared by
- * the start-up notice and the profile screen's banner, so the two can never
- * describe the same state differently.
- */
-@Composable
-internal fun layerNoticeBody(layers: ProfileLayers): String = buildList {
-    val imported = layers.imported
-    if (imported != null && !layers.importedApplied) {
-        add(stringResource(R.string.layer_import_not_applied, imported))
-    }
-    if (layers.overridesPresent && !layers.overridesApplied) {
-        add(stringResource(R.string.layer_overrides_not_applied))
-    }
-}.joinToString("\n\n")
-
-
 data class GhostlockLogLine(val text: String, val color: Int)
 
 interface GhostlockActions {
@@ -700,12 +683,11 @@ private fun GhostlockDialog(
                 }
 
                 is AppDialog.Notice -> {
-                    val layerNotice = dialog.layerNotice
                     Text(
-                        text = when {
-                            layerNotice != null -> layerNoticeBody(layerNotice)
-                            dialog.message.isNotEmpty() -> dialog.message
-                            else -> stringResource(dialog.messageRes)
+                        text = if (dialog.message.isNotEmpty()) {
+                            dialog.message
+                        } else {
+                            stringResource(dialog.messageRes)
                         },
                         modifier = Modifier.fillMaxWidth(),
                         style = MiuixTheme.textStyles.body2,

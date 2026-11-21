@@ -95,8 +95,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         const val PrefVrKoTagClear = "vr_ko_tag_clear"
         const val PrefVrKoSelinuxBlock = "vrko_selinux_block"
 
-        /** Build identity the layer-disable notice was last shown for. */
-        const val PrefLayerNoticeAck = "profile_layer_notice_ack"
         const val PrefDebugKernelLogEnabled = "debug_kernel_log_enabled"
         const val PrefDebugProfileOverrides = "debug_profile_overrides"
         /** Root-manager choice (package name); absent means Auto. */
@@ -316,13 +314,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     override fun setVrKoSelinuxBlock(mode: VrKoMode) {
         vrKoSelinuxBlock = mode
         preferences.edit { putString(PrefVrKoSelinuxBlock, mode.wire) }
-    }
-
-    override fun layerNoticeAcknowledged(): String? =
-        preferences.getString(PrefLayerNoticeAck, null)?.takeIf { it.isNotEmpty() }
-
-    override fun acknowledgeLayerNotice(build: String) {
-        preferences.edit { putString(PrefLayerNoticeAck, build) }
     }
 
     override fun setShizukuEnabled(enabled: Boolean) {
@@ -1266,19 +1257,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private fun logProfileLayers(log: (String) -> Unit, config: ProfileConfig) {
         val layers = config.layers ?: return
         log("<k> profile layers: ${layers.describe()}")
-        if (layers.overridesPresent && !layers.overridesApplied) {
-            log(
-                "<k> profile: stored overrides are present but disabled " +
-                    "(written by build ${layers.overridesBuild ?: "unknown"}); " +
-                    "re-save them in Parameters to re-enable",
-            )
-        }
-        if (layers.imported != null && !layers.importedApplied) {
-            log(
-                "<k> profile: imported document ${layers.imported} is loaded but not " +
-                    "applied; this kernel has a bundled profile",
-            )
-        }
         if (layers.uncarriedKeys.isNotEmpty()) {
             log(
                 "<k> warning: profile carries keys no wire section declares: " +
