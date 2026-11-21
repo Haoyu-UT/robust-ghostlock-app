@@ -2,8 +2,8 @@
 
 **Status 2026-11-21: research plan, branch-local.** This file lives only on `feat/dirtyfrag-5x`.
 If the experiment is dropped, the branch and this plan go with it; it is not a product design and
-changes nothing until a gate below says it should. **G1 measured, G2 and G3 passed (2026-11-21)** — see the result blocks under each gate;
-G4 is next.
+changes nothing until a gate below says it should. **G1 measured, G2–G4 passed (2026-11-21)** — see the result blocks under each gate; only
+the device gate (G5) remains.
 
 ## The question
 
@@ -47,8 +47,11 @@ KPROBES=y KALLSYMS_ALL=y SECURITY_SELINUX=y
 AF_RXRPC absent
 ```
 
-- The star Image exports `kallsyms_lookup_name` alongside `call_usermodehelper[_exec]`, so a
-  module can resolve `selinux_state` with the 5.4 interface (5.7+ no longer exports it).
+- `kallsyms_lookup_name` is **present but not exported** on both Images (corrected 2026-11-21:
+  it sits in kallsyms, not in `__ksymtab`), and `selinux_state` is not exported either. A module
+  therefore resolves names the reference way — a kprobe with `.symbol_name =
+  "kallsyms_lookup_name"`, then a call through `kp.addr`; `register_kprobe` is exported GPL.
+  `call_usermodehelper[_exec]` are exported.
 - Both builds are LTO and rename the ESP entry points: `esp_input$<hash>`, `esp6_input$<hash>`.
   On the star Image `esp_input$…` calls `skb_cow_data` and carries **no** shared-frag (bit 5) test
   in the window before it — the pre-fix shape. `udp_sendpage` calls `ip_append_page`, i.e. the
@@ -176,6 +179,26 @@ boot of the exact Image.
 - **Caveat:** QEMU root is not the delivery path; the phone-side delivery is init's `insmod` after
   the page-cache hook (G2 + G3).
 
+**Result (2026-11-21): pass on both Images.** Built against a shallow ACK
+`android12-5.4.233_r00` tree prepared with the Image's own IKCONFIG and the exact
+`UTS_RELEASE`, with a `Module.symvers` generated from the Image's `__kcrctab` (the venus module
+reuses the same tree with its vermagic string and CRCs). On both Images the guest's
+`finit_module` returned 0, and the module resolved its targets the reference way:
+
+```
+star   register_kprobe addr=ffffffc0103c8d64  selinux_state=ffffffc01314b000  call_usermodehelper=ffffffc010301380
+venus  register_kprobe addr=ffffffc0103b7c6c  selinux_state=ffffffc013121000  call_usermodehelper=ffffffc0102efd24
+```
+
+Both `selinux_state` addresses match the earlier W1 QEMU gate's values. Two controls prove the
+check is real: a corrupted `module_layout` CRC is refused (`disagrees about version of symbol`,
+`ENOEXEC`), and so is the venus module on the star kernel — **not** by vermagic, because with
+`MODVERSIONS` the kernel compares vermagic only past the first space; the per-Image
+`module_layout` CRC is the ABI gate, and the two builds' CRCs differ. Two facts from this gate
+shape the chain: module signing is **off** (`# CONFIG_MODULE_SIG is not set`), and CFI built by
+clang 21 runs on the clang-11.0.2 kernels (the module's indirect calls and the kernel's call to
+its init both pass).
+
 ### G5 — device (owner)
 
 Only after G1–G4. The residual device-only facts are the ROM's live SELinux/init timing and the
@@ -193,7 +216,8 @@ device needs a different chain", not "another series of device runs".
 - The `$<hash>` clone fallback and its regression evidence (G1) — **done 2026-11-21**.
 - A reusable "page-cache primitive gate" harness next to the existing route gate (G2), applicable
   to any 5.x image — **done 2026-11-21**.
-- A ROM preflight table per device (G3) — **done 2026-11-21** — and an ABI verdict per kernel (G4).
+- A ROM preflight table per device (G3) — **done 2026-11-21** — and an ABI verdict per kernel
+  (G4) — **done 2026-11-21, pass on both**.
 - If G1–G4 pass, an L-level plan for a module-delivery DirtyFrag pipeline alongside the module-free
   one — that is a separate design, not this file.
 
