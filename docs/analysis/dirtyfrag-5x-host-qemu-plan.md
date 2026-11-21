@@ -200,23 +200,23 @@ shape the chain: module signing is **off** (`# CONFIG_MODULE_SIG is not set`), a
 clang 21 runs on the clang-11.0.2 kernels (the module's indirect calls and the kernel's call to
 its init both pass).
 
-**G4b — a real-device probe, and its correction (2026-11-21, off-target).** The same module was
-loaded on the POCO (`duchamp`, 6.1.138) at hand. It **panicked the kernel**: that vendor build's
-`struct module` is 1088 B (its BTF says so) against ACK's 1024 — `init` sits at the same offset
-but `exit` and the layout fields do not, and patching `module_layout`'s CRC had masked exactly
-the check that would have refused it. The 5.4 targets were then re-examined the same way: their
-own vendor modules (from the two ROMs) carry a 896 B `struct module` with `name`/`init`/`exit` at
-the same offsets as the ACK-built module, so the 5.4 passes rest on layout evidence rather than on
-the patched CRC. The rule that comes out of it: **an ACK-only module is valid only when the
-vendor's layout matches**, and a patched `module_layout` CRC is never proof of compatibility.
-Verify a candidate against a vendor `.ko` from the target ROM (section size and relocation
-offsets) before trusting it; on 6.1+ the Image BTF gives the full member map.
+**G4b — the same route on a real device (2026-11-21, off-target), corrected.** The module was
+loaded on the POCO at hand (`duchamp`, 6.1.138, rooted via the app). The first build — from ACK
+with the Image's config but **BTF disabled because the host lacked libelf/pahole** — has a
+1024-byte `struct module` against the vendor's 1088 (its BTF), so the loader overran it and the
+kernel panicked (`sys.boot.reason=kernel_panic`). That delta was **our build workaround**, not a
+vendor patch: with `libelf`/`pahole` and the exact config, ACK reproduces the vendor layout
+exactly (1088 B, `init` 0x170, `exit` 0x3D8) and the module loads on the phone, resolving its
+symbols. The 5.4 targets' vendor modules still show the 896-byte layout our build carries.
 
-### G5 — device (owner)
-
-Only after G1–G4. The residual device-only facts are the ROM's live SELinux/init timing and the
-app→init hook on real userspace. Everything about the kernel primitive, the module ABI and the ROM
-payload is settled by then.
+The load matrix on that phone then mapped the checks: the vermagic **release** half is ignored
+under `MODVERSIONS`; the rest of vermagic, a present-but-wrong CRC, the struct layout, kCFI on
+the init call and unexported symbols are all **enforced** (the last two panic or refuse); while a
+missing `module_layout` entry, an empty `__versions` section and an absent signature **load** —
+the kernel's own compatibility paths. `IGNORE_MODVERSIONS`/`IGNORE_VERMAGIC` are dead ends with
+`MODULE_FORCE_LOAD` off. The rule: reproduce the config **and the host tooling**, verify the
+layout against the ROM's modules or BTF, and never treat a patched `module_layout` CRC as a
+pass. The full table is in the gate's evidence folder.
 
 ## What this deliberately avoids
 
@@ -236,8 +236,12 @@ device needs a different chain", not "another series of device runs".
 
 ## Risks
 
-- The module ABI (G4) is the concentrated risk: the vendor trees for these kernel builds were
-  never published, so the module must be built cross-version and CRC-patched.
+- The module ABI (G4) is the concentrated risk, but the vendor tree turned out not to be needed:
+  with the Image's **exact config and host tooling** (pahole/libelf for BTF), ACK reproduces the
+  vendor's `struct module` (1088 B on the 6.1 phone, 896 B on both 5.4 Images). The failure mode
+  is a build environment that silently drops config — the first 6.1 build did, and the phone
+  panicked. Verify the layout against the Image BTF or a vendor `.ko` before any load, and never
+  treat a patched `module_layout` CRC as a pass.
 - QEMU does not model the phone's SELinux or init; G3 is the static stand-in, G5 the only real
   test.
 - A page-cache write contaminates the cache; a device run must drop caches or reboot afterwards
