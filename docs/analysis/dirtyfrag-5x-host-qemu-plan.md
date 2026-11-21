@@ -131,8 +131,13 @@ exploit binary.
 
 ### G3 — ROM preflight (host)
 
-The kernel is not the whole chain; the ROM must supply the hook. From the two ROM payloads
-(already on hand as OTAs), check:
+The kernel is not the whole chain; the ROM must supply the hook. From the two ROM payloads, check:
+
+> **Prerequisite state (2026-11-21): blocked on data.** The two directories on disk hold only the
+> boot chain (`boot`, `vendor_boot`, `dtbo`, `abl`, `xbl`, `xbl_config` — the kernel derivation's
+> inputs). The userspace files this gate needs live in `system`/`vendor`, which are not on disk;
+> they need the full OTA payload (multi-GB, range-fetchable) or the NAS copy. G3 is therefore
+> unmeasured, not failed.
 
 - `libc++.so` / `libbase.so` carry the sentry constructor and a usable code cave — feed the real
   files to the app's own preflight;
