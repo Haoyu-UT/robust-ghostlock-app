@@ -71,6 +71,9 @@ execution, the init shell and its socket), and the per-kernel module idea alread
    stage is invoked as `--dirtyfrag <plan>` and reads no profile.
 5. A profile is a *kernel-image* document. Artefacts (the module `.ko`), installed managers, and
    runtime choices do not belong in it.
+6. **No derivation.** The module pipeline is an authored choice. The extractor never emits it; a
+   supported release is a curated pair — a hand-written bundled profile and a hand-compiled,
+   bundled module — that was validated together. There is no extractor work in this plan.
 
 ### Proposal
 
@@ -91,8 +94,8 @@ route, no kernel-memory geometry. Validate as:
 - the W1 field groups are required **iff** the list contains a W1-based entry (`ghostlock` or
   `dirtyfrag`); a list of `["module"]` may omit them entirely;
 - `route`, when present, is still validated exactly as today (one branch);
-- `release`, `schema_version`, `kernel_major` stay required (all three are cheap and always
-  extractable);
+- `release`, `schema_version`, `kernel_major` stay required (all three are cheap and are present in
+  every authored document);
 - the KDP rule widens: `kdp = 1` now accepts the strict `["dirtyfrag"]` **or** `["module"]` — both
   avoid the credential write.
 
@@ -114,23 +117,28 @@ the profile; a profile and an asset meet by `release`, exactly as profiles and k
 values keep KernelSU. If a kernel ever supports both handoffs, add an optional `handoff` key then
 — with a default that preserves today's behaviour. Do not add it speculatively.
 
-**P5 — the extractor emits `module` only where nothing else is feasible.** Rule: when the DirtyFrag
-primitive is feasible and **no** W1-based pipeline is (the 5.4 case), emit `["module"]`; otherwise
-emit exactly what it emits today. Consequence: every existing store document is byte-identical and
-only previously-infeasible 5.4 images gain a pipeline. Preferring the module elsewhere is a later,
-measured decision.
+**P5 — authored, bundled-only, no extraction.** The pipeline is only honoured when the effective
+profile is the **bundled** profile for this release **and** a hand-built module for the same
+release is bundled with it. The two were validated together by hand; the bundle is the authority
+for this pipeline. An external or imported profile that declares `module` is refused with a
+reason, even when its release matches. Support is a curated list, not a derivation: each supported
+release is one pair, added by hand; an unsupported release fails closed. Deriving it from the image
+was considered and rejected — the module's build (config, compiler, CRCs) and the profile's
+preflight are a hand-validated pair, and an emitted profile for a release with no module would only
+produce a refusal at run time.
 
 ### Compatibility matrix
 
 | reader → / profile ↓ | current app/build | new app/build |
 |---|---|---|
 | existing profiles | unchanged | unchanged (strict branch of P2) |
-| new `module` profile | refused: unknown pipeline (fail closed) | runs the new chain if the release has an asset |
-| external import | same rules | same rules; the module pipeline also needs the release asset |
+| new `module` profile (bundled) | refused: unknown pipeline (fail closed) | runs the new chain |
+| external import declaring `module` | refused: unknown pipeline | refused: the module pipeline is bundle-only |
 
-The extractor/Wire/native golden corpus must not move (P5); the resolver gains a third value and
-the conditional rules; `PROFILE_SCHEMA.md`/`_ZH.md` gain a pipeline section (the `pipeline` key is
-currently undocumented there) and the pipeline-scoped rules.
+The wire/native golden corpus must not move, and the extractor is untouched, so the
+option/route corpus cannot change either. The resolver gains a third value and the conditional
+rules; `PROFILE_SCHEMA.md`/`_ZH.md` gain a pipeline section (the `pipeline` key is currently
+undocumented there) and the pipeline-scoped rules.
 
 ### Alternatives rejected
 
@@ -150,8 +158,8 @@ currently undocumented there) and the pipeline-scoped rules.
 - Whether `["module", "ghostlock"]` should ever be emitted (module preferred, W1 as fallback).
   Recommendation: not before the module has a measured device record; the fallback would also
   re-impose the W1 requirements under P2.
-- Hand-written module profiles (operator/unsupported kernels): allowed, and fail closed at resolve
-  when the release has no bundled module.
+- Hand-writing a profile for a new kernel: possible only as a new **bundled pair** (profile +
+  hand-built module, added together). The external-profile path cannot authorize a module chain.
 
 ## 4. Components and changes
 
@@ -159,20 +167,21 @@ currently undocumented there) and the pipeline-scoped rules.
 |---|---|
 | `profile-core` `ProfileResolver` | add `module` to `PipelineNames`; pipeline-scoped required groups (P2); KDP rule |
 | `profile-core` schema docs | document `pipeline` (missing today) and the pipeline-scoped rules; EN+ZH together |
-| `PipelineResolver` | third entry + viability callback (module asset, ROM preflight, Magisk source) |
-| `AndroidGhostlockRepository` | module pipeline path: no W1 native run, no `nativeDocument`; still `runDirtyfragStage`; preflight refusal replaces the ksud gate for this pipeline; runtime env passes the handoff + module path to the stage |
+| `PipelineResolver` | third entry + viability callback (bundled profile source, bundled module asset for the release, ROM preflight, Magisk source) |
+| `AndroidGhostlockRepository` | module pipeline path: no W1 native run, no `nativeDocument`; still `runDirtyfragStage`; preflight refusal replaces the ksud gate for this pipeline; refuses `module` unless the effective profile is the bundled one; runtime env passes the handoff + module path to the stage |
 | native runtime config / `ops.cpp` | the root script branches on `GHOSTLOCK_HANDOFF=magisk`: insmod → wait permissive → Magisk setup → restore Enforcing; the KSU block stays for existing pipelines. No new invocation mode and no wire change (the stage is already `--dirtyfrag <plan>`) |
-| module bundle | per-release `.ko` build (exact config, vendor clang, Image CRCs), `index.conf` manifest, hash/vermagic verification, app-side asset loader |
+| module bundle | hand-built `.ko` per supported release (exact config, vendor clang, Image CRCs), `index.conf` manifest, hash/vermagic verification, app-side asset loader; each asset is added only together with its bundled profile |
 | Magisk staging | extend the manager scanner to locate an installed Magisk manager and stage its binaries, as the ksud scanner does today; refuse with a clear reason when none is installed |
-| extractor | P5 emission rule; no corpus change; schema/option docs |
 | app UI | pipeline display for `module`; the module/Magisk readiness on the support card; no new profile editor fields |
 
 ## 5. Gates
 
-**G1 — static (host).** Validation/resolver/schema tests, including the fail-closed matrix above;
-corpus byte-identity (`options_ondevice`/`route_verdicts_ondevice`/`cut_ondevice`); the ship
-script's module-asset check; the ROM preflight extension (libc++ cave, `insmod`/`vendor_modprobe`,
-Magisk source) on both 5.4 packages. The policy checks in section 2 are already done.
+**G1 — static (host).** Validation/resolver/schema tests, including the fail-closed matrix above and
+the bundle-authority rule (an external profile declaring `module` is refused; a bundled pair with a
+missing module asset is refused); the ship script's pair check (every bundled module-pipeline
+profile has its `.ko`, and every `.ko` has its profile); the ROM preflight extension (libc++ cave,
+`insmod`/`vendor_modprobe`, Magisk source) on both 5.4 packages. The corpus is untouched by
+construction — the extractor does not change. The policy checks in section 2 are already done.
 
 **G2a — diting, Magisk only.** Run the *existing* DirtyFrag pipeline (W1 is device-proven there)
 with the runtime handoff switched to Magisk. Isolates the new part: policy patch in the permissive
@@ -201,9 +210,10 @@ discipline).
 
 ## 7. Risks and open questions
 
-- **Per-kernel module farm.** Every supported release needs a built, hashed module. The build is
-  offline and reproducible (exact config + vendor clang + Image CRCs); the risk is process, not
-  technology. Decide which 5.4 releases are supported and who builds them.
+- **Curated support, not a farm.** There is no build automation: each supported release is a pair
+  built and validated by hand (profile + `.ko`) and shipped in the bundle. The cost is per release,
+  and an unsupported release fails closed. The offline build recipe is the existing one (exact
+  config + vendor clang + Image CRCs), so a new pair is reproducible, not guesswork.
 - **Magisk binary sourcing and drift.** Using the user's installed manager avoids redistribution
   (Magisk is GPLv3) but couples us to its binary layout and version. Probe and pin versions; fail
   closed on an unexpected layout.
