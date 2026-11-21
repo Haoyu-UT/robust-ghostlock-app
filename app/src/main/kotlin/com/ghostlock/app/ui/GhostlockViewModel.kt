@@ -190,6 +190,8 @@ class GhostlockViewModel(
 
     private var kernelSnapshot: KernelSnapshot? = null
     private var pendingParse: ParseRequest? = null
+    /** The resolution every consumer uses: the UI facts and the run itself. */
+    private var resolvedProfile: ProfileConfig? = null
     /** The generated document waiting on the generation screen's save step. */
     private var pendingGeneratedProfile: PendingGeneratedProfile? = null
     /** The platform's recommended images already offered this session. */
@@ -333,6 +335,8 @@ class GhostlockViewModel(
     }
 
     private fun applyExecutionConfig(config: ProfileConfig, preserveEditing: Boolean) {
+        /* The run consumes exactly this resolution (D7); nothing re-loads later. */
+        resolvedProfile = config
         mutableState.update { state ->
             state.copy(
                 executionRelease = config.release,
@@ -341,7 +345,6 @@ class GhostlockViewModel(
                 executionEditing = if (preserveEditing) state.executionEditing
                 else config.general.associate { field -> field.path to field.value.toString() },
                 profileInvalidPaths = config.invalidPaths,
-                externalProfileUnreadable = config.layers?.externalReadFailure == true,
                 profileRoute = config.route,
                 profileFallback = config.fallbackTo,
                 activeBuiltinProfile = profileController.activeBuiltinRelease(),
@@ -1396,22 +1399,6 @@ class GhostlockViewModel(
         }
     }
 
-    /** Explains why the run button is greyed out. */
-    fun onProfileInvalid() {
-        val state = state.value
-        val messageRes = when {
-            /* The unreadable selection is also "no profile", but its repair is
-             * re-selecting a file, not finding a kernel match. */
-            state.externalProfileUnreadable -> R.string.run_blocked_external_unreadable
-            !state.executionHasProfile -> R.string.run_blocked_no_profile
-            state.shizukuEnabled && state.shizukuStatus != ShizukuStatus.READY ->
-                R.string.run_blocked_shizuku
-
-            else -> R.string.profile_invalid
-        }
-        send(GhostlockEffect.Toast(messageRes))
-    }
-
     fun onStatusClick() {
         val snapshot = kernelSnapshot ?: return
         /* shizukuEnabled already carries the profile suggestion unless the
@@ -1428,17 +1415,16 @@ class GhostlockViewModel(
 
     private fun runExploit() {
         val snapshot = kernelSnapshot ?: return
-        if (!snapshot.kernelSupported) {
+        val config = resolvedProfile
+        if (config == null || !config.hasProfile || config.invalidPaths.isNotEmpty()) {
             if (beginOperation()) {
                 appendLog(
                     when {
-                        snapshot.externalProfileUnreadable ->
-                            "result: the imported profile cannot be read; re-import it"
+                        config == null || !config.hasProfile ->
+                            "result: no profile is loaded; import or generate one"
 
-                        state.value.importedProfilePresent ->
-                            "result: the imported profile does not apply to this kernel; re-import or clear it"
-
-                        else -> "result: exploit chain unsupported by this kernel"
+                        else ->
+                            "result: the loaded profile has ${config.invalidPaths.size} invalid field(s)"
                     },
                 )
                 endOperation()
@@ -1476,7 +1462,7 @@ class GhostlockViewModel(
             appendLog("cpu pair: $pairLabel")
             withContext(Dispatchers.IO) {
                 try {
-                    val code = runExploitUseCase(pair, useShizuku, ::appendLog)
+                    val code = runExploitUseCase(config, pair, useShizuku, ::appendLog)
                     appendLog(if (code == 0) "result: exploit completed" else "result: exploit failed (exit code=$code)")
                     appendLog("exit code=$code")
                     finishRunStatus(code)
@@ -2082,12 +2068,12 @@ class GhostlockViewModel(
             runCatching { profileController.load(snapshot.kernelRelease, pair) }.getOrNull()
         }
         kernelSnapshot = snapshot
+        loaded?.let { resolvedProfile = it }
         mutableState.update {
             it.copy(
                 deviceName = snapshot.deviceName,
                 kernelRelease = snapshot.kernelRelease,
                 socName = snapshot.socName,
-                kernelSupported = snapshot.kernelSupported,
                 cpuPairLabels = snapshot.cpuPairLabels,
                 cpuPairIndex = snapshot.selectedCpuPair,
                 safeModeEnabled = snapshot.safeModeEnabled,
@@ -2099,10 +2085,6 @@ class GhostlockViewModel(
                 crashShellAvailable =
                     repository.crashShellStatus() != ShizukuStatus.NOT_RUNNING,
                 profileInvalidPaths = loaded?.invalidPaths ?: emptySet(),
-                /* The fresh resolution is the authority; the snapshot's copy
-                 * covers the no-pair case where no config was resolved here. */
-                externalProfileUnreadable = loaded?.layers?.externalReadFailure
-                    ?: snapshot.externalProfileUnreadable,
                 executionHasProfile = loaded?.hasProfile ?: false,
                 profileLayers = loaded?.layers,
                 importedProfilePresent = profileController.importedProfileExists(),

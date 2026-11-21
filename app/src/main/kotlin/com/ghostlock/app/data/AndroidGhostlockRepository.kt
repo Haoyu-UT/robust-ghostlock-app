@@ -217,35 +217,16 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         /* One-time move of the pre-import-copy selection before the support
          * decision reads the copy. */
         profileController.migrateLegacyExternalSelection(release)
-        val importedPresent = profileController.importedProfileExists()
         /* PROFILE-SUGGEST-01: recommend_shizuku is a suggestion. It seeds the
          * toggle until the user makes an explicit choice, which then overrides
          * it in both directions. */
         val recommendShizuku = release in builtinProfiles.recommendShizuku
         val shizukuActive = if (shizukuPreferenceSet) shizukuEnabled else recommendShizuku
         val socName = resolveSocName()
-        /* Resolve before judging support: the imported copy makes its own
-         * release a candidate, and the copy's presence is the user's statement.
-         * A copy that cannot be read must not keep the badge supported — the
-         * resolver refuses it (fail-closed) and the home says why. */
-        val coveredByStoredSource = releaseSupportedByProfileSources(
-            release,
-            builtinProfiles.unames,
-            importedPresent,
-        )
-        val profile = if (coveredByStoredSource) {
-            runCatching { profileController.load(release, currentPairOrZero()) }.getOrNull()
-        } else {
-            null
-        }
-        val externalReadFailure = profile?.layers?.externalReadFailure == true
-        val kernelKnown = coveredByStoredSource && !externalReadFailure
         return KernelSnapshot(
             deviceName = resolveDeviceName(),
             kernelRelease = release,
             socName = socName,
-            kernelSupported = kernelKnown,
-            externalProfileUnreadable = externalReadFailure,
             cpuPairs = cpuPairs.toList(),
             cpuPairLabels = cpuPairLabels.toList(),
             selectedCpuPair = selectedCpuPair,
@@ -968,9 +949,13 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         }
     }
 
-    override suspend fun runExploit(pair: CpuPair, onLog: (String) -> Unit): Int =
+    override suspend fun runExploit(
+        config: ProfileConfig,
+        pair: CpuPair,
+        onLog: (String) -> Unit,
+    ): Int =
         withDebugAttackLog("direct", onLog, measure = true) { archivedLog, debugDir, runDir, writeSidecar ->
-            runExploitBinary(pair, "libghostlock.so", archivedLog, debugDir, runDir, writeSidecar)
+            runExploitBinary(config, pair, "libghostlock.so", archivedLog, debugDir, runDir, writeSidecar)
         }
 
     override suspend fun probeDirtyfrag(): String = withContext(Dispatchers.IO) {
@@ -998,14 +983,17 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         line
     }
 
-    override suspend fun runExploitWithShizuku(pair: CpuPair, onLog: (String) -> Unit): Int {
+    override suspend fun runExploitWithShizuku(
+        config: ProfileConfig,
+        pair: CpuPair,
+        onLog: (String) -> Unit,
+    ): Int {
         /* The Shizuku service runs as uid 2000 and cannot write the app's run
          * folder; the module sidecar is a direct-entry diagnostic. Its AIDL also
          * carries no vr.ko mode, so that entry runs Auto. */
         return withDebugAttackLog("shizuku", onLog, measure = true) { archivedLog, debugDir, _, writeSidecar ->
             archivedLog("<s> resolving profile")
             val release = System.getProperty("os.version", "").orEmpty()
-            val config = profileController.load(release, pair)
             /* The Shizuku path runs GhostLock only (the order check below
              * refuses a list without it); the wire carries that resolution so
              * the native's cross-check covers this invocation too. */
@@ -1365,6 +1353,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     }
 
     private suspend fun runExploitBinary(
+        config: ProfileConfig,
         pair: CpuPair,
         binaryName: String,
         onLog: (String) -> Unit,
@@ -1383,7 +1372,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             val nativeLog = File(workDir, NativeLogFileName)
             nativeLog.writeText("")
             val release = System.getProperty("os.version", "").orEmpty()
-            val config = profileController.load(release, pair)
             onLog(
                 "<k> profile: hasProfile=${config.hasProfile} " +
                     "invalid=${config.invalidPaths.size} release=$release",

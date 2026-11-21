@@ -252,9 +252,13 @@ interface GhostlockRepository {
     /** Suggested file name for [exportReportBundle]. */
     fun reportBundleName(): String
 
-    suspend fun runExploit(pair: CpuPair, onLog: (String) -> Unit): Int
+    suspend fun runExploit(config: ProfileConfig, pair: CpuPair, onLog: (String) -> Unit): Int
 
-    suspend fun runExploitWithShizuku(pair: CpuPair, onLog: (String) -> Unit): Int
+    suspend fun runExploitWithShizuku(
+        config: ProfileConfig,
+        pair: CpuPair,
+        onLog: (String) -> Unit,
+    ): Int
 
     /**
      * Run-start pre-flight (class 1 of the 2026-11-07 exit audit): anchor slot

@@ -36,7 +36,9 @@ class FormatLogUseCase {
             body.startsWith("warning", ignoreCase = true) -> LogTone.Warning
             else -> LogTone.Default
         }
-        return LogEntry(text, tone)
+        /* Display the line without its tone tag: the tag classifies the line,
+         * it is not part of the text the user reads. */
+        return LogEntry(tagged, tone)
     }
 
     private fun isWriteRound(message: String): Boolean = listOf("W1", "W2", "W3", "Write 1").any(message::startsWith)

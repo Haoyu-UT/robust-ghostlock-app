@@ -28,13 +28,6 @@ data class KernelSnapshot(
     val deviceName: String,
     val kernelRelease: String,
     val socName: String = "",
-    val kernelSupported: Boolean,
-    /**
-     * The stored external selection could not be read, so the resolver yields no
-     * profile (fail-closed). The home reports this instead of an unsupported
-     * kernel and offers re-selection; the badge stays unsupported until then.
-     */
-    val externalProfileUnreadable: Boolean = false,
     val cpuPairs: List<CpuPair>,
     val cpuPairLabels: List<String>,
     val selectedCpuPair: Int,

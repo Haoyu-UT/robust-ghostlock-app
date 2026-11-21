@@ -91,13 +91,6 @@ data class GhostlockUiState(
     val deviceName: String = "",
     val kernelRelease: String = "",
     val socName: String = "",
-    val kernelSupported: Boolean = false,
-    /**
-     * The imported copy cannot be read, so there is no profile and no run: the
-     * home names the real cause and sends the user to re-import instead of
-     * claiming the kernel is unsupported.
-     */
-    val externalProfileUnreadable: Boolean = false,
     val shizukuEnabled: Boolean = false,
     val shizukuStatus: ShizukuStatus = ShizukuStatus.NOT_REQUIRED,
     /** Root-manager choice (package name); null means Auto. */
@@ -197,7 +190,6 @@ data class GhostlockLogLine(val text: String, val color: Int)
 
 interface GhostlockActions {
     fun onRun()
-    fun onProfileInvalid()
     fun onStatusClick()
     fun onShowDeviceInfo()
     fun onOpenLastRunLog()

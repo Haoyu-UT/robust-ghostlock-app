@@ -1,6 +1,7 @@
 package com.ghostlock.app.domain.usecase
 
 import com.ghostlock.app.domain.model.CpuPair
+import com.ghostlock.app.domain.model.ProfileConfig
 import com.ghostlock.app.domain.repository.GhostlockRepository
 
 class LoadKernelSnapshotUseCase(private val repository: GhostlockRepository) {
@@ -27,9 +28,16 @@ class ParseSourceUseCase(private val repository: GhostlockRepository) {
 }
 
 class RunExploitUseCase(private val repository: GhostlockRepository) {
-    suspend operator fun invoke(pair: CpuPair, useShizuku: Boolean, onLog: (String) -> Unit) =
-        if (useShizuku) repository.runExploitWithShizuku(pair, onLog)
-        else repository.runExploit(pair, onLog)
+    suspend operator fun invoke(
+        config: ProfileConfig,
+        pair: CpuPair,
+        useShizuku: Boolean,
+        onLog: (String) -> Unit,
+    ) = if (useShizuku) {
+        repository.runExploitWithShizuku(config, pair, onLog)
+    } else {
+        repository.runExploit(config, pair, onLog)
+    }
 }
 
 class ReadDocumentUseCase(private val repository: GhostlockRepository) {

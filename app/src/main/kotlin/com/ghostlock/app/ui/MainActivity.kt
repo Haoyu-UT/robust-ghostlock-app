@@ -302,7 +302,6 @@ private fun GhostlockRoute(
         nav = viewModel.nav,
         actions = object : GhostlockActions {
             override fun onRun() = viewModel.onRun()
-            override fun onProfileInvalid() = viewModel.onProfileInvalid()
             override fun onStatusClick() = viewModel.onStatusClick()
             override fun onShowDeviceInfo() = viewModel.onShowDeviceInfo()
             override fun onOpenLastRunLog() = viewModel.onOpenLastRunLog()
