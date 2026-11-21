@@ -349,6 +349,8 @@ code is touched. The full chain run at N4 is a functional regression check, not 
 
 - [ ] **N0** — characterization: nav/state mapping tests for what is pure today, the screenshot
   matrix, the Robolectric/Miuix experiment, `tools/ui-matrix.sh`.
+- [ ] **V0** — the static prototype (`ui-visual-design.md` §7.1), the look gate before any product
+  code moves.
 - [ ] **N1** — typed navigation.
 - [ ] **N2** — typed dialogs + `ParseState`.
 - [ ] **N3** — `SupportStatus` (the support plan, re-homed) + editor state holder.

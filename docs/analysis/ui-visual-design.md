@@ -397,6 +397,7 @@ V-slices carry no structural change; each is a UI commit series with the screens
 
 | slice | content | depends on |
 |---|---|---|
+| **V0** | the static prototype (§7.1): `app/src/debug` only, mock data, no product code — the look gate | — |
 | **N1** | typed navigation (plan §3.2) | — |
 | **N2** | typed dialogs + `ParseState` (plan §3.3) | N1 |
 | **N3** | `SupportStatus` + `FieldsInvalid(errors)` (support plan) | N1 |
@@ -414,6 +415,24 @@ one surface that changes behavior rather than shape: the dialog chain becomes a 
 parse session becomes navigable state.
 
 ## 7. Verification
+
+### 7.1 The static prototype (V0)
+
+`app/src/debug/kotlin/com/ghostlock/app/ui/PrototypeActivity.kt` renders every surface with mock
+data; `app/src/debug/AndroidManifest.xml` declares it, so no release build contains either file.
+Launch on the device:
+
+```sh
+adb shell am start -n com.ghostlock.app/.ui.PrototypeActivity
+```
+
+The bottom switcher selects 首页 / 参数 / 校验 / 生成 / 日志; on Home a second row selects the nine
+status variants. Nothing is wired: buttons are no-ops except the switchers and the generation
+step chips. Its purpose is to judge layout and hierarchy on the phone before any product code
+moves — a screen that reads badly here is cheaper to change than after N1–N4.
+
+Captured 2026-11-21 on the diting (build 789, debug): Home Ready / invalid, Parameters,
+Validation, generation steps 1 and 4, run sheet.
 
 - **Screenshots per slice**, the state list in the refactor plan §6.2 plus: Home in the nine
   verdict states; the validation report valid/invalid/unreadable/failed; the generation flow at
