@@ -2,8 +2,8 @@
 
 **Status 2026-11-21: research plan, branch-local.** This file lives only on `feat/dirtyfrag-5x`.
 If the experiment is dropped, the branch and this plan go with it; it is not a product design and
-changes nothing until a gate below says it should. **G1 measured and G2 passed on both Images
-(2026-11-21)** — see the result blocks under each gate; G3 is next.
+changes nothing until a gate below says it should. **G1 measured, G2 and G3 passed (2026-11-21)** — see the result blocks under each gate;
+G4 is next.
 
 ## The question
 
@@ -133,11 +133,26 @@ exploit binary.
 
 The kernel is not the whole chain; the ROM must supply the hook. From the two ROM payloads, check:
 
-> **Prerequisite state (2026-11-21): blocked on data.** The two directories on disk hold only the
-> boot chain (`boot`, `vendor_boot`, `dtbo`, `abl`, `xbl`, `xbl_config` — the kernel derivation's
-> inputs). The userspace files this gate needs live in `system`/`vendor`, which are not on disk;
-> they need the full OTA payload (multi-GB, range-fetchable) or the NAS copy. G3 is therefore
-> unmeasured, not failed.
+> **Result (2026-11-21): pass on both ROMs.** The two fastboot packages were fetched (7.07 GB
+> star, 6.81 GB venus), and the `system`/`vendor` logical partitions were carved out of their
+> `super.img` (both are EROFS). Every item is present:
+>
+> - `libc++.so` exports the sentry constructor and the app's own preflight passes on both
+>   (reasons empty; the cave page remainder is ~34 KiB / ~58 KiB against the 420 B stub), and
+>   `libbase.so` imports the symbol — init's call path exists. The runtime APEX's
+>   `/lib64/libc++.so` is a symlink to `/system/lib64/libc++.so`, so that is the file checked.
+> - `crash_dump64` is in the runtime APEX; the policy allows any domain to execute
+>   `crash_dump_exec`, transitions it to `crash_dump`, and lets `crash_dump` open/read
+>   `vendor_file` (read only — the page cache is written by ESP, not by the descriptor).
+> - `/vendor/bin/insmod` is a symlink to `toybox_vendor` with the `insmod` applet;
+>   `vendor_modprobe` is a type on both ROMs, `init` may transition to it, and it may execute
+>   `vendor_toolbox_exec`, `module_load` `vendor_file`, and holds `sys_module`.
+> - `IpSecManager$UdpEncapsulationSocket` (framework) and `IpSecService` (service) are in the
+>   `com.android.tethering` module.
+>
+> The gate's remaining unknowns are runtime-only (init timing, the orphan reap, live SELinux),
+> which is G5's business. Records: the gate's evidence folder (ROM hashes, policy lines, the
+> preflight lines).
 
 - `libc++.so` / `libbase.so` carry the sentry constructor and a usable code cave — feed the real
   files to the app's own preflight;
@@ -178,7 +193,7 @@ device needs a different chain", not "another series of device runs".
 - The `$<hash>` clone fallback and its regression evidence (G1) — **done 2026-11-21**.
 - A reusable "page-cache primitive gate" harness next to the existing route gate (G2), applicable
   to any 5.x image — **done 2026-11-21**.
-- A ROM preflight table per device (G3) and an ABI verdict per kernel (G4).
+- A ROM preflight table per device (G3) — **done 2026-11-21** — and an ABI verdict per kernel (G4).
 - If G1–G4 pass, an L-level plan for a module-delivery DirtyFrag pipeline alongside the module-free
   one — that is a separate design, not this file.
 

@@ -93,6 +93,19 @@ object DirtyfragPlan {
         return delta % 4 == 0L && delta >= -(1L shl 27) && delta < (1L shl 27)
     }
 
+    /**
+     * The ELF-derived layout facts: the executable segment, the sentry hook
+     * inside it, and the file length. Pure file work — no Context — so a host
+     * test can run the same inspection over a ROM's real libc++.
+     */
+    internal fun inspect(lib: File): CaveLayout = RandomAccessFile(lib, "r").use { elf ->
+        val segments = loadSegments(elf)
+        val exec = execSegment(segments)
+        val hook = hookOffset(elf, exec)
+        readInt(elf, hook)
+        CaveLayout(exec.offset, exec.filesz, hook, elf.length())
+    }
+
     /** Structural check of the running ROM's libc++; callable before W1. */
     internal fun preflight(context: Context, lib: File): DirtyfragPreflight {
         val reasons = mutableListOf<String>()
@@ -102,18 +115,12 @@ object DirtyfragPlan {
             if (blob.size < STUB_RETURN_OFFSET + 4) {
                 reasons += "stub asset truncated (${blob.size} B)"
             }
-            RandomAccessFile(lib, "r").use { elf ->
-                val segments = loadSegments(elf)
-                val exec = execSegment(segments)
-                val hook = hookOffset(elf, exec)
-                val cave = exec.offset + exec.filesz
-                val layout = CaveLayout(exec.offset, exec.filesz, hook, elf.length())
-                reasons += checkCave(layout, blob.size)
-                readInt(elf, hook)
-                val remain = CAVE_PAGE_BYTES - (cave and (CAVE_PAGE_BYTES - 1))
-                details = "lib=${lib.absolutePath} cave=$cave page_remain=$remain " +
-                    "blob=${blob.size} hook=$hook file=${elf.length()}"
-            }
+            val layout = inspect(lib)
+            reasons += checkCave(layout, blob.size)
+            val cave = layout.execOffset + layout.execFilesz
+            val remain = CAVE_PAGE_BYTES - (cave and (CAVE_PAGE_BYTES - 1))
+            details = "lib=${lib.absolutePath} cave=$cave page_remain=$remain " +
+                "blob=${blob.size} hook=${layout.hook} file=${layout.fileLength}"
         } catch (t: Throwable) {
             reasons += "${t::class.simpleName}: ${t.message}"
         }
