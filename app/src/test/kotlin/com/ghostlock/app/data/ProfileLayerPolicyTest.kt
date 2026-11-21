@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.ProfileConfig
+import com.ghostlock.app.domain.model.ProfileImportResult
 import com.ghostlock.app.domain.repository.ProfileConfigController
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -342,16 +343,20 @@ class ProfileLayerPolicyTest {
     }
 
     @Test
-    fun `a copy missing a required offset is flagged, not defaulted`() = runBlocking {
+    fun `a copy missing a required offset is rejected, not defaulted`() = runBlocking {
         val text = document(bundledRelease, routeWaitMs = 4242)
             .replace(Regex("(?m)^\\s*init_task\\s*=.*$"), "")
         val uri = external.add("content://profiles/no-init-task.conf", text)
 
-        assertNotNull(controller.selectExternalProfile(uri, bundledRelease, pair))
-        val config = controller.load(bundledRelease, pair)
-
-        assertTrue(config.hasProfile)
-        assertTrue("offset.init_task" in config.invalidPaths)
+        val result = controller.selectExternalProfile(uri, bundledRelease, pair)
+        assertTrue(
+            result.toString(),
+            result is ProfileImportResult.Rejected &&
+                result.errors.any { it.startsWith("offset.init_task") },
+        )
+        /* The rejected copy is not kept: the bundled profile applies again. */
+        assertTrue(controller.load(bundledRelease, pair).hasProfile)
+        assertFalse(controller.importedProfileExists())
     }
 
     private fun generalValue(config: ProfileConfig, path: String): Long? =
@@ -375,7 +380,8 @@ class ProfileLayerPolicyTest {
         val release = "6.1.138-android14-11-g44bda9e8f6e9-ab13792638"
         val uri = external.add("content://profiles/compat.conf", compatMulticastDocument(release))
 
-        assertNotNull(controller.selectExternalProfile(uri, release, pair))
+        val result = controller.selectExternalProfile(uri, release, pair)
+        assertTrue(result.toString(), result is ProfileImportResult.Accepted)
         val config = controller.load(release, pair)
 
         assertTrue(config.hasProfile)
@@ -393,12 +399,13 @@ class ProfileLayerPolicyTest {
             .replace("compat_waiter_off = 72\n", "")
         val uri = external.add("content://profiles/compat-truncated.conf", text)
 
-        assertNotNull(controller.selectExternalProfile(uri, release, pair))
-        val config = controller.load(release, pair)
-
-        assertTrue(config.hasProfile)
+        val result = controller.selectExternalProfile(uri, release, pair)
         assertTrue(
-            "route.multicast_waiter.compat_waiter_off" in config.invalidPaths,
+            result.toString(),
+            result is ProfileImportResult.Rejected &&
+                result.errors.any {
+                    it.startsWith("route.multicast_waiter.compat_waiter_off")
+                },
         )
     }
 
@@ -413,6 +420,8 @@ class ProfileLayerPolicyTest {
         release = "$release"
         schema_version = 2
         kernel_major = 6
+        kernel_phys_load = 2684354560
+        kernel_phys_offset = 2147483648
         pipeline = [ "ghostlock" ]
         route {
           multicast_waiter {

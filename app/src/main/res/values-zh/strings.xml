@@ -467,6 +467,7 @@
     <string name="run_notif_manager_missing">未找到 KernelSU 管理器，或它没有启动界面。</string>
     <!-- Home (V1) -->
     <string name="home_load_summary">选择已有的 .conf 文件</string>
+    <string name="profile_import_rejected_title">配置被拒绝</string>
     <string name="home_last_run">上次运行</string>
     <string name="home_export_report_summary">日志、崩溃证据与当前配置</string>
     <string name="home_action_shizuku">配置 Shizuku</string>

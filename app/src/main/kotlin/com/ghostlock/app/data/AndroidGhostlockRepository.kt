@@ -33,6 +33,7 @@ import com.ghostlock.app.domain.model.ParseResult
 import com.ghostlock.app.domain.model.PreflightFailure
 import com.ghostlock.app.domain.model.PreflightResult
 import com.ghostlock.app.domain.model.ProfileConfig
+import com.ghostlock.app.domain.model.ProfileImportResult
 import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.RootManagerCandidate
@@ -1622,13 +1623,18 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override fun importedProfileExists(): Boolean = profileController.importedProfileExists()
 
-    override suspend fun selectExternalProfile(uri: String): ProfileConfig? =
+    override suspend fun selectExternalProfile(uri: String): ProfileImportResult =
         withContext(Dispatchers.IO) {
             val release = deviceRelease()
-            val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return@withContext null
+            val pair = cpuPairs.getOrNull(selectedCpuPair)
+                ?: return@withContext ProfileImportResult.Rejected(listOf("no CPU pair selected"))
             runCatching {
                 profileController.selectExternalProfile(uri, release, pair)
-            }.getOrNull()
+            }.getOrElse {
+                ProfileImportResult.Rejected(
+                    listOf(it.message ?: "the profile could not be imported"),
+                )
+            }
         }
 
     override suspend fun clearExternalProfile(): ProfileConfig = withContext(Dispatchers.IO) {

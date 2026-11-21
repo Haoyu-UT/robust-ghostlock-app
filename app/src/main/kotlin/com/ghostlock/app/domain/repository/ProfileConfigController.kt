@@ -2,6 +2,7 @@ package com.ghostlock.app.domain.repository
 
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.ProfileConfig
+import com.ghostlock.app.domain.model.ProfileImportResult
 import com.ghostlock.app.domain.model.ProfileDiffRow
 
 /**
@@ -78,14 +79,15 @@ interface ProfileConfigController {
 
     /**
      * Imports the SD-card document [uri] for [deviceRelease] into the
-     * app-private copy. Returns null when it cannot be read or carries no entry
-     * for that release; the previous copy is then untouched.
+     * app-private copy. Transactional: the document is verified before the copy
+     * is kept, so a rejected import leaves the previous selection untouched and
+     * reports the failing field paths.
      */
     suspend fun selectExternalProfile(
         uri: String,
         deviceRelease: String,
         pair: CpuPair,
-    ): ProfileConfig?
+    ): ProfileImportResult
 
     /** Drops the external selection; the bundle (or builtin) applies again. */
     suspend fun clearExternalProfile(deviceRelease: String, pair: CpuPair): ProfileConfig

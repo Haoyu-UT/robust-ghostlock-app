@@ -468,6 +468,7 @@
     <string name="run_notif_manager_missing">KernelSU manager is not installed or has no launch screen.</string>
     <!-- Home (V1) -->
     <string name="home_load_summary">Choose an existing .conf file</string>
+    <string name="profile_import_rejected_title">Profile rejected</string>
     <string name="home_last_run">Last run</string>
     <string name="home_export_report_summary">Logs, crash evidence and the current profile</string>
     <string name="home_action_shizuku">Set up Shizuku</string>

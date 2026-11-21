@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.ProfileConfig
+import com.ghostlock.app.domain.model.ProfileImportResult
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -129,11 +130,14 @@ class StarV1ProfileImportTest {
             deviceAliases = emptyList(),
         )
 
-    /** Imports [name] through the controller's real external-selection path. */
+    /** Imports [name] through the controller's real transactional path. */
     private fun import(name: String): ProfileConfig? {
         val uri = "content://profiles/$name"
         external.add(uri, file(name).readText())
-        return runBlocking { controller.selectExternalProfile(uri, release, pair) }
+        val result = runBlocking { controller.selectExternalProfile(uri, release, pair) }
+        val accepted = result as? ProfileImportResult.Accepted
+            ?: throw AssertionError("import rejected: $result")
+        return accepted.config
     }
 
     private fun file(name: String): File = File(checkNotNull(profileDir()), name)

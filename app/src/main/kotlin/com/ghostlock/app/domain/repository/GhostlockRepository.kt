@@ -12,6 +12,7 @@ import com.ghostlock.app.domain.model.OffsetImportResult
 import com.ghostlock.app.domain.model.ParseResult
 import com.ghostlock.app.domain.model.PreflightResult
 import com.ghostlock.app.domain.model.ProfileConfig
+import com.ghostlock.app.domain.model.ProfileImportResult
 import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.RootManagerCandidate
@@ -125,7 +126,7 @@ interface GhostlockRepository {
      * app-private copy. Null when it cannot be read or carries no entry for
      * this release; the previous copy is then untouched.
      */
-    suspend fun selectExternalProfile(uri: String): ProfileConfig?
+    suspend fun selectExternalProfile(uri: String): ProfileImportResult
 
     /** Drops the external selection; the bundle (or builtin) applies again. */
     suspend fun clearExternalProfile(): ProfileConfig

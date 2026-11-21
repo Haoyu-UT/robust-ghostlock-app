@@ -36,6 +36,7 @@ import com.ghostlock.app.domain.model.PhysPromptState
 import com.ghostlock.app.domain.model.PreflightFailure
 import com.ghostlock.app.domain.model.PreflightResult
 import com.ghostlock.app.domain.model.ProfileConfig
+import com.ghostlock.app.domain.model.ProfileImportResult
 import com.ghostlock.app.domain.model.RootManagerCandidate
 import com.ghostlock.app.domain.model.nextPhysImage
 import com.ghostlock.app.domain.model.sourceSuppliesLoad
@@ -460,19 +461,27 @@ class GhostlockViewModel(
     }
 
     private fun selectExternalProfile(uri: String) {
-        val snapshot = kernelSnapshot ?: return
-        val pair = snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair) ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val config = runCatching { repository.selectExternalProfile(uri) }.getOrNull()
-            if (config == null) {
-                send(GhostlockEffect.Toast(R.string.user_profile_load_failed))
-                return@launch
+            when (val result = repository.selectExternalProfile(uri)) {
+                is ProfileImportResult.Accepted -> {
+                    applyExecutionConfig(result.config, preserveEditing = false)
+                    applyAdvancedConfig(result.config, preserveEditing = false)
+                    refreshSnapshot()
+                    refreshMergeRows()
+                    send(GhostlockEffect.Toast(R.string.user_profile_loaded))
+                }
+
+                is ProfileImportResult.Rejected -> {
+                    mutableState.update {
+                        it.copy(
+                            dialog = AppDialog.Notice(
+                                titleRes = R.string.profile_import_rejected_title,
+                                message = result.errors.joinToString("\n"),
+                            ),
+                        )
+                    }
+                }
             }
-            applyExecutionConfig(config, preserveEditing = false)
-            applyAdvancedConfig(config, preserveEditing = false)
-            refreshSnapshot()
-            refreshMergeRows()
-            send(GhostlockEffect.Toast(R.string.user_profile_loaded))
         }
     }
 
@@ -2371,17 +2380,24 @@ class GhostlockViewModel(
             showPhysPrompt(next, after = result)
             return
         }
-        if (isMediaTek() && !result.physOffsetPresent) {
+        if (!result.physLoadPresent || !result.physOffsetPresent) {
+            /* The pair is required for every device: a profile without it is
+             * rejected at import, so generation must not produce one. */
             appendLog(
-                "warning: kernel_phys_offset is still missing; attach a vendor_boot/dtbo " +
-                    "with /memory or fill it manually",
+                "warning: the physical pair is incomplete; attach the missing image and re-parse",
             )
-        }
-        if (isQualcomm() && !sourceSuppliesLoad(result.physSource)) {
-            appendLog(
-                "warning: kernel_phys_load was not supplied by xbl_config/uefi; " +
-                    "attach uefi.img or fill it manually",
+            val mediaTek = isMediaTek()
+            showNotice(
+                titleRes = R.string.parse_result_title,
+                messageRes = if (mediaTek) {
+                    R.string.parse_missing_phys_mediatek
+                } else {
+                    R.string.parse_missing_phys_hint
+                },
+                docUrl = if (mediaTek) mediatekDocUrl() else null,
             )
+            markGenerationFailed()
+            return
         }
         finishParsed(result)
     }

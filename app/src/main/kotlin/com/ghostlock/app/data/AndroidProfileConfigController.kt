@@ -14,6 +14,7 @@ import com.ghostlock.app.domain.model.AnchorGeometry
 import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.ExecutionFieldValue
 import com.ghostlock.app.domain.model.ProfileConfig
+import com.ghostlock.app.domain.model.ProfileImportResult
 import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.ProfileFieldNode
 import com.ghostlock.app.domain.model.ProfileLayers
@@ -698,23 +699,57 @@ internal class AndroidProfileConfigController(
     }
 
     /**
-     * Selects [uri] as the external profile for [deviceRelease]. The document
-     * must parse and carry that release, or nothing is stored. The selection
-     * wins over the bundled asset; a hand-picked builtin is cleared because the
-     * last explicit choice wins.
+     * Selects [uri] as the external profile for [deviceRelease]. Transactional:
+     * the previous copy is restored when the candidate fails verification, so a
+     * rejected import never becomes the selection. The selection wins over the
+     * bundled asset; a hand-picked builtin is cleared because the last explicit
+     * choice wins.
      */
     override suspend fun selectExternalProfile(
         uri: String,
         deviceRelease: String,
         pair: CpuPair,
-    ): ProfileConfig? {
-        val text = externalProfiles.read(uri) ?: return null
-        ProfileDocumentParser.entryForRelease(text, deviceRelease, ::loadBundledInclude) ?: return null
-        if (!externalProfiles.writeImportedProfile(text)) return null
+    ): ProfileImportResult {
+        val text = externalProfiles.read(uri)
+            ?: return ProfileImportResult.Rejected(listOf("the file cannot be read"))
+        ProfileDocumentParser.entryForRelease(text, deviceRelease, ::loadBundledInclude)
+            ?: return ProfileImportResult.Rejected(
+                listOf("the file carries no profile for $deviceRelease"),
+            )
+        val previous = externalProfiles.readImportedProfile()
+        if (!externalProfiles.writeImportedProfile(text)) {
+            return ProfileImportResult.Rejected(listOf("the profile copy could not be written"))
+        }
         clearLegacyExternalPreferences()
         preferences.edit { remove(PrefBuiltinRelease) }
         forcedSelection = null
-        return load(deviceRelease, pair)
+        val config = runCatching { load(deviceRelease, pair) }.getOrNull()
+        val errors = importErrors(config)
+        if (errors.isNotEmpty() || config == null) {
+            /* Restore the previous selection; a rejected import changes nothing. */
+            if (previous != null) {
+                externalProfiles.writeImportedProfile(previous)
+            } else {
+                externalProfiles.clearImportedProfile()
+            }
+            return ProfileImportResult.Rejected(errors)
+        }
+        return ProfileImportResult.Accepted(config)
+    }
+
+    /** Why a resolved candidate cannot be selected; empty means it can. */
+    private fun importErrors(config: ProfileConfig?): List<String> {
+        if (config == null) return listOf("the profile could not be resolved")
+        val errors = mutableListOf<String>()
+        if (!config.hasProfile) errors += "no profile resolved for this kernel"
+        config.layers?.externalError?.let { errors += it }
+        if (config.layers?.externalReadFailure == true) {
+            errors += "the profile copy cannot be read"
+        }
+        config.invalidPaths.sorted().forEach { errors += "$it: invalid" }
+        if (config.physLoad == null) errors += "kernel_phys_load: missing for this device"
+        if (config.physOffset == null) errors += "kernel_phys_offset: missing for this device"
+        return errors
     }
 
     override suspend fun clearExternalProfile(deviceRelease: String, pair: CpuPair): ProfileConfig {
