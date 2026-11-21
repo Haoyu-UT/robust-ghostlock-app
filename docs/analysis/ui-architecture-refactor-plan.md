@@ -411,19 +411,21 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   validation report replaces the "fix here" surface; the flow becomes export → edit → re-import.
   *Decided.*
 
-## 11. Relationship to `support-status-state-plan.md`
+## 11. The support-verdict plan (implemented and retired)
 
-The support plan is **not superseded**; it is the most developed part of this plan. Amendments:
+`support-status-state-plan.md` was implemented as N3 and **deleted on 2026-11-21** per the operator
+decision that it has no value once implemented; it remains in git history
+(`git show e768c6b9:docs/analysis/support-status-state-plan.md`). What survives into this plan:
 
-- Its §2.3 `home: StateFlow<HomeState>` becomes `session: StateFlow<SessionState>`; the verdict is
-  `session.support`, still with one writer.
-- Its editor-session split (§2.3 `EditorState`, §6 S2) is **withdrawn**: the editor is deleted
-  with H1 and `EditorIsolationTest` (2026-11-21). Its §2.1 `FieldsInvalid(paths)` becomes
-  `FieldsInvalid(errors)`, and the errors render in the validation report (§3.7).
-- Its §2.7 consumer table maps to per-screen actions (N4), not to one `GhostlockViewModel`.
-- Its §6 S1–S4 can start once N1 is in; the editor dependency is gone.
-- Its test matrix is adopted as-is, with `SupportRefetchRaceTest` requiring `kotlinx-coroutines-test`
-  (N5's dependency, pulled into N3).
+- The verdict has three states — `Ready | AccessPending | Missing` (`ui/SupportStatus.kt`).
+  Import is transactional, so a rejected profile never becomes the selection and Home has no
+  blocked/invalid state.
+- The physical pair is required for every device; generation fails rather than emit a pair-less
+  profile.
+- D1 (dead `describe()` clauses), D3 (layer-notice machinery), D7 (the run consumes the resolved
+  profile) and D8 (`snapshot()` stops resolving) are implemented.
+- The **validation report** survives as the import/generation rejection surface (N4a): it lists the
+  field paths and rules for a rejected import or a failed generation.
 
 ## 12. Visual/IA decisions recorded (2026-11-21)
 
