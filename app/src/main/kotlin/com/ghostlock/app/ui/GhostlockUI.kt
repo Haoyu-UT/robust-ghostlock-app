@@ -136,34 +136,8 @@ data class GhostlockUiState(
     val compact: Boolean = false,
     val executionSheetVisible: Boolean = false,
     val executionSheetDismissible: Boolean = false,
-    val dialogVisible: Boolean = false,
-    val dialogType: DialogType = DialogType.NONE,
-    val dialogTitleRes: Int = 0,
-    val dialogMessage: String = "",
-    val dialogMessageRes: Int = 0,
-    val dialogItems: List<String> = emptyList(),
-    val dialogItemResIds: List<Int> = emptyList(),
-    /** Optional success-grade chip per [dialogItems] entry (route picker). */
-    val dialogItemGrades: List<DialogChip?> = emptyList(),
-    /** A leading LIST row given as a string resource (the page option row). */
-    val dialogLeadingResId: Int? = null,
-    val dialogCurrentItemIndex: Int = -1,
-    val dialogInput: String = "",
-    val dialogConfirmLabelRes: Int = R.string.parse_start,
-    /** Documentation URL shown as an extra button on a NOTICE dialog. */
-    val dialogDocUrl: String? = null,
-    /**
-     * Offer "export log & report" on this dialog: a run that ended badly is
-     * exactly the moment someone wants to send the log, and the notice telling
-     * them it ended badly is where they are looking.
-     */
-    val dialogExportLog: Boolean = false,
-    /**
-     * Layers of the resolution that raised the start-up notice; non-null means
-     * the dialog body is built from this instead of [dialogMessageRes], so it
-     * states the layers that are already inactive (§C.12b).
-     */
-    val dialogLayerNotice: ProfileLayers? = null,
+    /** The one open dialog, if any. */
+    val dialog: AppDialog? = null,
     val overwriteDialogVisible: Boolean = false,
     val overwriteMessage: String = "",
     val logLines: List<GhostlockLogLine> = emptyList(),
@@ -228,7 +202,6 @@ data class GhostlockUiState(
     val legacyCleanupConfirm: Boolean = false,
 )
 
-enum class DialogType { NONE, LIST, INPUT, CONFIRM, NOTICE, NOTIFICATION_PERMISSION }
 
 /**
  * The report flow's screens. Choice decides whether a system bug report is
@@ -297,7 +270,6 @@ interface GhostlockActions {
     fun onDialogInputChange(value: String)
     fun onDialogConfirm(value: String)
     fun onDialogDismiss()
-    fun onDialogDismissFinished()
     fun onDialogExportLog()
     fun onOverwriteConfirm()
     fun onOverwriteDismiss()
@@ -395,7 +367,7 @@ internal fun GhostlockApp(
                             }
 
                             state.overwriteDialogVisible -> actions.onOverwriteDismiss()
-                            state.dialogVisible -> actions.onDialogDismiss()
+                            state.dialog != null -> actions.onDialogDismiss()
                             else -> {
                                 if (nav.canPop) {
                                     val screen = nav.current
@@ -575,16 +547,21 @@ private fun GhostlockDialog(
     state: GhostlockUiState,
     actions: GhostlockActions,
 ) {
+    val current = state.dialog
+    /* Keep the last dialog rendered while the overlay plays its exit
+     * animation; `show` still follows the single source of truth. */
+    var lastDialog by remember { mutableStateOf<AppDialog?>(null) }
+    if (current != null) lastDialog = current
+    val dialog = current ?: lastDialog
     OverlayDialog(
-        show = state.dialogVisible,
-        title = if (state.dialogType == DialogType.NONE) null else stringResource(state.dialogTitleRes),
+        show = current != null,
+        title = dialog?.let { stringResource(it.titleRes) },
         onDismissRequest = actions::onDialogDismiss,
-        onDismissFinished = actions::onDialogDismissFinished,
         content = {
-            when (state.dialogType) {
-                DialogType.LIST -> {
-                    val items = state.dialogItems.ifEmpty { state.dialogItemResIds.map { stringResource(it) } }
-                    val leading = state.dialogLeadingResId
+            when (dialog) {
+                is AppDialog.ListDialog -> {
+                    val items = dialog.items.ifEmpty { dialog.itemResIds.map { stringResource(it) } }
+                    val leading = dialog.leadingResId
                     val offset = if (leading != null) 1 else 0
                     if (leading != null) {
                         TextButton(
@@ -596,8 +573,8 @@ private fun GhostlockDialog(
                         )
                     }
                     items.forEachIndexed { index, item ->
-                        val grade = state.dialogItemGrades.getOrNull(index)
-                        val label = if (index == state.dialogCurrentItemIndex) {
+                        val grade = dialog.grades.getOrNull(index)
+                        val label = if (index == dialog.currentIndex) {
                             stringResource(R.string.export_current_marker, item)
                         } else {
                             item
@@ -648,11 +625,11 @@ private fun GhostlockDialog(
                     )
                 }
 
-                DialogType.INPUT -> {
+                is AppDialog.Input -> {
                     TextField(
-                        value = state.dialogInput,
+                        value = dialog.value,
                         onValueChange = actions::onDialogInputChange,
-                        label = stringResource(state.dialogMessageRes),
+                        label = stringResource(dialog.labelRes),
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                     )
@@ -669,21 +646,25 @@ private fun GhostlockDialog(
                         Spacer(modifier = Modifier.width(12.dp))
                         TextButton(
                             modifier = Modifier.weight(1f),
-                            text = stringResource(state.dialogConfirmLabelRes),
+                            text = stringResource(dialog.confirmLabelRes),
                             colors = ButtonDefaults.textButtonColorsPrimary(),
-                            onClick = { actions.onDialogConfirm(state.dialogInput) },
+                            onClick = { actions.onDialogConfirm(dialog.value) },
                         )
                     }
                 }
 
-                DialogType.CONFIRM -> {
+                is AppDialog.Confirm -> {
                     Text(
-                        text = stringResource(state.dialogMessageRes),
+                        text = if (dialog.message.isNotEmpty()) {
+                            dialog.message
+                        } else {
+                            stringResource(dialog.messageRes)
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
-                    if (state.dialogExportLog) {
+                    if (dialog.exportLog) {
                         TextButton(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -699,26 +680,26 @@ private fun GhostlockDialog(
                     ) {
                         TextButton(
                             modifier = Modifier.weight(1f),
-                            text = stringResource(R.string.cancel),
+                            text = stringResource(dialog.dismissLabelRes),
                             onClick = actions::onDialogDismiss,
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         TextButton(
                             modifier = Modifier.weight(1f),
-                            text = stringResource(R.string.w3_shizuku_hint_enable),
+                            text = stringResource(dialog.confirmLabelRes),
                             colors = ButtonDefaults.textButtonColorsPrimary(),
                             onClick = { actions.onDialogConfirm("") },
                         )
                     }
                 }
 
-                DialogType.NOTICE -> {
-                    val layerNotice = state.dialogLayerNotice
+                is AppDialog.Notice -> {
+                    val layerNotice = dialog.layerNotice
                     Text(
-                        text = if (layerNotice != null) {
-                            layerNoticeBody(layerNotice)
-                        } else {
-                            stringResource(state.dialogMessageRes)
+                        text = when {
+                            layerNotice != null -> layerNoticeBody(layerNotice)
+                            dialog.message.isNotEmpty() -> dialog.message
+                            else -> stringResource(dialog.messageRes)
                         },
                         modifier = Modifier.fillMaxWidth(),
                         style = MiuixTheme.textStyles.body2,
@@ -729,7 +710,7 @@ private fun GhostlockDialog(
                             .fillMaxWidth()
                             .padding(top = 16.dp),
                     ) {
-                        if (state.dialogExportLog) {
+                        if (dialog.exportLog) {
                             TextButton(
                                 modifier = Modifier.weight(1f),
                                 text = stringResource(R.string.run_log_export),
@@ -737,7 +718,7 @@ private fun GhostlockDialog(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                         }
-                        state.dialogDocUrl?.let { docUrl ->
+                        dialog.docUrl?.let { docUrl ->
                             val uriHandler = LocalUriHandler.current
                             TextButton(
                                 modifier = Modifier.weight(1f),
@@ -748,16 +729,16 @@ private fun GhostlockDialog(
                         }
                         TextButton(
                             modifier = Modifier.weight(1f),
-                            text = stringResource(R.string.dialog_dismiss),
+                            text = stringResource(dialog.dismissLabelRes),
                             colors = ButtonDefaults.textButtonColorsPrimary(),
                             onClick = actions::onDialogDismiss,
                         )
                     }
                 }
 
-                DialogType.NOTIFICATION_PERMISSION -> {
+                is AppDialog.NotificationPermission -> {
                     Text(
-                        text = stringResource(state.dialogMessageRes),
+                        text = stringResource(dialog.messageRes),
                         modifier = Modifier.fillMaxWidth(),
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -782,7 +763,7 @@ private fun GhostlockDialog(
                     }
                 }
 
-                DialogType.NONE -> Unit
+                null -> Unit
             }
         },
     )

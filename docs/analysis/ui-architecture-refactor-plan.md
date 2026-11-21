@@ -176,8 +176,8 @@ sheet stays a global overlay whose visibility derives from `SessionState.run`, n
 The three editor screens are deleted (§3.7); `Validation` is new.
 
 ### 3.3 N2 — typed dialogs
-
-| file | change | reason |
+*Split at implementation (2026-11-21): **N2a** is the typed `AppDialog` model and the removal of
+the 15-field bus; **N2b** is `ParseState`, the parse flow's own step machine.*| file | change | reason |
 |---|---|---|
 | new `ui/dialog/AppDialog.kt` | `sealed interface AppDialog { Confirm, Choice, Notice, TextInput, Stride, Overwrite, NotificationPermission }` with typed item models | each dialog is one type |
 | new `ui/dialog/DialogController.kt` | `StateFlow<AppDialog?>`, `suspend fun ask(d): DialogResult`, `dismiss()`; one at a time via a mutex; cancellation releases the slot | call sites read as a question, not as postback fields |
@@ -356,7 +356,14 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   `navigationPath`, `syncNavigationPath` and the stack reconciliation are gone. 5 unit tests;
   device sweep through Advanced → Parameters → LoadConfig → Builtin, VrKo, Measurements, About,
   the editor chain and the top-bar/system back.)*
-- [ ] **N2** — typed dialogs + `ParseState`.
+- [x] **N2a** — typed dialogs. *(2026-11-21: `AppDialog` (Notice/Confirm/ListDialog/Input/
+  NotificationPermission) is the one dialog field; `DialogType` and the 15 dialog fields are gone,
+  as is `onDialogDismissFinished`. The confirm label is now the dialog's own — the export prompt
+  used to render the Shizuku hint's "enable" label. Device: the parse source list, the URL input,
+  the manager picker with its leading row, and the parse-failure notice. The parse stage machine
+  stays for N2b.)*
+- [ ] **N2b** — the parse flow's step state: `ParseStep` replaces `parseDialogStage` and the
+  pending-* variables (`ui-architecture-refactor-plan.md` §3.3, `ParseState`).
 - [ ] **N3** — `SupportStatus` (the support plan, re-homed) + editor state holder.
 - [ ] **N4** — delete the three editor screens (§3.7), then per-screen states/actions and the
   ViewModel split, one screen per commit.

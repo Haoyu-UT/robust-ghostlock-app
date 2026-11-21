@@ -290,22 +290,23 @@ class GhostlockViewModel(
         val isW3 = step.startsWith("w3")
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = if (isW3) DialogType.CONFIRM else DialogType.NOTICE,
-                dialogTitleRes = if (isW3) {
-                    R.string.w3_shizuku_hint_title
+                dialog = if (isW3) {
+                    AppDialog.Confirm(
+                        titleRes = R.string.w3_shizuku_hint_title,
+                        messageRes = R.string.w3_shizuku_hint_message,
+                        confirmLabelRes = R.string.w3_shizuku_hint_enable,
+                        /* Both notices that say "your run did not finish" carry
+                         * the export: whichever one a reporter is looking at,
+                         * the log they need to send is one tap away. */
+                        exportLog = true,
+                    )
                 } else {
-                    R.string.run_interrupted_title
+                    AppDialog.Notice(
+                        titleRes = R.string.run_interrupted_title,
+                        messageRes = R.string.run_interrupted_message,
+                        exportLog = true,
+                    )
                 },
-                dialogMessageRes = if (isW3) {
-                    R.string.w3_shizuku_hint_message
-                } else {
-                    R.string.run_interrupted_message
-                },
-                /* Both notices that say "your run did not finish" carry the
-                 * export: whichever one a reporter is looking at, the log they
-                 * need to send is one tap away. */
-                dialogExportLog = true,
             )
         }
     }
@@ -375,14 +376,10 @@ class GhostlockViewModel(
         if (!layers.noticeDue(repository.layerNoticeAcknowledged())) return
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.NOTICE,
-                dialogTitleRes = R.string.layer_notice_title,
-                dialogMessageRes = 0,
-                dialogMessage = "",
-                dialogDocUrl = null,
-                dialogConfirmLabelRes = R.string.dialog_dismiss,
-                dialogLayerNotice = layers,
+                dialog = AppDialog.Notice(
+                    titleRes = R.string.layer_notice_title,
+                    layerNotice = layers,
+                ),
             )
         }
     }
@@ -1138,15 +1135,11 @@ class GhostlockViewModel(
             pendingSelectUri = documentUri
             mutableState.update {
                 it.copy(
-                    dialogVisible = true,
-                    dialogType = DialogType.CONFIRM,
-                    dialogTitleRes = R.string.profile_exported_title,
-                    dialogMessageRes = R.string.profile_use_question,
-                    dialogMessage = "",
-                    dialogConfirmLabelRes = R.string.profile_use_confirm,
-                    dialogDocUrl = null,
-                    dialogExportLog = false,
-                    dialogLayerNotice = null,
+                    dialog = AppDialog.Confirm(
+                        titleRes = R.string.profile_exported_title,
+                        messageRes = R.string.profile_use_question,
+                        confirmLabelRes = R.string.profile_use_confirm,
+                    ),
                 )
             }
         }
@@ -1617,20 +1610,10 @@ class GhostlockViewModel(
         notificationRationaleShown = true
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.NOTIFICATION_PERMISSION,
-                dialogTitleRes = R.string.run_notif_permission_title,
-                dialogMessageRes = R.string.run_notif_permission_message,
-                dialogMessage = "",
-                dialogItems = emptyList(),
-                dialogItemResIds = emptyList(),
-                dialogItemGrades = emptyList(),
-                dialogLeadingResId = null,
-                dialogCurrentItemIndex = -1,
-                dialogInput = "",
-                dialogExportLog = false,
-                dialogDocUrl = null,
-                dialogLayerNotice = null,
+                dialog = AppDialog.NotificationPermission(
+                    titleRes = R.string.run_notif_permission_title,
+                    messageRes = R.string.run_notif_permission_message,
+                ),
             )
         }
     }
@@ -1668,22 +1651,7 @@ class GhostlockViewModel(
      * next-launch notices so their layout and dismissal cannot drift.
      */
     private fun showNotice(titleRes: Int, messageRes: Int) {
-        mutableState.update {
-            it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.NOTICE,
-                dialogTitleRes = titleRes,
-                dialogMessageRes = messageRes,
-                dialogMessage = "",
-                dialogLayerNotice = null,
-                dialogExportLog = false,
-                dialogDocUrl = null,
-                dialogItems = emptyList(),
-                dialogItemResIds = emptyList(),
-                dialogLeadingResId = null,
-                dialogCurrentItemIndex = -1,
-            )
-        }
+        mutableState.update { it.copy(dialog = AppDialog.Notice(titleRes = titleRes, messageRes = messageRes)) }
     }
 
     private fun showPreflightNotice(failure: PreflightFailure) {
@@ -1732,13 +1700,12 @@ class GhostlockViewModel(
         parseDialogStage = ParseDialogStage.Mode
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.LIST,
-                dialogTitleRes = R.string.parse_title,
-                dialogItems = emptyList(),
-                dialogItemResIds = listOf(
-                    R.string.parse_option_payload,
-                    R.string.parse_option_boot,
+                dialog = AppDialog.ListDialog(
+                    titleRes = R.string.parse_title,
+                    itemResIds = listOf(
+                        R.string.parse_option_payload,
+                        R.string.parse_option_boot,
+                    ),
                 ),
             )
         }
@@ -1755,16 +1722,13 @@ class GhostlockViewModel(
         parseDialogStage = ParseDialogStage.Source
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.LIST,
-                dialogTitleRes = R.string.parse_source_title,
-                dialogItems = emptyList(),
-                dialogItemResIds = listOf(
-                    R.string.action_parse_ota,
-                    R.string.action_parse,
+                dialog = AppDialog.ListDialog(
+                    titleRes = R.string.parse_source_title,
+                    itemResIds = listOf(
+                        R.string.action_parse_ota,
+                        R.string.action_parse,
+                    ),
                 ),
-                dialogCurrentItemIndex = -1,
-                executionSheetVisible = false,
             )
         }
     }
@@ -1783,12 +1747,11 @@ class GhostlockViewModel(
     fun promptParseUrl() {
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.INPUT,
-                dialogTitleRes = R.string.parse_url_title,
-                dialogMessageRes = R.string.parse_url_hint,
-                dialogInput = "",
-                dialogConfirmLabelRes = R.string.parse_start,
+                dialog = AppDialog.Input(
+                    titleRes = R.string.parse_url_title,
+                    labelRes = R.string.parse_url_hint,
+                    confirmLabelRes = R.string.parse_start,
+                ),
             )
         }
     }
@@ -1831,19 +1794,14 @@ class GhostlockViewModel(
             managerPickerOpen = true
             mutableState.update {
                 it.copy(
-                    dialogVisible = true,
-                    dialogType = DialogType.LIST,
-                    dialogTitleRes = R.string.manager_picker_title,
-                    dialogItems = candidates.map { candidate ->
-                        "${candidate.label} (${candidate.packageName})"
-                    },
-                    dialogItemResIds = emptyList(),
-                    dialogItemGrades = emptyList(),
-                    dialogLeadingResId = R.string.manager_summary_auto,
-                    dialogCurrentItemIndex = if (selectedIndex >= 0) selectedIndex else -1,
-                    dialogLayerNotice = null,
-                    dialogExportLog = false,
-                    dialogDocUrl = null,
+                    dialog = AppDialog.ListDialog(
+                        titleRes = R.string.manager_picker_title,
+                        items = candidates.map { candidate ->
+                            "${candidate.label} (${candidate.packageName})"
+                        },
+                        leadingResId = R.string.manager_summary_auto,
+                        currentIndex = if (selectedIndex >= 0) selectedIndex else -1,
+                    ),
                 )
             }
         }
@@ -2009,18 +1967,21 @@ class GhostlockViewModel(
         )
     }
 
-    fun onDialogInputChange(value: String) = mutableState.update { it.copy(dialogInput = value) }
+    fun onDialogInputChange(value: String) = mutableState.update { state ->
+        val input = state.dialog as? AppDialog.Input ?: return@update state
+        state.copy(dialog = input.copy(value = value))
+    }
 
     fun onDialogConfirm(value: String) {
-        val dialogType = state.value.dialogType
+        val dialog = state.value.dialog
         val selectUri = pendingSelectUri
         pendingSelectUri = null
         dismissDialog(clearConfirmation = false)
         when {
             selectUri != null -> selectExternalProfile(selectUri)
-            dialogType == DialogType.INPUT -> parseUrl(value)
-            dialogType == DialogType.CONFIRM -> toggleShizuku(true)
-            dialogType == DialogType.NOTIFICATION_PERMISSION ->
+            dialog is AppDialog.Input -> parseUrl(value)
+            dialog is AppDialog.Confirm -> toggleShizuku(true)
+            dialog is AppDialog.NotificationPermission ->
                 send(GhostlockEffect.RequestNotificationPermission)
 
             else -> Unit
@@ -2114,12 +2075,6 @@ class GhostlockViewModel(
     fun onDialogExportLog() {
         dismissDialog()
         onExportRunLog()
-    }
-
-    fun onDialogDismissFinished() {
-        if (!state.value.dialogVisible) {
-            clearDialog()
-        }
     }
 
     override fun onCleared() {
@@ -2286,12 +2241,11 @@ class GhostlockViewModel(
     private fun showNotice(titleRes: Int, messageRes: Int, docUrl: String? = null) {
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.NOTICE,
-                dialogTitleRes = titleRes,
-                dialogMessageRes = messageRes,
-                dialogDocUrl = docUrl,
-                dialogConfirmLabelRes = R.string.dialog_dismiss,
+                dialog = AppDialog.Notice(
+                    titleRes = titleRes,
+                    messageRes = messageRes,
+                    docUrl = docUrl,
+                ),
             )
         }
     }
@@ -2417,17 +2371,13 @@ class GhostlockViewModel(
         }
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.LIST,
-                dialogTitleRes = R.string.parse_route_title,
-                dialogItems = choices.map { choice ->
-                    RouteDisplay.optionLabel(choice.route, choice.carrier)
-                },
-                dialogItemResIds = emptyList(),
-                dialogItemGrades = choices.map { choice -> RouteDisplay.grade(choice.route) },
-                dialogLeadingResId = null,
-                dialogCurrentItemIndex = -1,
-                executionSheetVisible = false,
+                dialog = AppDialog.ListDialog(
+                    titleRes = R.string.parse_route_title,
+                    items = choices.map { choice ->
+                        RouteDisplay.optionLabel(choice.route, choice.carrier)
+                    },
+                    grades = choices.map { choice -> RouteDisplay.grade(choice.route) },
+                ),
             )
         }
     }
@@ -2493,18 +2443,10 @@ class GhostlockViewModel(
         parseDialogStage = ParseDialogStage.PhysImage
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.LIST,
-                dialogTitleRes = title,
-                dialogItems = emptyList(),
-                dialogItemResIds = listOf(attach, R.string.parse_phys_skip),
-                /* The phys prompt is not a route choice: do not inherit the
-                 * route picker's success-rate chips (they would render above
-                 * "attach uefi / skip"). */
-                dialogItemGrades = emptyList(),
-                dialogLeadingResId = null,
-                dialogCurrentItemIndex = -1,
-                executionSheetVisible = false,
+                dialog = AppDialog.ListDialog(
+                    titleRes = title,
+                    itemResIds = listOf(attach, R.string.parse_phys_skip),
+                ),
             )
         }
     }
@@ -2577,18 +2519,14 @@ class GhostlockViewModel(
         }
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.LIST,
-                dialogTitleRes = R.string.parse_lock_title,
-                dialogItems = emptyList(),
-                dialogItemResIds = listOf(
-                    R.string.parse_lock_page,
-                    R.string.parse_lock_anchor,
+                dialog = AppDialog.ListDialog(
+                    titleRes = R.string.parse_lock_title,
+                    itemResIds = listOf(
+                        R.string.parse_lock_page,
+                        R.string.parse_lock_anchor,
+                    ),
+                    grades = listOf(null, anchorSafety),
                 ),
-                dialogItemGrades = listOf(null, anchorSafety),
-                dialogLeadingResId = null,
-                dialogCurrentItemIndex = -1,
-                executionSheetVisible = false,
             )
         }
         return true
@@ -2622,28 +2560,25 @@ class GhostlockViewModel(
         parseDialogStage = ParseDialogStage.Plan
         mutableState.update {
             it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.LIST,
-                dialogTitleRes = if (decision.pageOffered) {
-                    R.string.parse_plan_title_conditional
-                } else {
-                    R.string.parse_plan_title
-                },
-                dialogItems = decision.options.map(::planDisplayLabel),
-                dialogItemResIds = emptyList(),
-                /* A kernel region's safety is a property of the region, not of
-                 * the plan: the Samsung serial array is the one conditional
-                 * region (see RegionSafety). */
-                dialogItemGrades = decision.options.map { plan ->
-                    RegionSafety.classify(plan.anchorName, plan.scratchSource, Build.MANUFACTURER)
-                },
-                dialogLeadingResId = if (decision.pageOffered) {
-                    R.string.parse_plan_page
-                } else {
-                    null
-                },
-                dialogCurrentItemIndex = -1,
-                executionSheetVisible = false,
+                dialog = AppDialog.ListDialog(
+                    titleRes = if (decision.pageOffered) {
+                        R.string.parse_plan_title_conditional
+                    } else {
+                        R.string.parse_plan_title
+                    },
+                    items = decision.options.map(::planDisplayLabel),
+                    /* A kernel region's safety is a property of the region, not
+                     * of the plan: the Samsung serial array is the one
+                     * conditional region (see RegionSafety). */
+                    grades = decision.options.map { plan ->
+                        RegionSafety.classify(plan.anchorName, plan.scratchSource, Build.MANUFACTURER)
+                    },
+                    leadingResId = if (decision.pageOffered) {
+                        R.string.parse_plan_page
+                    } else {
+                        null
+                    },
+                ),
             )
         }
     }
@@ -2826,34 +2761,10 @@ class GhostlockViewModel(
         if (clearConfirmation) pendingConfirmation = null
         /* Shown is as good as read: acknowledging on the way out keeps the
          * notice to once per build however it was dismissed. */
-        state.value.dialogLayerNotice?.let { repository.acknowledgeLayerNotice(it.build) }
-        mutableState.update {
-            it.copy(
-                dialogVisible = false,
-            )
+        (state.value.dialog as? AppDialog.Notice)?.layerNotice?.let {
+            repository.acknowledgeLayerNotice(it.build)
         }
-    }
-
-    private fun clearDialog() {
-        mutableState.update {
-            it.copy(
-                dialogVisible = false,
-                dialogType = DialogType.NONE,
-                dialogTitleRes = 0,
-                dialogMessage = "",
-                dialogMessageRes = 0,
-                dialogItems = emptyList(),
-                dialogItemResIds = emptyList(),
-                dialogItemGrades = emptyList(),
-                dialogLeadingResId = null,
-                dialogCurrentItemIndex = -1,
-                dialogExportLog = false,
-                dialogInput = "",
-                dialogConfirmLabelRes = R.string.parse_start,
-                dialogDocUrl = null,
-                dialogLayerNotice = null,
-            )
-        }
+        mutableState.update { it.copy(dialog = null) }
     }
 
     private fun appendLog(line: String) {
