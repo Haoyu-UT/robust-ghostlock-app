@@ -238,7 +238,7 @@ generation is current) and:
 | `AccessPending` | 通过 Shizuku 执行 | the Shizuku status line | Shizuku | same |
 | `CopyUnreadable` | 配置无法读取 | 请在配置参数中重新导入配置 | Parameters | same |
 | `ProfileBlocked` | 配置需要修正 | 所选配置不适用于当前内核**：<reason>** (new detail; A3/R1) | Parameters | same |
-| `FieldsInvalid` | 配置需要修正 | 请修正标记的配置项 | Parameters | same |
+| `FieldsInvalid` | 配置需要修正 | N 项参数无效 (the count replaced "请修正标记的配置项" when the editor was deleted) | Parameters | same |
 | `PhysicalPairMissing` | **需要物理内存参数** (new) | 请提供 vendor_boot/dtbo 并重新解析（联发科） | Parameters/parse | same |
 | `KernelUnsupported` | 不支持 | 未找到匹配的内核配置 | Parameters | same |
 | `ProfileMissing` | 需要加载配置 | 加载配置后可继续 | Parameters | same |

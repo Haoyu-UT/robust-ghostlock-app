@@ -356,11 +356,14 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   ViewModel split, one screen per commit.
 - [ ] **N5** — `SavedStateHandle`, coroutines-test, home-card Compose tests.
 - [ ] delete `GhostlockUiState`, `GhostlockActions`, `GhostlockUI.kt`, `AdvancedUI.kt`.
+- [ ] **V1–V4** — the surfaces in `ui-visual-design.md` §6, in its order (V1 between N4a and N4b).
 
 ## 10. Decisions needed (operator sign-off)
 
-- **D1 — order.** N0 → N1 (navigation) → N2 (dialogs) → N3 (support verdict) → N4 (screen split) →
-  N5. *Recommend:* yes; navigation first is the most mechanical and removes the most surface.
+- **D1 — order.** N0 → N1 (navigation) → N2 (dialogs) → N3 (support verdict) → N4a (delete the
+  editor; validation report) → V1 (Home) → N4b (screen split) → V2–V4 → N5. The V-slices are
+  specified in `ui-visual-design.md` §6. *Recommend:* yes; navigation first is the most mechanical
+  and removes the most surface.
 - **D2 — the session holder.** The support plan's `HomeState` becomes `SessionState` (shared by
   Home and Parameters); the verdict is `SessionState.support`. *Recommend:* yes.
 - **D3 — dialogs as suspend questions.** `dialogs.ask(...)` returns the answer; postback variables
@@ -391,7 +394,8 @@ The support plan is **not superseded**; it is the most developed part of this pl
 
 ## 12. Visual/IA decisions recorded (2026-11-21)
 
-The full visual spec is a separate document; these decisions are settled and constrain N3 and V1:
+The full visual spec is `ui-visual-design.md` (2026-11-21); these decisions are settled and
+constrain N3 and V1:
 
 - **Generation-first Home.** 生成配置 stays a first-class card on Home; the device card collapses
   to one identity line; settings move behind 高级选项 → 运行设置.
