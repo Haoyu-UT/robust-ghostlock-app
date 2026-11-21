@@ -339,7 +339,6 @@ class GhostlockViewModel(
             state.copy(
                 executionRelease = config.release,
                 executionHasProfile = config.hasProfile,
-                executionFields = config.general,
                 profileRoute = config.route,
                 profileFallback = config.fallbackTo,
                 activeBuiltinProfile = profileController.activeBuiltinRelease(),
@@ -369,21 +368,6 @@ class GhostlockViewModel(
             snapshot.cpuPairs,
             snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair),
         )
-    }
-
-    /** Route edits are draft-only; saving the session commits them. */
-    fun onRouteChanged(index: Int) {
-        val route = ProfileConfig.Routes.getOrNull(index - 1)
-        if (route == state.value.profileRoute) return
-        mutableState.update { it.copy(profileRoute = route) }
-    }
-
-    /** index 0 disables the fallback; the rest map to ProfileConfig.Routes. */
-    fun onFallbackChanged(index: Int) {
-        val fallback = if (index <= 0) "none" else ProfileConfig.Routes.getOrNull(index - 1)
-        val current = state.value.profileFallback
-        if (fallback == current || (fallback == "none" && current == null)) return
-        mutableState.update { it.copy(profileFallback = fallback) }
     }
 
     /* advanced-ui: the merged screen loads its editors and debug prefs. */
@@ -1021,12 +1005,7 @@ class GhostlockViewModel(
     private fun exportDocumentName(release: String): String =
         "${release.replace(Regex("[^A-Za-z0-9._-]"), "_")}.conf"
 
-    /* ---- editing session: in-memory, export is the only save ---- */
-
-    private fun currentPair(): CpuPair? {
-        val snapshot = kernelSnapshot ?: return null
-        return snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair)
-    }
+    /* ---- builtin selection ---- */
 
     /** Opens the builtin picker; overrides stay keyed to the device kernel. */
     fun onOpenBuiltinProfiles() {

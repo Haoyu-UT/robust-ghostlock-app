@@ -137,7 +137,6 @@ data class GhostlockUiState(
     val reportExportDone: Boolean = false,
     val executionRelease: String = "",
     val executionHasProfile: Boolean = false,
-    val executionFields: List<ExecutionFieldValue> = emptyList(),
     val measuredKernels: List<MeasuredKernelInfo> = emptyList(),
     val debugKernelLogEnabled: Boolean = true,
     /** Explicit route from the profile; null means geometry inference. */
@@ -228,8 +227,6 @@ interface GhostlockActions {
     fun onStrideUse()
     fun onStrideSkip()
     fun onStridePickerDismiss()
-    fun onRouteChanged(index: Int)
-    fun onFallbackChanged(index: Int)
     fun onExportProfile()
     fun onOpenAdvanced()
     fun onCloseAdvanced()

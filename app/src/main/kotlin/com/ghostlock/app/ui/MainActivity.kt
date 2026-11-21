@@ -336,8 +336,6 @@ private fun GhostlockRoute(
             override fun onDialogDismiss() = viewModel.onDialogDismiss()
             override fun onOverwriteConfirm() = viewModel.onOverwriteConfirm()
             override fun onOverwriteDismiss() = viewModel.onOverwriteDismiss()
-            override fun onRouteChanged(index: Int) = viewModel.onRouteChanged(index)
-            override fun onFallbackChanged(index: Int) = viewModel.onFallbackChanged(index)
             override fun onExportProfile() = viewModel.onExportProfile()
             override fun onOpenAdvanced() = viewModel.onOpenAdvanced()
             override fun onCloseAdvanced() = viewModel.onCloseAdvanced()
