@@ -2,7 +2,8 @@
 
 **Status 2026-11-21: research plan, branch-local.** This file lives only on `feat/dirtyfrag-5x`.
 If the experiment is dropped, the branch and this plan go with it; it is not a product design and
-changes nothing until a gate below says it should.
+changes nothing until a gate below says it should. **G1 measured and G2 passed on both Images
+(2026-11-21)** — see the result blocks under each gate; G3 is next.
 
 ## The question
 
@@ -71,6 +72,31 @@ closed on two candidates), then run the pipeline derivation on both 5.4 Images.
 - **Guard:** the full existing store corpus must be unchanged (no verdict or pipeline order moves).
 - **Cross-check:** the hand disassembly of `esp_input$…` above.
 
+**Result (2026-11-21).** Both Images carry `esp_input$<32-hex>` and `esp6_input$<32-hex>` (the
+same two suffixes in both builds; the `.cfi_jt` thunks are separate functions and never match).
+With the clone-aware lookup in the pipeline, the facts become measurable on both:
+`esp_guard absent`, `esp_fix absent`, `send_path ip_append_page`. Hand-checked: both ESP entry
+points call `skb_cow_data` at `+0xdc` from the function entry with no bit-5 test in the window,
+and `udp_sendpage` calls `ip_append_page` at `+0xb4` (addresses in the gate's evidence folder).
+
+The literal `dirtyfrag feasible` verdict is **not** reached, and the reason is now a different,
+pre-existing one: `no route is feasible for W1`. The extractor cannot derive any route on a 5.4
+Image (no BTF, no 5.10 waiter template; `pselect6` is `__arm64_sys_pselect6 →
+__do_sys_pselect6 → core_sys_select`, a chain the model does not accept). That dependency belongs
+to the module-free pipeline; the module-delivery chain measured at G2 never runs W1. G1 is
+therefore recorded as **pass on the kernel facts it exists to measure, not on the written
+criterion** — stated here rather than adjusted silently.
+
+`send_marking: present` is a heuristic false positive (a 2023/2025 5.4 build cannot carry the 2026
+fix; the matched `orr …, #0x20` stores target `sk_buff` fields at `+0x82`/`+0x48`, not
+`skb_shared_info.flags`). It does not move the verdict — the guard is absent, so the effective fix
+is absent — and tightening that scan is left as a follow-up.
+
+**Corpus guard:** the store tests (`options_ondevice`, `route_verdicts_ondevice`,
+`cut_ondevice`) pass unchanged against `external/test-kernels`; the resolver never falls back on an
+Image that has the exact name, and every store entry does (no golden carries "could not be
+measured").
+
 ### G2 — primitive gate on the exact Images (QEMU)
 
 Boot each Image with an initramfs running a static probe that performs the reference operation
@@ -87,6 +113,21 @@ Non-escalating, disposable guest; the host distinguishes "page cache changed" fr
 - **Pass:** the file's content changes on both `5.4.233` and `5.4.274`.
 - **Fail:** the write does not land — the ESP leg is out on these images and the branch ends.
 - **Control:** the same run with the fix's shape forced (or a no-splice variant) must not write.
+
+**Result (2026-11-21): pass on both Images.** A disposable QEMU guest (guest root, initramfs
+only) installs a transport-mode AES-256 `cbc(aes)` input SA with `UDP_ENCAP_ESPINUDP` over
+`NETLINK_XFRM` — encryption only, no authentication, as the reference transform is — then
+`vmsplice`s a 24-byte ESP header and `splice`s the 16-byte file block into the same pipe and on
+into a connected UDP socket (`udp_sendpage → ip_append_page`). The in-place `esp_input` decrypt
+writes `DF-G2-WRITE!!!\0;` (the trailing bytes are a valid empty trailer: padlen 0, next header
+59) into the page cache of both `5.4.233` and `5.4.274`. **Both controls stay clean**: the same
+bytes sent with `write()` (a copied skb) and a spliced send under a foreign SPI leave the file
+byte-identical.
+
+The probe and its driver are now a reusable 5.x gate in this project's shared 5.4 tools tree
+(the same shape as the existing route gate); the console records and the exact addresses are in
+the gate's evidence folder. Non-escalating throughout: no device, no root on a phone, no prebuilt
+exploit binary.
 
 ### G3 — ROM preflight (host)
 
@@ -129,9 +170,9 @@ device needs a different chain", not "another series of device runs".
 
 ## Deliverables
 
-- The `$<hash>` clone fallback and its regression evidence (G1).
+- The `$<hash>` clone fallback and its regression evidence (G1) — **done 2026-11-21**.
 - A reusable "page-cache primitive gate" harness next to the existing route gate (G2), applicable
-  to any 5.x image.
+  to any 5.x image — **done 2026-11-21**.
 - A ROM preflight table per device (G3) and an ABI verdict per kernel (G4).
 - If G1–G4 pass, an L-level plan for a module-delivery DirtyFrag pipeline alongside the module-free
   one — that is a separate design, not this file.
