@@ -103,13 +103,8 @@ internal class AndroidProfileConfigController(
             ?: storedNative
             ?: candidates.firstOrNull { !it.timer }?.name
             ?: routeNameOf(full)
-        val pipelineOrder = when (val raw = full["pipeline"]) {
-            is String -> listOf(raw.trim().lowercase()).filter { it.isNotEmpty() }
-            is List<*> -> raw.mapNotNull {
-                (it as? String)?.trim()?.lowercase()?.takeIf(String::isNotEmpty)
-            }
-            else -> emptyList()
-        }
+        val pipelineOrder = ProfileResolver.pipelineOrder(full)
+        val needsW1 = ProfileResolver.requiresW1(pipelineOrder)
         /* The carrier choice belongs to the active native route; the timer
          * selection has none. DirtyFrag is a choice only when the pipeline
          * lists both entries (off then leaves GhostLock runnable). */
@@ -117,7 +112,7 @@ internal class AndroidProfileConfigController(
         val selectedCarrier = resolveCarrierChoice(release, route, carrierCandidates)
         val dirtyFragSelectable = "dirtyfrag" in pipelineOrder && "ghostlock" in pipelineOrder
         val dirtyFragOn = resolveDirtyFragChoice(release, pipelineOrder)
-        val invalidPaths = validateProfileFields(full, route, fallbackTo) +
+        val invalidPaths = validateProfileFields(full, route, fallbackTo, needsW1) +
             ProfileResolver.validateMerged(full, route, fallbackTo)
                 .mapTo(mutableSetOf()) { it.fieldPath }
         /* Invalid fields missing from the resolved document still get a row,
@@ -321,7 +316,8 @@ internal class AndroidProfileConfigController(
 
     /** The static errors that belong to [route] itself (shared or its branch). */
     private fun routeErrors(full: ValueMap, route: String, fallbackTo: String?): Set<String> {
-        val errors = validateProfileFields(full, route, fallbackTo).toMutableSet()
+        val needsW1 = ProfileResolver.requiresW1(ProfileResolver.pipelineOrder(full))
+        val errors = validateProfileFields(full, route, fallbackTo, needsW1).toMutableSet()
         errors += ProfileResolver.validateMerged(full, route, fallbackTo).map { it.fieldPath }
         return errors.filterNot { foreignRoutePath(it, route) }.toSet()
     }
@@ -348,6 +344,7 @@ internal class AndroidProfileConfigController(
         profile: ValueMap,
         explicitRoute: String?,
         fallbackTo: String?,
+        needsW1: Boolean,
     ): Set<String> {
         val invalid = mutableSetOf<String>()
         fun value(path: String): Long? = profile.getLongAt(path)
@@ -359,42 +356,46 @@ internal class AndroidProfileConfigController(
         }
 
         /* The route is profile-controlled: a missing or unknown branch is
-         * invalid. Legacy documents get their route from the converter, so an
-         * unresolved route here means the profile is genuinely broken. */
+         * invalid for a W1 chain. Legacy documents get their route from the
+         * converter, so an unresolved route there means the profile is
+         * genuinely broken. A bundled `module` profile has no route at all. */
         val route = explicitRoute?.takeIf { it in ProfileConfig.Routes }
-        if (route == null) invalid += "route"
+        if (needsW1 && route == null) invalid += "route"
 
-        requireNonZero(*RouteCommonRequired.toTypedArray())
+        if (needsW1) requireNonZero(*RouteCommonRequired.toTypedArray())
         val major = value("kernel_major")
         if (major != 5L && major != 6L) invalid += "kernel_major"
 
-        val copySize = value("cred.copy_size")
-        if (copySize == null || copySize == 0L) invalid += "cred.copy_size"
-        /* Absent cred.usage_offset decodes as 0 and passes, exactly like native. */
-        val usageOffset = value("cred.usage_offset") ?: 0L
-        if (copySize != null && usageOffset + SizeofU32 > copySize) {
-            invalid += "cred.usage_offset"
-        }
+        /* The credential template is only consumed by the W1 chain. */
+        if (needsW1) {
+            val copySize = value("cred.copy_size")
+            if (copySize == null || copySize == 0L) invalid += "cred.copy_size"
+            /* Absent cred.usage_offset decodes as 0 and passes, exactly like native. */
+            val usageOffset = value("cred.usage_offset") ?: 0L
+            if (copySize != null && usageOffset + SizeofU32 > copySize) {
+                invalid += "cred.usage_offset"
+            }
 
-        val capsCount = value("cred.caps_count")
-        val capsOffset = value("cred.caps_offset")
-        if (capsCount == null || capsCount == 0L) invalid += "cred.caps_count"
-        if (copySize != null && capsCount != null && capsOffset != null &&
-            capsOffset + capsCount * SizeofU64 > copySize
-        ) {
-            invalid += "cred.caps_offset"
-            invalid += "cred.caps_count"
-        }
+            val capsCount = value("cred.caps_count")
+            val capsOffset = value("cred.caps_offset")
+            if (capsCount == null || capsCount == 0L) invalid += "cred.caps_count"
+            if (copySize != null && capsCount != null && capsOffset != null &&
+                capsOffset + capsCount * SizeofU64 > copySize
+            ) {
+                invalid += "cred.caps_offset"
+                invalid += "cred.caps_count"
+            }
 
-        val refCount = value("cred.ref_count") ?: 0L
-        if (refCount > 4) invalid += "cred.ref_count"
-        for (index in 0 until 4) {
-            if (index >= refCount) break
-            val image = value("cred.ref${index}_image")
-            if (image == null || image == 0L) invalid += "cred.ref${index}_image"
-            val offset = value("cred.ref${index}_offset")
-            if (copySize != null && offset != null && offset + SizeofU64 > copySize) {
-                invalid += "cred.ref${index}_offset"
+            val refCount = value("cred.ref_count") ?: 0L
+            if (refCount > 4) invalid += "cred.ref_count"
+            for (index in 0 until 4) {
+                if (index >= refCount) break
+                val image = value("cred.ref${index}_image")
+                if (image == null || image == 0L) invalid += "cred.ref${index}_image"
+                val offset = value("cred.ref${index}_offset")
+                if (copySize != null && offset != null && offset + SizeofU64 > copySize) {
+                    invalid += "cred.ref${index}_offset"
+                }
             }
         }
 
@@ -629,7 +630,8 @@ internal class AndroidProfileConfigController(
         for ((path, value) in extraValues) view.setValueAt(path, value)
         val route = routeNameOf(view)
         val fallbackTo = fallbackTargetOf(view)
-        val invalid = validateProfileFields(view, route, fallbackTo) +
+        val needsW1 = ProfileResolver.requiresW1(ProfileResolver.pipelineOrder(view))
+        val invalid = validateProfileFields(view, route, fallbackTo, needsW1) +
             ProfileResolver.validateMerged(view, route, fallbackTo).map { it.fieldPath }
         if (invalid.isNotEmpty()) return null
         view["schema_version"] = ProfileResolver.ProfileSchemaVersion
@@ -750,7 +752,8 @@ internal class AndroidProfileConfigController(
         val merged = runCatching { merge(release, pair, entry) }.getOrNull() ?: return null
         val route = routeNameOf(merged)
         val fallbackTo = fallbackTargetOf(merged)
-        val invalid = validateProfileFields(merged, route, fallbackTo) +
+        val needsW1 = ProfileResolver.requiresW1(ProfileResolver.pipelineOrder(merged))
+        val invalid = validateProfileFields(merged, route, fallbackTo, needsW1) +
             ProfileResolver.validateMerged(merged, route, fallbackTo).map { it.fieldPath }
         if (invalid.isNotEmpty()) return null
         return buildNativeDocument(release, merged)?.toBinary()

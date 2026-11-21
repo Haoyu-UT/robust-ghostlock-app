@@ -101,12 +101,30 @@ offset { init_task = 34464384, init_cred = 34538824 }
 | `release` | string | Must match the device's `uname -r` exactly (case and suffix); template files never participate in matching |
 | `schema_version` | int | Must be `3`; any other value (or an absent field) is refused. The phys fields may be a per-device map (preferred), an all-device scalar, or `null` (native default) |
 | `kernel_major` | int | `5` or `6`; used for address resolution and sanity checks, no longer selects the route |
+| `pipeline` | list | Optional ordered chain list: `ghostlock`, `dirtyfrag`, `module`; absent = `["ghostlock"]`. See *Pipeline selection* below |
 | `route` | object | Explicit route parent with one or more branches; the app's picker displays the viable ones; see section 3 |
 | `routes` | list | Legacy and ignored: the app has no route order and displays the viable routes alphabetically; see section 3 |
 | `fallback` | object | Fallback declaration (`to` plus an optional `route` branch); see section 3 |
 | geometry | object/int | Grouped by namespace: `task_struct` / `cred` / `offset` / `kernelsnitch`. Omit unused route-specific fields entirely — don't write `0` or placeholders. `null` only appears in templates and in-progress edits |
 | `execution` | object | Advisory tuning. General values come from `execution-tuning.conf`, per-route values from `execution-<route>.conf`; the resolver loads both as presets, device profiles don't `include` them. Write only differences |
 | `timer_98260` | object | Optional timer-route capability block (section 4.9); absent = a native-only profile |
+
+### Pipeline selection (`pipeline`)
+
+`pipeline` is optional. Absent means the legacy default `["ghostlock"]`. It is an ordered list of
+chain names; the resolver walks it before any stage and runs the first viable entry. Values:
+`ghostlock`, `dirtyfrag`, `module`.
+
+`module` is the bundled-only chain (DirtyFrag without W1, a per-kernel module as the SELinux
+switch, Magisk as the userspace manager). It is never derived: it is honoured only for a bundled
+profile that ships together with a hand-built module for the same release, and an imported profile
+declaring it is refused.
+
+The requirements are pipeline-scoped. `release`, `schema_version` and `kernel_major` are always
+required. The `route`, `task_struct`, `cred` and `offset` groups are required only when the list
+contains a W1-based entry (`ghostlock` or `dirtyfrag`, including the legacy default); a
+`["module"]` document may omit them. A `route` that is present is still validated as in section 3.
+For a KDP image (`kdp = 1`) the order must be the strict `["dirtyfrag"]` or `["module"]`.
 
 ## 3. Route mechanism
 

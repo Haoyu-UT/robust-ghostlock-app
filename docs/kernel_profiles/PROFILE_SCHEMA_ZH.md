@@ -75,10 +75,27 @@ offset { init_task = 34464384, init_cred = 34538824 }
 | `release` | string | 必须与设备 `uname -r` 完全一致（区分大小写/后缀）；模板文件不参与匹配 |
 | `schema_version` | int | 必须为 `3`；其它值（或缺省）一律拒绝。物理字段可为按设备映射（首选）、全设备标量或 `null`（native 默认） |
 | `kernel_major` | int | `5` 或 `6`；用于地址解析与合法性检查，不再决定路由 |
-| `route` | object | 显式路由父项，只含一个分支，见第 3 节 |
+| `pipeline` | list | 可选的有序执行链列表：`ghostlock`、`dirtyfrag`、`module`；缺省等价于 `[ "ghostlock" ]`，见下文 *执行链选择* |
+| `route` | object | 显式路由父项，可含一个或多个分支；应用的选择器显示所有可行路由；见第 3 节 |
+| `routes` | list | 遗留且忽略：应用没有路由顺序，按名称顺序显示可行路由；见第 3 节 |
 | `fallback` | object | 回退声明（`to` + 可选 `route` 分支），见第 3 节 |
-| 几何字段 | object/int | 按命名空间分组：`task_struct` / `cred` / `offset` / `kernelsnitch`；当前路由的全字段与公共几何**必须全部出现**，无法提供的值写显式 `null`（不要用 `0` 占位）；非当前路由的分支省略 |
+| 几何字段 | object/int | 按命名空间分组：`task_struct` / `cred` / `offset` / `kernelsnitch`。未使用的路由专属字段直接省略——不要写 `0` 或占位符；`null` 仅出现在模板和编辑过程中 |
 | `execution` | object | 调优参数（advisory）；通用项来自 `execution-tuning.conf`，路由项来自 `execution-<route>.conf`；两者由 resolver 作为 preset 加载，设备 profile 不 include。只写差异 |
+| `timer_98260` | object | 可选的定时器路由能力块（第 4.9 节）；缺省 = 仅原生 profile |
+
+### 执行链选择（`pipeline`）
+
+`pipeline` 可选；缺少时等价于旧的默认值 `[ "ghostlock" ]`。它是一个有序链名列表：resolver 在任何阶段
+开始前按顺序选择第一个可行的条目。合法取值：`ghostlock`、`dirtyfrag`、`module`。
+
+`module` 是仅随内置包提供的链（无 W1 的 DirtyFrag，用每内核模块切换 SELinux，Magisk 作为用户态管理器）。
+提取器从不生成它：只有与手编模块同版本一起随包提供的内置 profile 才能使用它；外部导入的 profile 声明
+该值会被拒绝。
+
+必填项按执行链区分：`release`、`schema_version`、`kernel_major` 始终必填；`route`、`task_struct`、
+`cred`、`offset` 仅在列表包含需要 W1 的条目（`ghostlock` 或 `dirtyfrag`，包括旧默认值）时必填；
+`[ "module" ]` 可以完全省略它们。若给出了 `route`，仍按第 3 节校验。KDP 镜像（`kdp = 1`）的顺序
+必须是严格的 `[ "dirtyfrag" ]` 或 `[ "module" ]`。
 
 ## 3. 路由（route）机制
 

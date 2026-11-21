@@ -43,9 +43,14 @@ object ProfileResolver {
          * optional here; profiles without it are native-only. */
         "timer_98260",
     )
-    private val RequiredTopLevel = setOf(
-        "release", "schema_version", "kernel_major", "route", "task_struct", "cred", "offset",
-    )
+    /* Required for every document, whatever chain it selects. */
+    private val AlwaysRequiredTopLevel = setOf("release", "schema_version", "kernel_major")
+
+    /* Required only when the list selects a W1-based chain. A bundled
+     * `module` profile needs no route and no kernel-memory geometry: the
+     * module carries the SELinux switch and the stage never runs the native
+     * W1 path. See docs/analysis/module-magisk-implementation-plan.md. */
+    private val W1RequiredTopLevel = setOf("route", "task_struct", "cred", "offset")
     private val RequiredTaskStruct = listOf(
         "prio", "normal_prio", "sched_task_group", "pi_lock", "pi_waiters", "pi_top_task",
         "pi_blocked_on", "pid", "tgid", "atomic_flags", "real_cred", "cred", "comm", "tasks",
@@ -113,6 +118,20 @@ object ProfileResolver {
         return profile.getLongAt(path)
     }
 
+    /** The profile's ordered chain list; empty means the legacy default (`ghostlock`). */
+    fun pipelineOrder(profile: Map<String, Any?>): List<String> =
+        when (val raw = profile["pipeline"]) {
+            is String -> listOf(raw.trim().lowercase()).filter { it.isNotEmpty() }
+            is List<*> -> raw.mapNotNull {
+                (it as? String)?.trim()?.lowercase()?.takeIf(String::isNotEmpty)
+            }
+            else -> emptyList()
+        }
+
+    /** True when the selection needs W1 (the legacy default included). */
+    fun requiresW1(order: List<String>): Boolean =
+        order.isEmpty() || order.any { it == "ghostlock" || it == "dirtyfrag" }
+
     /** Fail-closed structural validation of a merged profile. */
     fun validateMerged(
         profile: Map<String, Any?>,
@@ -135,12 +154,23 @@ object ProfileResolver {
                 errors += ConfigError(key, "unknown top-level key")
             }
         }
-        for (key in RequiredTopLevel) {
+        val pipelineOrder = pipelineOrder(profile)
+        val needsW1 = requiresW1(pipelineOrder)
+        for (key in AlwaysRequiredTopLevel) {
             if (!profile.containsKey(key)) {
                 errors += ConfigError(key, "missing required key")
             }
         }
-        if (route == null || route !in RouteNames) {
+        if (needsW1) {
+            for (key in W1RequiredTopLevel) {
+                if (!profile.containsKey(key)) {
+                    errors += ConfigError(key, "missing required key")
+                }
+            }
+        }
+        if (route != null && route !in RouteNames) {
+            errors += ConfigError("route", "missing or unknown route")
+        } else if (needsW1 && route == null) {
             errors += ConfigError("route", "missing or unknown route")
         }
         if (fallbackTo != null && fallbackTo != "none" && fallbackTo !in RouteNames) {
@@ -182,67 +212,70 @@ object ProfileResolver {
                 }
             }
         }
-        /* A KDP image may only take the DirtyFrag second way: the credential
-         * forging chain is fatal there, and the legacy ghostlock default (a
-         * missing pipeline) must not run. The order must be the strict
-         * `["dirtyfrag"]`: an infeasible GhostLock fallback is a defect. */
-        val pipelineOrder = when (val raw = profile["pipeline"]) {
-            is String -> listOf(raw.trim().lowercase()).filter { it.isNotEmpty() }
-            is List<*> -> raw.mapNotNull {
-                (it as? String)?.trim()?.lowercase()?.takeIf(String::isNotEmpty)
-            }
-            else -> emptyList()
-        }
+        /* A KDP image may only take a chain that never forges credentials:
+         * the DirtyFrag second way (with or without W1) or the module
+         * pipeline. The legacy ghostlock default (a missing pipeline) must
+         * not run, and neither may a list that includes it. */
         val unknownPipelines = pipelineOrder.filter { it !in PipelineNames }
         if (unknownPipelines.isNotEmpty()) {
             errors += ConfigError("pipeline", "unknown pipeline ${unknownPipelines.first()}")
         }
         if ((profile["kdp"] as? Number)?.toLong() == 1L &&
-            ("dirtyfrag" !in pipelineOrder || "ghostlock" in pipelineOrder)
+            (("dirtyfrag" !in pipelineOrder && "module" !in pipelineOrder) ||
+                "ghostlock" in pipelineOrder)
         ) {
-            errors += ConfigError("pipeline", "a KDP image requires the strict dirtyfrag pipeline")
+            errors += ConfigError(
+                "pipeline",
+                "a KDP image requires the strict dirtyfrag or module pipeline",
+            )
         }
-        val task = profile["task_struct"] as? Map<*, *>
-        if (task == null) {
-            errors += ConfigError("task_struct", "not an object")
-        } else {
-            for (field in RequiredTaskStruct) {
-                if (task[field] !is Number) errors += ConfigError("task_struct.$field", "missing")
+        if (needsW1) {
+            val task = profile["task_struct"] as? Map<*, *>
+            if (task == null) {
+                errors += ConfigError("task_struct", "not an object")
+            } else {
+                for (field in RequiredTaskStruct) {
+                    if (task[field] !is Number) errors += ConfigError("task_struct.$field", "missing")
+                }
             }
-        }
-        val cred = profile["cred"] as? Map<*, *>
-        if (cred == null) {
-            errors += ConfigError("cred", "not an object")
-        } else {
-            for (field in RequiredCred) {
-                when (val value = cred[field]) {
-                    null -> errors += ConfigError("cred.$field", "missing")
-                    !is Number -> errors += ConfigError("cred.$field", "not a number")
-                    else -> if (value.toLong() == 0L) {
-                        errors += ConfigError("cred.$field", "zero")
+            val cred = profile["cred"] as? Map<*, *>
+            if (cred == null) {
+                errors += ConfigError("cred", "not an object")
+            } else {
+                for (field in RequiredCred) {
+                    when (val value = cred[field]) {
+                        null -> errors += ConfigError("cred.$field", "missing")
+                        !is Number -> errors += ConfigError("cred.$field", "not a number")
+                        else -> if (value.toLong() == 0L) {
+                            errors += ConfigError("cred.$field", "zero")
+                        }
+                    }
+                }
+            }
+            val offset = profile["offset"] as? Map<*, *>
+            if (offset == null) {
+                errors += ConfigError("offset", "not an object")
+            } else {
+                for (field in RequiredOffset) {
+                    when (val value = offset[field]) {
+                        null -> errors += ConfigError("offset.$field", "missing")
+                        !is Number -> errors += ConfigError("offset.$field", "not a number")
+                        else -> if (value.toLong() == 0L) {
+                            errors += ConfigError("offset.$field", "zero")
+                        }
                     }
                 }
             }
         }
-        val offset = profile["offset"] as? Map<*, *>
-        if (offset == null) {
-            errors += ConfigError("offset", "not an object")
-        } else {
-            for (field in RequiredOffset) {
-                when (val value = offset[field]) {
-                    null -> errors += ConfigError("offset.$field", "missing")
-                    !is Number -> errors += ConfigError("offset.$field", "not a number")
-                    else -> if (value.toLong() == 0L) {
-                        errors += ConfigError("offset.$field", "zero")
-                    }
-                }
-            }
+        /* Route-shaped groups are validated when the chain needs W1 or when
+         * the document carries a route (a module profile may omit both). */
+        if (needsW1 || route != null) {
+            errors += validateLayoutGroups(profile, route, fallbackTo)
+            errors += validateStage1Blocks(profile, route, fallbackTo)
+            errors += validateRouteWaiterShape(profile, route, fallbackTo)
+            errors += validateCompatCarrierGroup(profile, route, fallbackTo)
         }
         errors += Timer98260.validate(profile[Timer98260.BLOCK_KEY])
-        errors += validateLayoutGroups(profile, route, fallbackTo)
-        errors += validateStage1Blocks(profile, route, fallbackTo)
-        errors += validateRouteWaiterShape(profile, route, fallbackTo)
-        errors += validateCompatCarrierGroup(profile, route, fallbackTo)
         return errors
     }
 
@@ -544,7 +577,10 @@ object ProfileResolver {
     }
 
     private val RouteNames = RouteKind.entries.map { it.token }
-    private val PipelineNames = setOf("ghostlock", "dirtyfrag")
+    /* `module` is the bundled-only chain: DirtyFrag without W1, a per-kernel
+     * module as the SELinux switch, Magisk as the userspace manager. It is
+     * never derived; see docs/analysis/module-magisk-implementation-plan.md. */
+    private val PipelineNames = setOf("ghostlock", "dirtyfrag", "module")
 }
 
 /** The nested map at a dotted path, or null when any level is absent. */
