@@ -109,17 +109,6 @@ data class LogEntry(val text: String, val tone: LogTone)
 
 data class OffsetCandidate(val release: String, val document: String)
 
-/** One verbatim user-imported document in the user profile folder. */
-data class UserProfileFile(
-    val name: String,
-    val releases: List<String>,
-    val importedAt: Long,
-    val sizeBytes: Long,
-    val parseError: Boolean,
-    /** 1 = legacy layout (load only), 2 = current layout (editable). */
-    val version: Int = 2,
-)
-
 /** One root-measured fact, as the read-only measurements screen shows it. */
 data class MeasuredFactInfo(
     /** Dotted profile path (`kernelsnitch.mm_struct_sz`). */
@@ -151,14 +140,6 @@ data class MeasurementMergeRow(
     val evidence: String,
     val measuredAt: Long,
 )
-
-/** What the one-time legacy cleanup found in app data. */
-data class LegacyProfileState(
-    val profiles: List<UserProfileFile> = emptyList(),
-    val overridePresent: Boolean = false,
-) {
-    val present: Boolean get() = profiles.isNotEmpty() || overridePresent
-}
 
 /** One editable advisory execution value (PROFILE-SUGGEST-01 / profile-ui). */
 data class ExecutionFieldValue(

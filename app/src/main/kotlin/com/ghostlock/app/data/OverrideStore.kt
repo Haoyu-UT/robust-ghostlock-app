@@ -5,10 +5,9 @@ package com.ghostlock.app.data
  *
  * The live attack controller always gets [EmptyOverrideStore]: since the
  * measured-db model there is no persisted override layer at all (an override
- * written by an old build is legacy data the cleanup flow exports, never
- * applies). An editor session gets its own [MemoryOverrideStore], which lives
- * exactly as long as the session and is lost with it — exporting a document is
- * the only save (measured-db-plan §4).
+ * written by an old build never applies). An editor session gets its own
+ * [MemoryOverrideStore], which lives exactly as long as the session and is lost
+ * with it — exporting a document is the only save (measured-db-plan §4).
  */
 internal interface OverrideStore {
     fun read(release: String): ValueMap

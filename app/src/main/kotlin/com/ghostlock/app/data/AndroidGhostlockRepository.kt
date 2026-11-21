@@ -21,7 +21,6 @@ import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.DebugSettings
 import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
-import com.ghostlock.app.domain.model.LegacyProfileState
 import com.ghostlock.app.domain.model.physSourceFromLines
 import com.ghostlock.app.domain.model.physicalPairUsable
 import com.ghostlock.app.domain.model.MeasuredFactInfo
@@ -42,7 +41,6 @@ import com.ghostlock.app.domain.model.RunLogState
 import com.ghostlock.app.domain.model.ShizukuStatus
 import com.ghostlock.app.domain.model.StrideCandidateOption
 import com.ghostlock.app.domain.model.StrideProbe
-import com.ghostlock.app.domain.model.UserProfileFile
 import com.ghostlock.app.domain.model.VrKoMode
 import com.ghostlock.app.domain.repository.GhostlockRepository
 import com.ghostlock.app.domain.repository.ProfileConfigController
@@ -71,7 +69,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         const val LegacyOffsetsFileName = "offsets.json"
         const val FeasibleReportFileName = "offsets_feasible.json"
         const val OptionsReportFileName = "offsets_options.json"
-        const val UserProfilesDirectoryName = "user_profiles"
         const val EditSessionPreferences = "ghostlock_edit_session"
         const val ExtractBinaryName = "libextract.so"
         const val NativeBinaryName = "libghostlock.so"
@@ -133,12 +130,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         appContext.getSharedPreferences("ghostlock_prefs", Context.MODE_PRIVATE)
     private val offsetsFile get() = File(filesDir, OffsetsFileName)
     private val builtinProfiles = BuiltinProfileCatalog(appContext)
-    private val assetConfigLoader = AssetConfigLoader(appContext)
-    /** Legacy app-data documents; read only by the one-time cleanup flow. */
-    private val userProfileStore = UserProfileStore(
-        directory = File(filesDir, UserProfilesDirectoryName),
-        assetLoader = assetConfigLoader,
-    )
     /** Ground-truth facts; written only from a completed run's root phase. */
     private val measuredProfiles = MeasuredProfileStore(File(filesDir, MeasuredDbFileName))
     private val externalProfileStore = AndroidExternalProfileStore(appContext)
@@ -184,8 +175,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     /**
      * Old builds kept imported offsets and parameter overrides in one HOCON
-     * file. Split it: overrides move to preferences, the remaining entries
-     * become verbatim user documents, then the legacy file is dropped.
+     * file. Split it: overrides move to preferences, then the legacy file is
+     * dropped.
      */
     private fun migrateLegacyOffsetsStore() {
         if (!offsetsFile.isFile) return
@@ -200,9 +191,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 (entry.remove("route") as? Map<*, *>)?.let { overrides["route"] = it }
                 (entry.remove("fallback") as? Map<*, *>)?.let { overrides["fallback"] = it }
                 if (overrides.isNotEmpty()) mergeLegacyOverrides(release, overrides)
-                if (entry.size > 1) {
-                    userProfileStore.save("$release.conf", HoconSupport.render(entry))
-                }
             }
             offsetsFile.delete()
         }.onFailure {
@@ -233,15 +221,18 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         /* PROFILE-SUGGEST-01: recommend_shizuku is a suggestion. It seeds the
          * toggle until the user makes an explicit choice, which then overrides
          * it in both directions. */
-        val recommendShizuku = release in builtinProfiles.recommendShizuku ||
-            importedOffsetsRecommendShizuku(release)
+        val recommendShizuku = release in builtinProfiles.recommendShizuku
         val shizukuActive = if (shizukuPreferenceSet) shizukuEnabled else recommendShizuku
         val socName = resolveSocName()
         /* Resolve before judging support: the imported copy makes its own
          * release a candidate, and the copy's presence is the user's statement.
          * A copy that cannot be read must not keep the badge supported — the
          * resolver refuses it (fail-closed) and the home says why. */
-        val coveredByStoredSource = releaseCoveredByStoredSource()
+        val coveredByStoredSource = releaseSupportedByProfileSources(
+            release,
+            builtinProfiles.unames,
+            importedPresent,
+        )
         val profile = if (coveredByStoredSource) {
             runCatching { profileController.load(release, currentPairOrZero()) }.getOrNull()
         } else {
@@ -1637,20 +1628,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         return target.absolutePath
     }
 
-    override suspend fun userProfiles(): List<UserProfileFile> =
-        withContext(Dispatchers.IO) {
-            userProfileStore.list().map { stored ->
-                UserProfileFile(
-                    name = stored.name,
-                    releases = stored.releases,
-                    importedAt = stored.importedAt,
-                    sizeBytes = stored.sizeBytes,
-                    parseError = stored.parseError,
-                    version = stored.version,
-                )
-            }
-        }
-
     /* ---- profile sources (import-copy storage model) ---- */
 
     override fun importedProfileExists(): Boolean = profileController.importedProfileExists()
@@ -1784,97 +1761,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         )
     }
 
-    /* ---- legacy app-data cleanup ---- */
-
-    override suspend fun legacyState(): LegacyProfileState = withContext(Dispatchers.IO) {
-        val profiles = userProfileStore.list().map { stored ->
-            UserProfileFile(
-                name = stored.name,
-                releases = stored.releases,
-                importedAt = stored.importedAt,
-                sizeBytes = stored.sizeBytes,
-                parseError = stored.parseError,
-                version = stored.version,
-            )
-        }
-        LegacyProfileState(profiles, legacyOverridePresent())
-    }
-
-    override fun legacyProfileDocument(name: String, applyOverride: Boolean): String? {
-        val text = userProfileStore.rawText(name) ?: return null
-        val entries = runCatching { userProfileStore.parseEntries(text) }.getOrNull() ?: return null
-        if (entries.isEmpty()) return null
-        /* Export in the current layout: the stored text may still be v1. */
-        entries.forEach { LegacyProfileConverter.convertValue(it) }
-        if (applyOverride) {
-            val overrides = readLegacyOverrides()
-            entries.forEach { entry ->
-                val release = entry["release"] as? String ?: return@forEach
-                overrides[release].asValueMap()?.let { applyLegacyOverride(entry, it) }
-            }
-        }
-        entries.forEach { it["schema_version"] = if (hasPhysMaps(it)) 2 else 1 }
-        val document = if (entries.size == 1) entries.first() else ValueList().apply { addAll(entries) }
-        return HoconSupport.render(document)
-    }
-
-    private fun hasPhysMaps(entry: ValueMap): Boolean =
-        entry["kernel_phys_load"] is Map<*, *> || entry["kernel_phys_offset"] is Map<*, *>
-
-    override suspend fun finishLegacyCleanup(): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
-            userProfileStore.list().forEach { userProfileStore.delete(it.name) }
-            /* Old builds also kept one resolved snapshot per release in
-             * filesDir. Delete only files that parse as a profile, and never
-             * the measured database. */
-            filesDir.listFiles { file -> file.isFile && file.name.endsWith(".conf") }
-                ?.forEach { file ->
-                    if (file.name == MeasuredDbFileName) return@forEach
-                    val text = runCatching { file.readText() }.getOrNull() ?: return@forEach
-                    val isProfile = runCatching {
-                        HoconSupport.parseValue(text).asValueMap()?.containsKey("release") == true
-                    }.getOrDefault(false)
-                    if (isProfile) file.delete()
-                }
-            preferences.edit {
-                remove(AndroidProfileConfigController.PrefDebugProfileOverrides)
-                remove(AndroidProfileConfigController.PrefOverridesBuildSha)
-            }
-            true
-        }.getOrDefault(false)
-    }
-
     private fun deviceRelease(): String = System.getProperty("os.version", "").orEmpty()
 
     private fun currentPairOrZero(): CpuPair = cpuPairs.getOrNull(selectedCpuPair) ?: CpuPair(0, 0)
-
-    private fun legacyOverridePresent(): Boolean {
-        val raw = preferences.getString(
-            AndroidProfileConfigController.PrefDebugProfileOverrides,
-            null,
-        ) ?: return false
-        return runCatching {
-            HoconSupport.parseValue(raw).asValueMap()?.isNotEmpty() == true
-        }.getOrDefault(false)
-    }
-
-    private fun readLegacyOverrides(): ValueMap {
-        val raw = preferences.getString(
-            AndroidProfileConfigController.PrefDebugProfileOverrides,
-            null,
-        ) ?: return valueMapOf()
-        return runCatching { HoconSupport.parseValue(raw).asValueMap() ?: valueMapOf() }
-            .getOrDefault(valueMapOf())
-    }
-
-    /**
-     * Applies a stored legacy override to one document entry. The branch rule
-     * (same branch merges, a different branch replaces) lives in
-     * [LegacyProfileExport] so the export is testable.
-     */
-    private fun applyLegacyOverride(entry: ValueMap, override: ValueMap) {
-        LegacyProfileExport.applyOverride(entry, override)
-    }
 
     override fun close() {
         shizukuRunner.close()
@@ -1885,8 +1774,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     }
 
     /**
-     * Legacy/parse helper: reads HOCON or JSON text into a list of entries.
-     * Stored user documents are parsed by [UserProfileStore] instead.
+     * Parse helper: reads HOCON or JSON text into a list of entries.
      */
     private fun parseEntries(text: String): ValueList? {
         if (text.isBlank()) return null
@@ -1925,27 +1813,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     private fun freshReleases(entries: List<*>): List<String> =
         entries.mapNotNull { (it.asValueMap()?.get("release") as? String) }.distinct()
-
-    /**
-     * Whether a stored source names this release: a bundled asset, the imported
-     * copy, or a legacy import. The copy is a **candidate** — [snapshot]
-     * discounts it when it cannot be read, because the resolver then refuses
-     * the release rather than falling back to the bundle.
-     */
-    private fun releaseCoveredByStoredSource(): Boolean {
-        val version = System.getProperty("os.version", "").orEmpty()
-        return releaseSupportedByProfileSources(
-            version,
-            builtinProfiles.unames,
-            profileController.importedProfileExists(),
-        ) || importedOffsetsMatch(version)
-    }
-
-    private fun importedOffsetsMatch(version: String): Boolean =
-        userProfileStore.containsRelease(version)
-
-    private fun importedOffsetsRecommendShizuku(version: String): Boolean =
-        userProfileStore.recommendsShizuku(version)
 
     private fun buildCpuPairs() {
         cpuPairs.clear()

@@ -5,7 +5,6 @@ import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.DebugSettings
 import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
-import com.ghostlock.app.domain.model.LegacyProfileState
 import com.ghostlock.app.domain.model.MeasuredKernelInfo
 import com.ghostlock.app.domain.model.MeasurementMergeRow
 import com.ghostlock.app.domain.model.OffsetCandidate
@@ -18,7 +17,6 @@ import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.RootManagerCandidate
 import com.ghostlock.app.domain.model.ShizukuStatus
 import com.ghostlock.app.domain.model.StrideProbe
-import com.ghostlock.app.domain.model.UserProfileFile
 import com.ghostlock.app.domain.model.VrKoMode
 
 interface GhostlockRepository {
@@ -174,26 +172,12 @@ interface GhostlockRepository {
     /** The active profile with every measured fact applied, ready to export. */
     fun mergedProfileDocument(): String?
 
-    /* ---- legacy app-data cleanup (one-time) ---- */
-
-    /** What a pre-measured-db install left in app data. */
-    suspend fun legacyState(): LegacyProfileState
-
-    /** Renders one legacy document, optionally with the stored override applied. */
-    fun legacyProfileDocument(name: String, applyOverride: Boolean): String?
-
-    /** Deletes the legacy documents and the override. Only after confirmation. */
-    suspend fun finishLegacyCleanup(): Boolean
-
     /** Single authority for loading, editing and exporting profile config. */
     fun profileController(): ProfileConfigController
 
     suspend fun readDocument(uri: String): String
 
     suspend fun cacheDocument(uri: String, fileName: String): String
-
-    /** Legacy app-data documents, newest first (cleanup screen only). */
-    suspend fun userProfiles(): List<UserProfileFile>
 
     suspend fun debugSettings(): DebugSettings
 
