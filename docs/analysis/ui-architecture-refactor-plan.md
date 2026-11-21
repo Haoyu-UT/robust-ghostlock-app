@@ -367,6 +367,12 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   twelve `pending*` variables are gone, and so is `PendingConfirmation`. Cancelling a choice resets
   the step. Device: generation → local image → the payload/boot dialog → cancel → back.)*
 - [ ] **N3** — `SupportStatus` (the support plan, re-homed) + editor state holder.
+  *In progress (2026-11-21): the three-state model is live (`Ready | AccessPending | Missing`,
+  5 tests); D1 (dead `describe()` clauses) and D3 (layer-notice machinery) are deleted; the legacy
+  cleanup UI, its state/actions/strings and the dead Home composables are removed. Open: the
+  repository-side `UserProfileStore`/coverage removal, the universal pair rule, the transactional
+  import with its rejection surface, D7 (run consumes the resolved config) and D8 (snapshot stops
+  resolving). When those land, `support-status-state-plan.md` is deleted.*
 - [ ] **N4** — delete the three editor screens (§3.7), then per-screen states/actions and the
   ViewModel split, one screen per commit.
 - [ ] **N5** — `SavedStateHandle`, coroutines-test, home-card Compose tests.
