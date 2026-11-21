@@ -24,36 +24,11 @@ internal fun customCpuPairHint(
     return pair.takeIf { it in candidates && it != devicePair }
 }
 
-/** True when the runtime SoC string names a MediaTek part. */
-internal fun isMediaTekSoc(socName: String): Boolean {
-    val soc = socName.lowercase(Locale.ROOT)
-    return soc.contains("mediatek") || soc.contains("mtk") ||
-        /* ro.soc.model / ro.board.platform are `MTxxxx` on MediaTek; mirror the
-         * native detector's prefix rule. */
-        soc.startsWith("mt") ||
-        soc.contains("dimensity") || soc.contains("helio")
-}
-
-/**
- * Whether the resolved physical pair may be used on this device.
- *
- * A profile-supplied pair is always usable. A missing pair falls back to the
- * compiled platform default only on platforms where that default has a track
- * record (Qualcomm's per-generation KernelBaseAddr). MediaTek has no reliable
- * compiled default -- the sampled fleet uses 0x40000000, 0x40080000/+0x40000000
- * and 0x80000000 -- so an MTK device without a bootloader-derived pair is not
- * runnable; it must supply vendor_boot/dtbo and re-parse.
- */
-internal fun physicalPairUsable(socName: String, pairKnown: Boolean): Boolean =
-    pairKnown || !isMediaTekSoc(socName)
-
 data class KernelSnapshot(
     val deviceName: String,
     val kernelRelease: String,
     val socName: String = "",
     val kernelSupported: Boolean,
-    /** The kernel is known but its physical layout is missing on this MTK device. */
-    val devicePairMissing: Boolean = false,
     /**
      * The stored external selection could not be read, so the resolver yields no
      * profile (fail-closed). The home reports this instead of an unsupported

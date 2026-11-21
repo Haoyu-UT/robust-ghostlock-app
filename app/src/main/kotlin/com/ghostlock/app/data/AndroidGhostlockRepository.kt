@@ -22,7 +22,6 @@ import com.ghostlock.app.domain.model.DebugSettings
 import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
 import com.ghostlock.app.domain.model.physSourceFromLines
-import com.ghostlock.app.domain.model.physicalPairUsable
 import com.ghostlock.app.domain.model.MeasuredFactInfo
 import com.ghostlock.app.domain.model.MeasuredKernelInfo
 import com.ghostlock.app.domain.model.MeasurementMergeRow
@@ -239,21 +238,12 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             null
         }
         val externalReadFailure = profile?.layers?.externalReadFailure == true
-        /* A copy that exists but yielded no profile: the card reports the copy,
-         * not a kernel/pair fault. */
-        val copyBlocked = importedPresent && profile?.layers?.externalError != null
         val kernelKnown = coveredByStoredSource && !externalReadFailure
-        val pairKnown = profile?.physLoad != null && profile.physOffset != null
-        /* A known kernel is not enough on MediaTek: the compiled pair there is
-         * wrong on most of the fleet, so the resolved profile must carry the
-         * bootloader-derived pair (from the device map or the parse flow). */
-        val usable = kernelKnown && physicalPairUsable(socName, pairKnown)
         return KernelSnapshot(
             deviceName = resolveDeviceName(),
             kernelRelease = release,
             socName = socName,
-            kernelSupported = usable,
-            devicePairMissing = kernelKnown && !usable && !copyBlocked,
+            kernelSupported = kernelKnown,
             externalProfileUnreadable = externalReadFailure,
             cpuPairs = cpuPairs.toList(),
             cpuPairLabels = cpuPairLabels.toList(),

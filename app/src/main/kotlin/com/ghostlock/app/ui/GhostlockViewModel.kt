@@ -1429,9 +1429,6 @@ class GhostlockViewModel(
                         state.value.importedProfilePresent ->
                             "result: the imported profile does not apply to this kernel; re-import or clear it"
 
-                        snapshot.devicePairMissing ->
-                            "result: device physical layout missing; attach vendor_boot/dtbo (MediaTek) and re-parse"
-
                         else -> "result: exploit chain unsupported by this kernel"
                     },
                 )
@@ -2082,7 +2079,6 @@ class GhostlockViewModel(
                 kernelRelease = snapshot.kernelRelease,
                 socName = snapshot.socName,
                 kernelSupported = snapshot.kernelSupported,
-                devicePairMissing = snapshot.devicePairMissing,
                 cpuPairLabels = snapshot.cpuPairLabels,
                 cpuPairIndex = snapshot.selectedCpuPair,
                 safeModeEnabled = snapshot.safeModeEnabled,

@@ -92,8 +92,6 @@ data class GhostlockUiState(
     val kernelRelease: String = "",
     val socName: String = "",
     val kernelSupported: Boolean = false,
-    /** The kernel is covered but has no usable physical-memory pair (MTK). */
-    val devicePairMissing: Boolean = false,
     /**
      * The imported copy cannot be read, so there is no profile and no run: the
      * home names the real cause and sends the user to re-import instead of
