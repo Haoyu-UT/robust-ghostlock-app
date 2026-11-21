@@ -16,12 +16,6 @@ sealed interface SupportStatus {
     data object Missing : SupportStatus
 }
 
-internal fun supportStatusOf(state: GhostlockUiState): SupportStatus = supportStatusOf(
-    hasProfile = state.executionHasProfile,
-    shizukuEnabled = state.shizukuEnabled,
-    shizukuStatus = state.shizukuStatus,
-)
-
 internal fun supportStatusOf(state: SessionState): SupportStatus = supportStatusOf(
     hasProfile = state.support.hasProfile,
     shizukuEnabled = state.access.shizukuEnabled,

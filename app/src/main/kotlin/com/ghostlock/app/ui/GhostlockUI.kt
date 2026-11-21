@@ -48,15 +48,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ghostlock.app.R
-import com.ghostlock.app.domain.model.CpuPair
-import com.ghostlock.app.domain.model.ExecutionFieldValue
-import com.ghostlock.app.domain.model.MeasuredKernelInfo
-import com.ghostlock.app.domain.model.MeasurementMergeRow
-import com.ghostlock.app.domain.model.ProfileLayers
 import com.ghostlock.app.domain.model.CrashEvidenceInfo
-import com.ghostlock.app.domain.model.RunLogEntry
-import com.ghostlock.app.domain.model.ShizukuStatus
-import com.ghostlock.app.domain.model.VrKoMode
 import com.ghostlock.app.ui.nav.NavController
 import com.ghostlock.app.ui.nav.Screen
 import com.ghostlock.app.ui.state.AdvancedActions
@@ -100,82 +92,6 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 
-data class GhostlockUiState(
-    val deviceName: String = "",
-    val kernelRelease: String = "",
-    val socName: String = "",
-    val shizukuEnabled: Boolean = false,
-    val shizukuStatus: ShizukuStatus = ShizukuStatus.NOT_REQUIRED,
-    /** Root-manager choice (package name); null means Auto. */
-    val selectedManagerPackage: String? = null,
-    val running: Boolean = false,
-    /** The last run's terminal status, shown in the sheet footer. */
-    val runStatus: RunStatus = RunStatus.Idle,
-    /** Profile generation: which step the dedicated screen shows. */
-    val generationStep: GenerationStep = GenerationStep.Idle,
-    val cpuPairLabels: List<String> = emptyList(),
-    val cpuPairIndex: Int = 0,
-    /** CPU pair from the resolved profile when it differs from the device pick. */
-    val customCpuPair: CpuPair? = null,
-    val safeModeEnabled: Boolean = false,
-    val forceAttackTestEnabled: Boolean = false,
-    val vrKoTagClear: VrKoMode = VrKoMode.AUTO,
-    val vrKoSelinuxBlock: VrKoMode = VrKoMode.AUTO,
-    val tcpRouteEnabled: Boolean = true,
-    val compact: Boolean = false,
-    val executionSheetVisible: Boolean = false,
-    val executionSheetDismissible: Boolean = false,
-    /** The one open dialog, if any. */
-    val dialog: AppDialog? = null,
-    val overwriteDialogVisible: Boolean = false,
-    val overwriteMessage: String = "",
-    val logLines: List<GhostlockLogLine> = emptyList(),
-    /** Runs retained on the device; the report sheet only uses this to offer clearing. */
-    val runLogs: List<RunLogEntry> = emptyList(),
-    val runLogPickerVisible: Boolean = false,
-    /** The newest crash-evidence capture, if any. */
-    val crashEvidence: CrashEvidenceInfo? = null,
-    val bugreportImporting: Boolean = false,
-    /** A shell is generating a system bug report for the report flow. */
-    val bugreportGenerating: Boolean = false,
-    /** Shizuku (shell or root) is available to the crash/report path. */
-    val crashShellAvailable: Boolean = false,
-    /** The report flow's current screen. */
-    val reportWizardStep: ReportWizardStep = ReportWizardStep.Choice,
-    /**
-     * The screens this visit will pass through, in order. A direct export has
-     * one entry and no step counter; the bug-report paths have two to four.
-     */
-    val reportFlowSteps: List<ReportWizardStep> = emptyList(),
-    /** The last bundle written in this flow, for the saved/share block. */
-    val lastReportName: String? = null,
-    val lastReportUri: String? = null,
-    val reportExportDone: Boolean = false,
-    val executionRelease: String = "",
-    val executionHasProfile: Boolean = false,
-    val measuredKernels: List<MeasuredKernelInfo> = emptyList(),
-    val debugKernelLogEnabled: Boolean = true,
-    /** Explicit route from the profile; null means geometry inference. */
-    val profileRoute: String? = null,
-    /** Declared fallback route; null/"none" means disabled. */
-    val profileFallback: String? = null,
-    /** Manually selected builtin source; null means automatic matching. */
-    val activeBuiltinProfile: String? = null,
-    /** Unfilled reference templates, listed separately on the builtin picker. */
-    val builtinTemplates: List<String> = emptyList(),
-    /** Builtin releases sorted by similarity to the device kernel. */
-    val builtinProfiles: List<String> = emptyList(),
-    /** The app-private imported copy exists (the external selection). */
-    val importedProfilePresent: Boolean = false,
-    /** Which layers the last resolution applied, and which it deliberately did not. */
-    val profileLayers: ProfileLayers? = null,
-    /** The slab-stride choice sheet; non-null while a probe result awaits. */
-    val stridePicker: StridePickerUiState? = null,
-    /** Measured facts that would change the active profile. */
-    val mergeRows: List<MeasurementMergeRow> = emptyList(),
-)
-
-
 /**
  * The report flow's screens. Choice decides whether a system bug report is
  * attached; a shell-backed capture with a kernel log skips straight to Export.
@@ -190,105 +106,14 @@ enum class GenerationStep { Idle, Parsing, Confirm, Save, Failed }
 
 data class GhostlockLogLine(val text: String, val color: Int)
 
-interface GhostlockActions {
-    fun onRun()
-    fun onStatusClick()
-    fun onShowDeviceInfo()
-    fun onOpenLastRunLog()
-    fun onOpenRunSettings()
-    fun onCloseRunSettings()
-    fun onOpenGeneration()
-    fun onCloseGeneration()
-    fun onSaveGeneratedProfile()
-    fun onRestartGeneration()
-    fun onCloseExecutionSheet()
-    fun onCopyLogs()
-    fun onExportRunLog()
-    fun onRunLogPickerDismiss()
-    fun onClearRunLogs()
-    fun onExportReportBundle()
-    fun onAddBugreport()
-    fun onReportGenerateBugreport()
-    fun onCopyBugreportCommand()
-    fun onOpenDeveloperOptions()
-    fun onOpenAboutPhone()
-    fun onReportNext()
-    fun onReportBack()
-    fun onReportGoToImport()
-    fun onReportAppend()
-    fun onReportExportOnly()
-    fun onReportRecheckDeveloper()
-    fun onReportShare()
-    fun onSelectProfileFile()
-    fun onClearExternalProfile()
-    fun onParseOta()
-    fun onParseImage()
-    fun onGenerateProfile()
-    fun onCpuPairSelected(index: Int)
-    fun onSafeModeChanged(enabled: Boolean)
-    fun onForceAttackTestChanged(enabled: Boolean)
-    fun onVrKoTagClearChanged(mode: VrKoMode)
-    fun onVrKoSelinuxBlockChanged(mode: VrKoMode)
-    fun onShizukuChanged(enabled: Boolean)
-    fun onOpenManagerPicker()
-    fun onOpenManager()
-    fun onDialogItemSelected(index: Int)
-    fun onDialogInputChange(value: String)
-    fun onDialogConfirm(value: String)
-    fun onDialogDismiss()
-    fun onDialogExportLog()
-    fun onOverwriteConfirm()
-    fun onOverwriteDismiss()
-    fun onStrideOptionSelected(value: Int)
-    fun onStrideUse()
-    fun onStrideSkip()
-    fun onStridePickerDismiss()
-    fun onExportProfile()
-    fun onOpenAdvanced()
-    fun onCloseAdvanced()
-    fun onOpenVrKo()
-    fun onCloseVrKo()
-    fun onOpenMeasurements()
-    fun onCloseMeasurements()
-    fun onShowAbout()
-    fun onCloseAbout()
-    fun onDebugKernelLogChanged(enabled: Boolean)
-    fun onOpenParameters()
-    fun onCloseParameters()
-    fun onOpenMergePreview()
-    fun onCloseMergePreview()
-    fun onExportMergedProfile()
-    fun onOpenBuiltinProfiles()
-    fun onCloseBuiltinProfiles()
-    fun onSelectBuiltinProfile(release: String?)
-}
-
-
-private fun closeScreen(screen: Screen, actions: GhostlockActions) {
-    when (screen) {
-        Screen.Main -> Unit
-        Screen.VrKo -> actions.onCloseVrKo()
-        Screen.Advanced -> actions.onCloseAdvanced()
-        Screen.RunSettings -> actions.onCloseRunSettings()
-        Screen.Generation -> actions.onCloseGeneration()
-        Screen.About -> actions.onCloseAbout()
-        Screen.Measurements -> actions.onCloseMeasurements()
-        Screen.Parameters -> actions.onCloseParameters()
-        Screen.Builtin -> actions.onCloseBuiltinProfiles()
-        Screen.MergePreview -> actions.onCloseMergePreview()
-    }
-}
-
 @Composable
 internal fun GhostlockApp(
-    state: GhostlockUiState,
     session: SessionState,
     report: ReportState,
     overlay: OverlayState,
     generation: GenerationState,
     builtin: BuiltinState,
     nav: NavController,
-    actions: GhostlockActions,
     homeActions: HomeActions,
     runSettingsActions: RunSettingsActions,
     advancedActions: AdvancedActions,
@@ -310,6 +135,22 @@ internal fun GhostlockApp(
         } else {
             NavSwipeDirection.LeftToRight
         }
+        /* The back ladder's last rung: every screen's close verb is its own
+         * bundle's; About's is a plain pop. */
+        fun closeScreen(screen: Screen) {
+            when (screen) {
+                Screen.Main -> Unit
+                Screen.VrKo -> vrKoActions.close()
+                Screen.Advanced -> advancedActions.close()
+                Screen.RunSettings -> runSettingsActions.close()
+                Screen.Generation -> generationActions.onCloseGeneration()
+                Screen.About -> nav.pop()
+                Screen.Measurements -> measurementsActions.close()
+                Screen.Parameters -> parameterActions.close()
+                Screen.Builtin -> builtinActions.onCloseBuiltinProfiles()
+                Screen.MergePreview -> mergePreviewActions.close()
+            }
+        }
         Scaffold(modifier = Modifier.fillMaxSize()) { _ ->
             Box(modifier = Modifier.fillMaxSize()) {
                 NavDisplay(
@@ -318,16 +159,18 @@ internal fun GhostlockApp(
                     effects = NavDisplayEffects(cornerClipRadius = rememberNavSystemCornerRadius()),
                     onBack = {
                         when {
-                            state.executionSheetVisible -> {
-                                if (state.executionSheetDismissible) actions.onCloseExecutionSheet()
+                            session.run.sheetVisible -> {
+                                if (session.run.sheetDismissible) {
+                                    reportActions.onCloseExecutionSheet()
+                                }
                             }
 
-                            state.overwriteDialogVisible -> actions.onOverwriteDismiss()
-                            state.dialog != null -> actions.onDialogDismiss()
+                            overlay.overwriteVisible -> overlayActions.onOverwriteDismiss()
+                            overlay.dialog != null -> overlayActions.onDialogDismiss()
                             else -> {
                                 if (nav.canPop) {
                                     val screen = nav.current
-                                    if (screen != Screen.Main) closeScreen(screen, actions)
+                                    if (screen != Screen.Main) closeScreen(screen)
                                 }
                             }
                         }
@@ -353,7 +196,7 @@ internal fun GhostlockApp(
                         )
                     }
                     entry<Screen.About>(swipeDismiss = swipeBack) {
-                        AboutScreen(onBack = actions::onCloseAbout)
+                        AboutScreen(onBack = { nav.pop() })
                     }
                     entry<Screen.Measurements>(swipeDismiss = swipeBack) {
                         MeasurementsScreen(state = session, actions = measurementsActions)

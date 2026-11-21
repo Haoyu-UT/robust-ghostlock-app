@@ -28,7 +28,6 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.ghostlock.app.GhostlockApplication
 import com.ghostlock.app.BuildConfig
 import com.ghostlock.app.R
-import com.ghostlock.app.domain.model.VrKoMode
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<GhostlockViewModel> {
@@ -293,7 +292,6 @@ private fun GhostlockRoute(
     viewModel: GhostlockViewModel,
     onEffect: (GhostlockEffect) -> Unit,
 ) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
     val report by viewModel.report.collectAsStateWithLifecycle()
     val overlay by viewModel.overlay.collectAsStateWithLifecycle()
@@ -303,7 +301,6 @@ private fun GhostlockRoute(
         viewModel.effects.collect(onEffect)
     }
     GhostlockApp(
-        state = state,
         session = session,
         report = report,
         overlay = overlay,
@@ -321,86 +318,5 @@ private fun GhostlockRoute(
         vrKoActions = viewModel.vrKoActions(),
         measurementsActions = viewModel.measurementsActions(),
         mergePreviewActions = viewModel.mergePreviewActions(),
-        actions = object : GhostlockActions {
-            override fun onRun() = viewModel.onRun()
-            override fun onStatusClick() = viewModel.onStatusClick()
-            override fun onShowDeviceInfo() = viewModel.onShowDeviceInfo()
-            override fun onOpenLastRunLog() = viewModel.onOpenLastRunLog()
-            override fun onOpenRunSettings() = viewModel.onOpenRunSettings()
-            override fun onCloseRunSettings() = viewModel.onCloseRunSettings()
-            override fun onOpenGeneration() = viewModel.onOpenGeneration()
-            override fun onCloseGeneration() = viewModel.onCloseGeneration()
-            override fun onSaveGeneratedProfile() = viewModel.onSaveGeneratedProfile()
-            override fun onRestartGeneration() = viewModel.onRestartGeneration()
-            override fun onCloseExecutionSheet() = viewModel.onCloseExecutionSheet()
-            override fun onCopyLogs() = viewModel.copyLogs()
-            override fun onParseOta() = viewModel.promptParseUrl()
-            override fun onParseImage() = viewModel.parseOffsets()
-            override fun onGenerateProfile() = viewModel.promptParseSource()
-            override fun onCpuPairSelected(index: Int) = viewModel.selectCpuPair(index)
-            override fun onSafeModeChanged(enabled: Boolean) = viewModel.toggleSafeMode(enabled)
-            override fun onForceAttackTestChanged(enabled: Boolean) =
-                viewModel.toggleForceAttackTest(enabled)
-
-            override fun onVrKoTagClearChanged(mode: VrKoMode) =
-                viewModel.setVrKoTagClear(mode)
-
-            override fun onVrKoSelinuxBlockChanged(mode: VrKoMode) =
-                viewModel.setVrKoSelinuxBlock(mode)
-
-            override fun onShizukuChanged(enabled: Boolean) = viewModel.toggleShizuku(enabled)
-            override fun onOpenManagerPicker() = viewModel.onOpenManagerPicker()
-            override fun onOpenManager() = viewModel.onOpenManager()
-            override fun onDialogItemSelected(index: Int) = viewModel.onDialogItemSelected(index)
-            override fun onDialogInputChange(value: String) = viewModel.onDialogInputChange(value)
-            override fun onDialogConfirm(value: String) = viewModel.onDialogConfirm(value)
-            override fun onDialogDismiss() = viewModel.onDialogDismiss()
-            override fun onOverwriteConfirm() = viewModel.onOverwriteConfirm()
-            override fun onOverwriteDismiss() = viewModel.onOverwriteDismiss()
-            override fun onExportProfile() = viewModel.onExportProfile()
-            override fun onOpenAdvanced() = viewModel.onOpenAdvanced()
-            override fun onCloseAdvanced() = viewModel.onCloseAdvanced()
-            override fun onOpenVrKo() = viewModel.onOpenVrKo()
-            override fun onCloseVrKo() = viewModel.onCloseVrKo()
-            override fun onOpenMeasurements() = viewModel.onOpenMeasurements()
-            override fun onCloseMeasurements() = viewModel.onCloseMeasurements()
-            override fun onShowAbout() = viewModel.onShowAbout()
-            override fun onCloseAbout() = viewModel.onCloseAbout()
-            override fun onDialogExportLog() = viewModel.onDialogExportLog()
-            override fun onStrideOptionSelected(value: Int) = viewModel.onStrideOptionSelected(value)
-            override fun onStrideUse() = viewModel.onStrideUse()
-            override fun onStrideSkip() = viewModel.onStrideSkip()
-            override fun onStridePickerDismiss() = viewModel.onStridePickerDismiss()
-            override fun onExportRunLog() = viewModel.onExportRunLog()
-            override fun onRunLogPickerDismiss() = viewModel.onRunLogPickerDismiss()
-            override fun onClearRunLogs() = viewModel.onClearRunLogs()
-            override fun onExportReportBundle() = viewModel.onExportReportBundle()
-            override fun onAddBugreport() = viewModel.onAddBugreport()
-            override fun onReportGenerateBugreport() = viewModel.onReportGenerateBugreport()
-            override fun onCopyBugreportCommand() = viewModel.onCopyBugreportCommand()
-            override fun onOpenDeveloperOptions() = viewModel.onOpenDeveloperOptions()
-            override fun onOpenAboutPhone() = viewModel.onOpenAboutPhone()
-            override fun onReportNext() = viewModel.onReportNext()
-            override fun onReportBack() = viewModel.onReportBack()
-            override fun onReportGoToImport() = viewModel.onReportGoToImport()
-            override fun onReportAppend() = viewModel.onReportAppend()
-            override fun onReportExportOnly() = viewModel.onReportExportOnly()
-            override fun onReportRecheckDeveloper() = viewModel.onReportRecheckDeveloper()
-            override fun onReportShare() = viewModel.onReportShare()
-            override fun onDebugKernelLogChanged(enabled: Boolean) =
-                viewModel.onDebugKernelLogChanged(enabled)
-
-            override fun onOpenParameters() = viewModel.onOpenParameters()
-            override fun onCloseParameters() = viewModel.onCloseParameters()
-            override fun onSelectProfileFile() = viewModel.onSelectProfileFile()
-            override fun onClearExternalProfile() = viewModel.onClearExternalProfile()
-            override fun onOpenMergePreview() = viewModel.onOpenMergePreview()
-            override fun onCloseMergePreview() = viewModel.onCloseMergePreview()
-            override fun onExportMergedProfile() = viewModel.onExportMergedProfile()
-            override fun onOpenBuiltinProfiles() = viewModel.onOpenBuiltinProfiles()
-            override fun onCloseBuiltinProfiles() = viewModel.onCloseBuiltinProfiles()
-            override fun onSelectBuiltinProfile(release: String?) =
-                viewModel.onSelectBuiltinProfile(release)
-        },
     )
 }

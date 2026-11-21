@@ -408,7 +408,7 @@ internal fun BuiltinProfileScreen(
                     modifier = Modifier.preferencePageItem(),
                 )
             }
-            if (builtin.active == null && !state.support.importedProfilePresent &&
+            if (state.support.activeBuiltinProfile == null && !state.support.importedProfilePresent &&
                 !state.support.hasProfile
             ) {
                 item(key = "auto-no-match") {
@@ -429,7 +429,7 @@ internal fun BuiltinProfileScreen(
                 BuiltinProfileRow(
                     title = stringResource(R.string.load_builtin_auto),
                     selected = !state.support.importedProfilePresent &&
-                            builtin.active == null,
+                            state.support.activeBuiltinProfile == null,
                     onClick = { actions.onSelectBuiltinProfile(null) },
                     modifier = Modifier.preferencePageItem(),
                 )
@@ -442,7 +442,7 @@ internal fun BuiltinProfileScreen(
                     BuiltinProfileRow(
                         title = release,
                         selected = !state.support.importedProfilePresent &&
-                                builtin.active == release,
+                                state.support.activeBuiltinProfile == release,
                         onClick = { actions.onSelectBuiltinProfile(release) },
                         modifier = Modifier.preferencePageItem(),
                     )
@@ -456,7 +456,7 @@ internal fun BuiltinProfileScreen(
                     BuiltinProfileRow(
                         title = release,
                         selected = !state.support.importedProfilePresent &&
-                                builtin.active == release,
+                                state.support.activeBuiltinProfile == release,
                         onClick = { actions.onSelectBuiltinProfile(release) },
                         modifier = Modifier.preferencePageItem(),
                     )

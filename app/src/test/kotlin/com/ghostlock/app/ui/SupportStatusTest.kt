@@ -1,6 +1,7 @@
 package com.ghostlock.app.ui
 
 import com.ghostlock.app.domain.model.ShizukuStatus
+import com.ghostlock.app.ui.state.SessionState
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -9,10 +10,12 @@ class SupportStatusTest {
         hasProfile: Boolean = true,
         shizukuEnabled: Boolean = false,
         shizuku: ShizukuStatus = ShizukuStatus.NOT_REQUIRED,
-    ) = GhostlockUiState(
-        executionHasProfile = hasProfile,
-        shizukuEnabled = shizukuEnabled,
-        shizukuStatus = shizuku,
+    ) = SessionState(
+        support = SessionState.SupportState(hasProfile = hasProfile),
+        access = SessionState.AccessState(
+            shizukuEnabled = shizukuEnabled,
+            shizukuStatus = shizuku,
+        ),
     )
 
     @Test

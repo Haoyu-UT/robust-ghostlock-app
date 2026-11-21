@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.OpenableColumns
 import android.provider.Settings
-import android.net.Uri
 import android.os.Build
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
@@ -17,7 +16,6 @@ import com.ghostlock.app.R
 import com.ghostlock.app.RunStatusService
 import com.ghostlock.app.data.MeasuredProfileStore
 import com.ghostlock.app.data.OptionDecision
-import com.ghostlock.app.data.OptionPipeline
 import com.ghostlock.app.data.OptionPlan
 import com.ghostlock.app.data.OptionSuperset
 import com.ghostlock.app.data.RoutePlans
@@ -28,8 +26,6 @@ import com.ghostlock.app.domain.model.customCpuPairHint
 import com.ghostlock.app.domain.model.ImportedEvidence
 import com.ghostlock.app.domain.model.KernelSnapshot
 import com.ghostlock.app.domain.model.LogTone
-import com.ghostlock.app.domain.model.MeasuredKernelInfo
-import com.ghostlock.app.domain.model.MeasurementMergeRow
 import com.ghostlock.app.domain.model.ParseResult
 import com.ghostlock.app.domain.model.PhysImage
 import com.ghostlock.app.domain.model.PhysPromptState
@@ -39,9 +35,7 @@ import com.ghostlock.app.domain.model.ProfileConfig
 import com.ghostlock.app.domain.model.ProfileImportResult
 import com.ghostlock.app.domain.model.RootManagerCandidate
 import com.ghostlock.app.domain.model.nextPhysImage
-import com.ghostlock.app.domain.model.sourceSuppliesLoad
 import com.ghostlock.app.domain.model.CrashEvidenceInfo
-import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.RouteVerdict
 import com.ghostlock.app.domain.model.ShizukuStatus
 import com.ghostlock.app.domain.model.StrideProbe
@@ -136,83 +130,17 @@ private fun CrashEvidenceInfo?.hasKernelEvidence(): Boolean =
 private fun CrashEvidenceInfo?.hasShellCapture(): Boolean =
     this?.source == "shizuku" || this?.source == "root"
 
-/** The screen-facing slices of [GhostlockUiState], field for field. */
-private fun GhostlockUiState.toSessionState(): SessionState = SessionState(
-    device = SessionState.DeviceState(
-        deviceName = deviceName,
-        kernelRelease = kernelRelease,
-        socName = socName,
-        cpuPairLabels = cpuPairLabels,
-        cpuPairIndex = cpuPairIndex,
-        customCpuPair = customCpuPair,
-    ),
-    support = SessionState.SupportState(
-        hasProfile = executionHasProfile,
-        release = executionRelease,
-        route = profileRoute,
-        fallback = profileFallback,
-        importedProfilePresent = importedProfilePresent,
-        activeBuiltinProfile = activeBuiltinProfile,
-        layers = profileLayers,
-    ),
-    access = SessionState.AccessState(
-        shizukuEnabled = shizukuEnabled,
-        shizukuStatus = shizukuStatus,
-        selectedManagerPackage = selectedManagerPackage,
-    ),
-    runSettings = SessionState.RunSettingsState(
-        safeModeEnabled = safeModeEnabled,
-        forceAttackTestEnabled = forceAttackTestEnabled,
-        vrKoTagClear = vrKoTagClear,
-        vrKoSelinuxBlock = vrKoSelinuxBlock,
-        debugKernelLogEnabled = debugKernelLogEnabled,
-    ),
-    run = SessionState.RunState(
-        running = running,
-        status = runStatus,
-        logLines = logLines,
-        sheetVisible = executionSheetVisible,
-        sheetDismissible = executionSheetDismissible,
-    ),
-    measurements = SessionState.MeasurementsState(
-        measuredKernels = measuredKernels,
-        mergeRows = mergeRows,
-    ),
-)
-
-/** The report flow's slice, field for field. */
-private fun GhostlockUiState.toReportState(): ReportState = ReportState(
-    step = reportWizardStep,
-    steps = reportFlowSteps,
-    lastReportName = lastReportName,
-    lastReportUri = lastReportUri,
-    exportDone = reportExportDone,
-    runLogs = runLogs,
-    pickerVisible = runLogPickerVisible,
-    importing = bugreportImporting,
-    generating = bugreportGenerating,
-    crashEvidence = crashEvidence,
-    crashShellAvailable = crashShellAvailable,
-)
-
-/** The app-wide overlays' slice, field for field. */
-private fun GhostlockUiState.toOverlayState(): OverlayState = OverlayState(
-    dialog = dialog,
-    stridePicker = stridePicker,
-    overwriteVisible = overwriteDialogVisible,
-    overwriteMessage = overwriteMessage,
-)
-
-/** The generation flow's slice, field for field. */
-private fun GhostlockUiState.toGenerationState(): GenerationState = GenerationState(
-    step = generationStep,
-)
-
-/** The builtin-profile picker's slice, field for field. */
-private fun GhostlockUiState.toBuiltinState(): BuiltinState = BuiltinState(
-    releases = builtinProfiles,
-    templates = builtinTemplates,
-    active = activeBuiltinProfile,
+/**
+ * The view model's one mutable state: the five screen slices composed here, so
+ * every mutation names the slice it belongs to. The screens never see this
+ * type; they take the slice flows derived from it.
+ */
+private data class AppState(
+    val session: SessionState = SessionState(),
+    val report: ReportState = ReportState(),
+    val overlay: OverlayState = OverlayState(),
+    val generation: GenerationState = GenerationState(),
+    val builtin: BuiltinState = BuiltinState(),
 )
 
 enum class DocumentRequest {
@@ -268,7 +196,7 @@ class GhostlockViewModel(
     private val application: Application,
 ) : ViewModel() {
     private val effectChannel = Channel<GhostlockEffect>(Channel.BUFFERED)
-    private val mutableState = MutableStateFlow(GhostlockUiState())
+    private val mutableState = MutableStateFlow(AppState())
     private var initialized = false
     private var running = false
     private val loadKernelSnapshot = LoadKernelSnapshotUseCase(repository)
@@ -279,34 +207,34 @@ class GhostlockViewModel(
     private val formatLog = FormatLogUseCase()
     private val profileController get() = repository.profileController()
 
-    val state = mutableState.asStateFlow()
+    private val state = mutableState.asStateFlow()
 
     /**
      * The session holder the screens take: the same state, sliced by concern.
      * It holds nothing of its own — every mutation still goes through this
-     * view model — so the two flows cannot disagree.
+     * view model — so the slices cannot disagree.
      */
     val session: StateFlow<SessionState> = mutableState
-        .map { it.toSessionState() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toSessionState())
+        .map { it.session }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.session)
 
     /* The remaining screens' slices, derived exactly like [session] from the
      * one mutable state, so no consumer can observe a second truth. */
     val report: StateFlow<ReportState> = mutableState
-        .map { it.toReportState() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toReportState())
+        .map { it.report }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.report)
 
     val overlay: StateFlow<OverlayState> = mutableState
-        .map { it.toOverlayState() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toOverlayState())
+        .map { it.overlay }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.overlay)
 
     val generation: StateFlow<GenerationState> = mutableState
-        .map { it.toGenerationState() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toGenerationState())
+        .map { it.generation }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.generation)
 
     val builtin: StateFlow<BuiltinState> = mutableState
-        .map { it.toBuiltinState() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toBuiltinState())
+        .map { it.builtin }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.builtin)
 
     /* The four narrow action surfaces, one stable adapter each (prefer
      * adapters over renaming the view model's methods). */
@@ -507,7 +435,7 @@ class GhostlockViewModel(
             runCatching { repository.clearStoredImports() }
             runCatching { repository.collectCrashEvidence() }
             val evidence = runCatching { repository.latestCrashEvidence() }.getOrNull()
-            if (evidence != null) mutableState.update { it.copy(crashEvidence = evidence) }
+            if (evidence != null) mutableState.update { it.copy(report = it.report.copy(crashEvidence = evidence)) }
         }
     }
 
@@ -534,7 +462,7 @@ class GhostlockViewModel(
         if (recommendedShizukuApplied) return
         recommendedShizukuApplied = true
         val snapshot = kernelSnapshot ?: return
-        if (!snapshot.recommendShizuku || state.value.shizukuEnabled) return
+        if (!snapshot.recommendShizuku || state.value.session.access.shizukuEnabled) return
         toggleShizuku(true)
     }
 
@@ -548,13 +476,13 @@ class GhostlockViewModel(
         if (w3HintChecked) return
         w3HintChecked = true
         val step = runCatching { repository.lastRunStuckStep() }.getOrNull() ?: return
-        if (state.value.shizukuEnabled) return
+        if (state.value.session.access.shizukuEnabled) return
         /* Any interrupted step is reported; only a W3 stall offers Shizuku,
          * because Shizuku (shell uid, no seccomp) skips exactly that stage. */
         val isW3 = step.startsWith("w3")
         mutableState.update {
             it.copy(
-                dialog = if (isW3) {
+                overlay = it.overlay.copy(dialog = if (isW3) {
                     AppDialog.Confirm(
                         titleRes = R.string.w3_shizuku_hint_title,
                         messageRes = R.string.w3_shizuku_hint_message,
@@ -570,7 +498,7 @@ class GhostlockViewModel(
                         messageRes = R.string.run_interrupted_message,
                         exportLog = true,
                     )
-                },
+                }),
             )
         }
     }
@@ -594,14 +522,18 @@ class GhostlockViewModel(
         resolvedProfile = config
         mutableState.update { state ->
             state.copy(
-                executionRelease = config.release,
-                executionHasProfile = config.hasProfile,
-                profileRoute = config.route,
-                profileFallback = config.fallbackTo,
-                activeBuiltinProfile = profileController.activeBuiltinRelease(),
-                importedProfilePresent = profileController.importedProfileExists(),
-                profileLayers = config.layers,
-                customCpuPair = customCpuPairOf(config),
+                session = state.session.copy(
+                    support = state.session.support.copy(
+                        release = config.release,
+                        hasProfile = config.hasProfile,
+                        route = config.route,
+                        fallback = config.fallbackTo,
+                        activeBuiltinProfile = profileController.activeBuiltinRelease(),
+                        importedProfilePresent = profileController.importedProfileExists(),
+                        layers = config.layers,
+                    ),
+                    device = state.session.device.copy(customCpuPair = customCpuPairOf(config)),
+                ),
             )
         }
     }
@@ -609,7 +541,9 @@ class GhostlockViewModel(
     /** Recomputes the facts the home merge would change; cheap, runs on IO. */
     private suspend fun refreshMergeRows() {
         val rows = runCatching { repository.measurementMergeDiff() }.getOrDefault(emptyList())
-        mutableState.update { it.copy(mergeRows = rows) }
+        mutableState.update { it.copy(
+            session = it.session.copy(measurements = it.session.measurements.copy(mergeRows = rows)),
+        ) }
     }
 
     /** The pair actually resolved from the profile, when it beats the device pick. */
@@ -635,7 +569,9 @@ class GhostlockViewModel(
             val settings = repository.debugSettings()
             mutableState.update {
                 it.copy(
-                    debugKernelLogEnabled = settings.kernelLogEnabled,
+                    session = it.session.copy(
+                        runSettings = it.session.runSettings.copy(debugKernelLogEnabled = settings.kernelLogEnabled),
+                    ),
                 )
             }
         }
@@ -659,7 +595,9 @@ class GhostlockViewModel(
         nav.push(Screen.Measurements)
         viewModelScope.launch(Dispatchers.IO) {
             val kernels = runCatching { repository.measurements() }.getOrDefault(emptyList())
-            mutableState.update { it.copy(measuredKernels = kernels) }
+            mutableState.update { it.copy(
+                session = it.session.copy(measurements = it.session.measurements.copy(measuredKernels = kernels)),
+            ) }
         }
     }
 
@@ -695,10 +633,10 @@ class GhostlockViewModel(
                 is ProfileImportResult.Rejected -> {
                     mutableState.update {
                         it.copy(
-                            dialog = AppDialog.Notice(
+                            overlay = it.overlay.copy(dialog = AppDialog.Notice(
                                 titleRes = R.string.profile_import_rejected_title,
                                 message = result.errors.joinToString("\n"),
-                            ),
+                            )),
                         )
                     }
                 }
@@ -726,7 +664,7 @@ class GhostlockViewModel(
     fun onOpenMergePreview() {
         viewModelScope.launch(Dispatchers.IO) {
             refreshMergeRows()
-            if (state.value.mergeRows.isEmpty()) {
+            if (state.value.session.measurements.mergeRows.isEmpty()) {
                 send(GhostlockEffect.Toast(R.string.merge_nothing))
                 return@launch
             }
@@ -809,22 +747,15 @@ class GhostlockViewModel(
             val shown = pending?.toInfo() ?: evidence
             mutableState.update {
                 it.copy(
-                    runLogs = runs,
-                    runLogPickerVisible = true,
-                    crashEvidence = shown,
-                    reportWizardStep = if (direct) {
+                    report = it.report.copy(runLogs = runs, pickerVisible = true, crashEvidence = shown, step = if (direct) {
                         ReportWizardStep.Export
                     } else {
                         ReportWizardStep.Choice
-                    },
-                    reportFlowSteps = if (direct) {
+                    }, steps = if (direct) {
                         listOf(ReportWizardStep.Export)
                     } else {
                         emptyList()
-                    },
-                    reportExportDone = false,
-                    lastReportName = null,
-                    lastReportUri = null,
+                    }, exportDone = false, lastReportName = null, lastReportUri = null),
                 )
             }
             if (direct) openReportDestination()
@@ -846,10 +777,10 @@ class GhostlockViewModel(
                 val status = runCatching { repository.crashShellStatus() }
                     .getOrDefault(ShizukuStatus.NOT_RUNNING)
                 val available = status != ShizukuStatus.NOT_RUNNING
-                if (mutableState.value.crashShellAvailable != available) {
-                    mutableState.update { it.copy(crashShellAvailable = available) }
+                if (mutableState.value.report.crashShellAvailable != available) {
+                    mutableState.update { it.copy(report = it.report.copy(crashShellAvailable = available)) }
                 }
-                if (!mutableState.value.runLogPickerVisible) break
+                if (!mutableState.value.report.pickerVisible) break
                 delay(CrashVerdictPollMs)
             }
             crashVerdictJob = null
@@ -868,10 +799,7 @@ class GhostlockViewModel(
      */
     private fun openReportDestination() {
         mutableState.update {
-            it.copy(
-                reportWizardStep = ReportWizardStep.Export,
-                reportExportDone = false,
-            )
+            it.copy(report = it.report.copy(step = ReportWizardStep.Export, exportDone = false))
         }
         send(
             GhostlockEffect.ToastText(
@@ -897,7 +825,7 @@ class GhostlockViewModel(
             val evidence = runCatching { repository.latestCrashEvidence() }.getOrNull()
             val pending = pendingImport
             if (pending == null && evidence != null) {
-                mutableState.update { it.copy(crashEvidence = evidence) }
+                mutableState.update { it.copy(report = it.report.copy(crashEvidence = evidence)) }
             }
             val ok = runCatching {
                 repository.exportReportBundle(documentUri, pending)
@@ -906,9 +834,7 @@ class GhostlockViewModel(
                 val name = documentName(documentUri)
                 mutableState.update {
                     it.copy(
-                        reportExportDone = true,
-                        lastReportName = name,
-                        lastReportUri = documentUri,
+                        report = it.report.copy(exportDone = true, lastReportName = name, lastReportUri = documentUri),
                     )
                 }
                 send(
@@ -938,21 +864,20 @@ class GhostlockViewModel(
     }.getOrNull()
 
     fun onAddBugreport() {
-        if (mutableState.value.bugreportImporting) return
+        if (mutableState.value.report.importing) return
         send(GhostlockEffect.PickBugreport)
     }
 
     fun onBugreportPicked(uri: String?) {
         if (uri.isNullOrBlank()) return
-        if (mutableState.value.bugreportImporting) return
-        mutableState.update { it.copy(bugreportImporting = true) }
+        if (mutableState.value.report.importing) return
+        mutableState.update { it.copy(report = it.report.copy(importing = true)) }
         viewModelScope.launch(Dispatchers.IO) {
             val imported = runCatching { repository.importBugreport(uri) }.getOrNull()
-            val inFlow = mutableState.value.runLogPickerVisible
+            val inFlow = mutableState.value.report.pickerVisible
             mutableState.update {
                 it.copy(
-                    bugreportImporting = false,
-                    crashEvidence = imported?.toInfo() ?: it.crashEvidence,
+                    report = it.report.copy(importing = false, crashEvidence = imported?.toInfo() ?: it.report.crashEvidence),
                 )
             }
             if (imported != null) {
@@ -987,15 +912,14 @@ class GhostlockViewModel(
      * zip into the importer; the app never stores the hundreds of megabytes.
      */
     fun onReportGenerateBugreport() {
-        if (mutableState.value.bugreportGenerating || mutableState.value.bugreportImporting) return
-        mutableState.update { it.copy(bugreportGenerating = true) }
+        if (mutableState.value.report.generating || mutableState.value.report.importing) return
+        mutableState.update { it.copy(report = it.report.copy(generating = true)) }
         viewModelScope.launch(Dispatchers.IO) {
             val imported = runCatching { repository.generateBugreport() }.getOrNull()
-            val inFlow = mutableState.value.runLogPickerVisible
+            val inFlow = mutableState.value.report.pickerVisible
             mutableState.update {
                 it.copy(
-                    bugreportGenerating = false,
-                    crashEvidence = imported?.toInfo() ?: it.crashEvidence,
+                    report = it.report.copy(generating = false, crashEvidence = imported?.toInfo() ?: it.report.crashEvidence),
                 )
             }
             if (imported != null) {
@@ -1019,31 +943,29 @@ class GhostlockViewModel(
      */
     fun onReportAppend() {
         /* While a report is being parsed the wizard holds still. */
-        if (mutableState.value.bugreportImporting) return
+        if (mutableState.value.report.importing) return
         /* Choosing to attach starts a fresh capture; any session import from
          * a previous pass is not used. */
         pendingImport = null
         if (developerSettingsEnabled()) {
             mutableState.update {
                 it.copy(
-                    reportWizardStep = ReportWizardStep.Generate,
-                    reportFlowSteps = listOf(
+                    report = it.report.copy(step = ReportWizardStep.Generate, steps = listOf(
                         ReportWizardStep.Generate,
                         ReportWizardStep.Import,
                         ReportWizardStep.Export,
-                    ),
+                    )),
                 )
             }
         } else {
             mutableState.update {
                 it.copy(
-                    reportWizardStep = ReportWizardStep.Developer,
-                    reportFlowSteps = listOf(
+                    report = it.report.copy(step = ReportWizardStep.Developer, steps = listOf(
                         ReportWizardStep.Developer,
                         ReportWizardStep.Generate,
                         ReportWizardStep.Import,
                         ReportWizardStep.Export,
-                    ),
+                    )),
                 )
             }
         }
@@ -1051,10 +973,10 @@ class GhostlockViewModel(
 
     /** No system report: go straight to the location dialog. */
     fun onReportExportOnly() {
-        if (mutableState.value.bugreportImporting) return
+        if (mutableState.value.report.importing) return
         pendingImport = null
         mutableState.update {
-            it.copy(reportFlowSteps = listOf(ReportWizardStep.Export))
+            it.copy(report = it.report.copy(steps = listOf(ReportWizardStep.Export)))
         }
         openReportDestination()
     }
@@ -1062,7 +984,7 @@ class GhostlockViewModel(
     /** Re-reads the system switch after the user visited Settings. */
     fun onReportRecheckDeveloper() {
         if (developerSettingsEnabled()) {
-            mutableState.update { it.copy(reportWizardStep = ReportWizardStep.Generate) }
+            mutableState.update { it.copy(report = it.report.copy(step = ReportWizardStep.Generate)) }
         } else {
             send(GhostlockEffect.Toast(R.string.report_developer_missing))
         }
@@ -1073,28 +995,28 @@ class GhostlockViewModel(
      * the Developer-options gate ends; the screen advances by itself.
      */
     fun onReportResumed() {
-        val state = mutableState.value
-        if (!state.runLogPickerVisible) return
-        if (state.reportWizardStep != ReportWizardStep.Developer) return
+        val state = mutableState.value.report
+        if (!state.pickerVisible) return
+        if (state.step != ReportWizardStep.Developer) return
         if (developerSettingsEnabled()) {
-            mutableState.update { it.copy(reportWizardStep = ReportWizardStep.Generate) }
+            mutableState.update { it.copy(report = it.report.copy(step = ReportWizardStep.Generate)) }
         }
     }
 
     fun onReportNext() {
-        val state = mutableState.value
-        if (state.bugreportImporting) return
-        when (state.reportWizardStep) {
+        val state = mutableState.value.report
+        if (state.importing) return
+        when (state.step) {
             ReportWizardStep.Developer -> {
                 if (developerSettingsEnabled()) {
-                    mutableState.update { it.copy(reportWizardStep = ReportWizardStep.Generate) }
+                    mutableState.update { it.copy(report = it.report.copy(step = ReportWizardStep.Generate)) }
                 } else {
                     send(GhostlockEffect.Toast(R.string.report_developer_missing))
                 }
             }
 
             ReportWizardStep.Generate ->
-                mutableState.update { it.copy(reportWizardStep = ReportWizardStep.Import) }
+                mutableState.update { it.copy(report = it.report.copy(step = ReportWizardStep.Import)) }
 
             ReportWizardStep.Import -> {
                 if (state.crashEvidence.hasKernelEvidence()) {
@@ -1111,10 +1033,10 @@ class GhostlockViewModel(
     }
 
     fun onReportBack() {
-        val state = mutableState.value
-        if (state.bugreportImporting) return
-        val steps = state.reportFlowSteps
-        val previous = when (state.reportWizardStep) {
+        val state = mutableState.value.report
+        if (state.importing) return
+        val steps = state.steps
+        val previous = when (state.step) {
             ReportWizardStep.Developer -> ReportWizardStep.Choice
 
             ReportWizardStep.Generate ->
@@ -1140,13 +1062,13 @@ class GhostlockViewModel(
 
             ReportWizardStep.Choice -> ReportWizardStep.Choice
         }
-        mutableState.update { it.copy(reportWizardStep = previous) }
+        mutableState.update { it.copy(report = it.report.copy(step = previous)) }
     }
 
     /** "Already have a report" from the choice or export-warning screens. */
     fun onReportGoToImport() {
-        if (mutableState.value.bugreportImporting) return
-        val steps = mutableState.value.reportFlowSteps
+        if (mutableState.value.report.importing) return
+        val steps = mutableState.value.report.steps
         val plan = when {
             steps.contains(ReportWizardStep.Developer) -> listOf(
                 ReportWizardStep.Developer,
@@ -1163,15 +1085,12 @@ class GhostlockViewModel(
             )
         }
         mutableState.update {
-            it.copy(
-                reportWizardStep = ReportWizardStep.Import,
-                reportFlowSteps = plan,
-            )
+            it.copy(report = it.report.copy(step = ReportWizardStep.Import, steps = plan))
         }
     }
 
     fun onReportShare() {
-        val uri = mutableState.value.lastReportUri ?: return
+        val uri = mutableState.value.report.lastReportUri ?: return
         send(GhostlockEffect.ShareFile(uri))
     }
 
@@ -1187,26 +1106,28 @@ class GhostlockViewModel(
     fun onRunLogPickerDismiss() {
         /* The import owns the sheet until it ends; a tap outside or Back must
          * not drop a running parse (its result would have nowhere to go). */
-        if (mutableState.value.bugreportImporting) return
+        if (mutableState.value.report.importing) return
         stopCrashVerdictPolling()
         pendingImport = null
-        mutableState.update { it.copy(runLogPickerVisible = false) }
+        mutableState.update { it.copy(report = it.report.copy(pickerVisible = false)) }
     }
 
     fun onClearRunLogs() {
-        if (mutableState.value.bugreportImporting) return
+        if (mutableState.value.report.importing) return
         pendingImport = null
         viewModelScope.launch {
             runCatching { repository.clearRunLogs() }
             stopCrashVerdictPolling()
-            mutableState.update { it.copy(runLogs = emptyList(), runLogPickerVisible = false) }
+            mutableState.update { it.copy(report = it.report.copy(runLogs = emptyList(), pickerVisible = false)) }
             send(GhostlockEffect.Toast(R.string.run_log_cleared))
         }
     }
 
     fun onDebugKernelLogChanged(enabled: Boolean) {
         repository.setDebugKernelLogEnabled(enabled)
-        mutableState.update { it.copy(debugKernelLogEnabled = enabled) }
+        mutableState.update { it.copy(
+            session = it.session.copy(runSettings = it.session.runSettings.copy(debugKernelLogEnabled = enabled)),
+        ) }
     }
 
     /** Exports the active profile through the system document dialog. */
@@ -1249,11 +1170,11 @@ class GhostlockViewModel(
             pendingSelectUri = documentUri
             mutableState.update {
                 it.copy(
-                    dialog = AppDialog.Confirm(
+                    overlay = it.overlay.copy(dialog = AppDialog.Confirm(
                         titleRes = R.string.profile_exported_title,
                         messageRes = R.string.profile_use_question,
                         confirmLabelRes = R.string.profile_use_confirm,
-                    ),
+                    )),
                 )
             }
         }
@@ -1283,12 +1204,11 @@ class GhostlockViewModel(
             }
             mutableState.update {
                 it.copy(
-                    builtinTemplates = sortByKernelSimilarity(
+                    builtin = it.builtin.copy(templates = sortByKernelSimilarity(
                         snapshot.kernelRelease, templates,
-                    ),
-                    builtinProfiles = sortByKernelSimilarity(
+                    ), releases = sortByKernelSimilarity(
                         snapshot.kernelRelease, kernels,
-                    ),
+                    )),
                 )
             }
         }
@@ -1354,11 +1274,15 @@ class GhostlockViewModel(
     private fun applyAdvancedConfig(config: ProfileConfig) {
         mutableState.update { state ->
             state.copy(
-                profileRoute = config.route,
-                profileFallback = config.fallbackTo,
-                activeBuiltinProfile = profileController.activeBuiltinRelease(),
-                importedProfilePresent = profileController.importedProfileExists(),
-                profileLayers = config.layers,
+                session = state.session.copy(
+                    support = state.session.support.copy(
+                        route = config.route,
+                        fallback = config.fallbackTo,
+                        activeBuiltinProfile = profileController.activeBuiltinRelease(),
+                        importedProfilePresent = profileController.importedProfileExists(),
+                        layers = config.layers,
+                    ),
+                ),
             )
         }
     }
@@ -1368,17 +1292,21 @@ class GhostlockViewModel(
         if (index !in snapshot.cpuPairs.indices) return
         selectCpuPairUseCase(index)
         kernelSnapshot = snapshot.copy(selectedCpuPair = index)
-        mutableState.update { it.copy(cpuPairIndex = index) }
+        mutableState.update { it.copy(session = it.session.copy(device = it.session.device.copy(cpuPairIndex = index))) }
     }
 
     fun toggleSafeMode(enabled: Boolean) {
         repository.setSafeModeEnabled(enabled)
-        mutableState.update { it.copy(safeModeEnabled = enabled) }
+        mutableState.update { it.copy(
+            session = it.session.copy(runSettings = it.session.runSettings.copy(safeModeEnabled = enabled)),
+        ) }
     }
 
     fun toggleForceAttackTest(enabled: Boolean) {
         repository.setForceAttackTest(enabled)
-        mutableState.update { it.copy(forceAttackTestEnabled = enabled) }
+        mutableState.update { it.copy(
+            session = it.session.copy(runSettings = it.session.runSettings.copy(forceAttackTestEnabled = enabled)),
+        ) }
     }
 
     /** Debug-only lab hook (`am start --ez second_way …`); no UI. */
@@ -1393,17 +1321,21 @@ class GhostlockViewModel(
 
     fun setVrKoTagClear(mode: VrKoMode) {
         repository.setVrKoTagClear(mode)
-        mutableState.update { it.copy(vrKoTagClear = mode) }
+        mutableState.update { it.copy(
+            session = it.session.copy(runSettings = it.session.runSettings.copy(vrKoTagClear = mode)),
+        ) }
     }
 
     fun setVrKoSelinuxBlock(mode: VrKoMode) {
         repository.setVrKoSelinuxBlock(mode)
-        mutableState.update { it.copy(vrKoSelinuxBlock = mode) }
+        mutableState.update { it.copy(
+            session = it.session.copy(runSettings = it.session.runSettings.copy(vrKoSelinuxBlock = mode)),
+        ) }
     }
 
     fun toggleShizuku(enabled: Boolean) {
         repository.setShizukuEnabled(enabled)
-        mutableState.update { it.copy(shizukuEnabled = enabled) }
+        mutableState.update { it.copy(session = it.session.copy(access = it.session.access.copy(shizukuEnabled = enabled))) }
         if (!enabled && kernelSnapshot?.recommendShizuku == true) {
             send(GhostlockEffect.Toast(R.string.shizuku_recommended_hint))
         }
@@ -1485,7 +1417,7 @@ class GhostlockViewModel(
             }
             if (!beginOperation()) return@launch
             send(GhostlockEffect.KeepScreenAwake(true))
-            mutableState.update { it.copy(runStatus = RunStatus.Running) }
+            mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(status = RunStatus.Running))) }
             /* A foreground service keeps the app's uid out of the cached
              * (freezable) state if the KSU manager takes the foreground during
              * the handoff; the notification also carries the run status. */
@@ -1502,7 +1434,7 @@ class GhostlockViewModel(
                     appendLog("exit code=$code")
                     finishRunStatus(code)
                 } finally {
-                    if (mutableState.value.runStatus == RunStatus.Running) finishRunStatus(-1)
+                    if (mutableState.value.session.run.status == RunStatus.Running) finishRunStatus(-1)
                     endOperation()
                     send(GhostlockEffect.KeepScreenAwake(false))
                 }
@@ -1512,7 +1444,7 @@ class GhostlockViewModel(
 
     /** Terminal run status for the sheet footer and the result notification. */
     private fun finishRunStatus(code: Int) {
-        val text = mutableState.value.logLines.joinToString("\n") { it.text }
+        val text = mutableState.value.session.run.logLines.joinToString("\n") { it.text }
         val dirtyfrag = text.contains("pipeline=dirtyfrag")
         val rooted = code == 0 && (text.contains("KernelSU ready") || text.contains("RESULT=OK"))
         val message = application.getString(
@@ -1523,7 +1455,11 @@ class GhostlockViewModel(
             },
         )
         mutableState.update {
-            it.copy(runStatus = if (rooted) RunStatus.Success else RunStatus.Failure)
+            it.copy(
+                session = it.session.copy(
+                    run = it.session.run.copy(status = if (rooted) RunStatus.Success else RunStatus.Failure),
+                ),
+            )
         }
         RunStatusService.finish(application, message, rooted)
         /* The page-free W1's value is a kernel address, so it sets the two
@@ -1557,10 +1493,10 @@ class GhostlockViewModel(
         notificationRationaleShown = true
         mutableState.update {
             it.copy(
-                dialog = AppDialog.NotificationPermission(
+                overlay = it.overlay.copy(dialog = AppDialog.NotificationPermission(
                     titleRes = R.string.run_notif_permission_title,
                     messageRes = R.string.run_notif_permission_message,
-                ),
+                )),
             )
         }
     }
@@ -1573,7 +1509,7 @@ class GhostlockViewModel(
 
     /** User-initiated: open the selected (or auto-resolved) manager's UI. */
     fun onOpenManager() {
-        val selected = state.value.selectedManagerPackage
+        val selected = state.value.session.access.selectedManagerPackage
         if (selected != null) {
             send(GhostlockEffect.OpenManager(selected))
             return
@@ -1598,7 +1534,9 @@ class GhostlockViewModel(
      * next-launch notices so their layout and dismissal cannot drift.
      */
     private fun showNotice(titleRes: Int, messageRes: Int) {
-        mutableState.update { it.copy(dialog = AppDialog.Notice(titleRes = titleRes, messageRes = messageRes)) }
+        mutableState.update { it.copy(
+            overlay = it.overlay.copy(dialog = AppDialog.Notice(titleRes = titleRes, messageRes = messageRes)),
+        ) }
     }
 
     private fun showPreflightNotice(failure: PreflightFailure) {
@@ -1632,26 +1570,27 @@ class GhostlockViewModel(
     }
 
     fun onShowDeviceInfo() {
-        val s = state.value
+        val s = state.value.session.device
         mutableState.update {
             it.copy(
-                dialog = AppDialog.Notice(
+                overlay = it.overlay.copy(dialog = AppDialog.Notice(
                     titleRes = R.string.home_device_info_title,
                     message = listOf(s.deviceName, s.socName, s.kernelRelease)
                         .filter { it.isNotBlank() }
                         .joinToString("\n"),
-                ),
+                )),
             )
         }
     }
 
     /** Opens the run sheet on the last run's retained log. */
     fun onOpenLastRunLog() {
-        if (state.value.logLines.isEmpty()) return
+        if (state.value.session.run.logLines.isEmpty()) return
         mutableState.update {
             it.copy(
-                executionSheetVisible = true,
-                executionSheetDismissible = !running,
+                session = it.session.copy(
+                    run = it.session.run.copy(sheetVisible = true, sheetDismissible = !running),
+                ),
             )
         }
     }
@@ -1667,7 +1606,7 @@ class GhostlockViewModel(
     fun onOpenGeneration() {
         resetParseSession()
         pendingGeneratedProfile = null
-        mutableState.update { it.copy(generationStep = GenerationStep.Idle) }
+        mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Idle)) }
         nav.push(Screen.Generation)
     }
 
@@ -1691,16 +1630,16 @@ class GhostlockViewModel(
     fun onRestartGeneration() {
         resetParseSession()
         pendingGeneratedProfile = null
-        mutableState.update { it.copy(generationStep = GenerationStep.Idle) }
+        mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Idle)) }
     }
 
     fun onCloseExecutionSheet() {
-        if (running && !state.value.executionSheetDismissible) return
-        mutableState.update { it.copy(executionSheetVisible = false) }
+        if (running && !state.value.session.run.sheetDismissible) return
+        mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(sheetVisible = false))) }
     }
 
     fun copyLogs() {
-        val text = state.value.logLines.joinToString(separator = "") { it.text }
+        val text = state.value.session.run.logLines.joinToString(separator = "") { it.text }
         send(GhostlockEffect.Clipboard(text))
         send(GhostlockEffect.Toast(R.string.copied))
     }
@@ -1710,13 +1649,13 @@ class GhostlockViewModel(
         parseStep = ParseStep.ModePick
         mutableState.update {
             it.copy(
-                dialog = AppDialog.ListDialog(
+                overlay = it.overlay.copy(dialog = AppDialog.ListDialog(
                     titleRes = R.string.parse_title,
                     itemResIds = listOf(
                         R.string.parse_option_payload,
                         R.string.parse_option_boot,
                     ),
-                ),
+                )),
             )
         }
     }
@@ -1732,13 +1671,13 @@ class GhostlockViewModel(
         parseStep = ParseStep.SourcePick
         mutableState.update {
             it.copy(
-                dialog = AppDialog.ListDialog(
+                overlay = it.overlay.copy(dialog = AppDialog.ListDialog(
                     titleRes = R.string.parse_source_title,
                     itemResIds = listOf(
                         R.string.action_parse_ota,
                         R.string.action_parse,
                     ),
-                ),
+                )),
             )
         }
     }
@@ -1755,11 +1694,11 @@ class GhostlockViewModel(
     fun promptParseUrl() {
         mutableState.update {
             it.copy(
-                dialog = AppDialog.Input(
+                overlay = it.overlay.copy(dialog = AppDialog.Input(
                     titleRes = R.string.parse_url_title,
                     labelRes = R.string.parse_url_hint,
                     confirmLabelRes = R.string.parse_start,
-                ),
+                )),
             )
         }
     }
@@ -1802,14 +1741,14 @@ class GhostlockViewModel(
             managerPickerOpen = true
             mutableState.update {
                 it.copy(
-                    dialog = AppDialog.ListDialog(
+                    overlay = it.overlay.copy(dialog = AppDialog.ListDialog(
                         titleRes = R.string.manager_picker_title,
                         items = candidates.map { candidate ->
                             "${candidate.label} (${candidate.packageName})"
                         },
                         leadingResId = R.string.manager_summary_auto,
                         currentIndex = if (selectedIndex >= 0) selectedIndex else -1,
-                    ),
+                    )),
                 )
             }
         }
@@ -1820,7 +1759,9 @@ class GhostlockViewModel(
             managerPickerOpen = false
             val packageName = if (index == 0) null else managerChoices.getOrNull(index - 1)?.packageName
             repository.setSelectedManagerPackage(packageName)
-            mutableState.update { it.copy(selectedManagerPackage = packageName) }
+            mutableState.update { it.copy(
+                session = it.session.copy(access = it.session.access.copy(selectedManagerPackage = packageName)),
+            ) }
             dismissDialog()
             return
         }
@@ -1941,7 +1882,7 @@ class GhostlockViewModel(
      * generated document. Nothing is stored by the app; the export is the save.
      */
     private fun markGenerationFailed() {
-        mutableState.update { it.copy(generationStep = GenerationStep.Failed) }
+        mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Failed)) }
     }
 
     private fun finishGeneratedProfile(
@@ -1964,7 +1905,7 @@ class GhostlockViewModel(
         if (nav.current == Screen.Generation) {
             /* The stepped flow ends on its save step; the write starts there. */
             pendingGeneratedProfile = PendingGeneratedProfile(text, suggested)
-            mutableState.update { it.copy(generationStep = GenerationStep.Save) }
+            mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Save)) }
             return
         }
         requestProfileWrite(
@@ -1977,12 +1918,12 @@ class GhostlockViewModel(
     }
 
     fun onDialogInputChange(value: String) = mutableState.update { state ->
-        val input = state.dialog as? AppDialog.Input ?: return@update state
-        state.copy(dialog = input.copy(value = value))
+        val input = state.overlay.dialog as? AppDialog.Input ?: return@update state
+        state.copy(overlay = state.overlay.copy(dialog = input.copy(value = value)))
     }
 
     fun onDialogConfirm(value: String) {
-        val dialog = state.value.dialog
+        val dialog = state.value.overlay.dialog
         val selectUri = pendingSelectUri
         pendingSelectUri = null
         dismissDialog()
@@ -2022,8 +1963,8 @@ class GhostlockViewModel(
             else -> Unit
         }
         pendingSelectUri = null
-        if (state.value.generationStep == GenerationStep.Confirm) {
-            mutableState.update { it.copy(generationStep = GenerationStep.Idle) }
+        if (state.value.generation.step == GenerationStep.Confirm) {
+            mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Idle)) }
         }
         dismissDialog()
     }
@@ -2032,13 +1973,13 @@ class GhostlockViewModel(
 
     fun onStrideOptionSelected(value: Int) {
         mutableState.update { state ->
-            val picker = state.stridePicker ?: return@update state
-            state.copy(stridePicker = picker.copy(selectedValue = value))
+            val picker = state.overlay.stridePicker ?: return@update state
+            state.copy(overlay = state.overlay.copy(stridePicker = picker.copy(selectedValue = value)))
         }
     }
 
     fun onStrideUse() {
-        val value = state.value.stridePicker?.selectedValue ?: return
+        val value = state.value.overlay.stridePicker?.selectedValue ?: return
         finishStride(value)
     }
 
@@ -2061,7 +2002,7 @@ class GhostlockViewModel(
         pendingStrideDocument = null
         pendingStrideName = null
         pendingStrideRelease = null
-        mutableState.update { it.copy(stridePicker = null) }
+        mutableState.update { it.copy(overlay = it.overlay.copy(stridePicker = null)) }
         if (document == null || release == null) return
         if (value == null) {
             appendLog("stride left unset (native default + stride-agnostic scan)")
@@ -2106,24 +2047,35 @@ class GhostlockViewModel(
         loaded?.let { resolvedProfile = it }
         mutableState.update {
             it.copy(
-                deviceName = snapshot.deviceName,
-                kernelRelease = snapshot.kernelRelease,
-                socName = snapshot.socName,
-                cpuPairLabels = snapshot.cpuPairLabels,
-                cpuPairIndex = snapshot.selectedCpuPair,
-                safeModeEnabled = snapshot.safeModeEnabled,
-                forceAttackTestEnabled = snapshot.forceAttackTest,
-                vrKoTagClear = snapshot.vrKoTagClear,
-                vrKoSelinuxBlock = snapshot.vrKoSelinuxBlock,
-                shizukuEnabled = snapshot.shizukuEnabled,
-                shizukuStatus = snapshot.shizukuStatus,
-                crashShellAvailable =
-                    repository.crashShellStatus() != ShizukuStatus.NOT_RUNNING,
-                executionHasProfile = loaded?.hasProfile ?: false,
-                profileLayers = loaded?.layers,
-                importedProfilePresent = profileController.importedProfileExists(),
-                customCpuPair = loaded?.let(::customCpuPairOf),
-                selectedManagerPackage = repository.selectedManagerPackage(),
+                session = it.session.copy(
+                    device = it.session.device.copy(
+                        deviceName = snapshot.deviceName,
+                        kernelRelease = snapshot.kernelRelease,
+                        socName = snapshot.socName,
+                        cpuPairLabels = snapshot.cpuPairLabels,
+                        cpuPairIndex = snapshot.selectedCpuPair,
+                        customCpuPair = loaded?.let(::customCpuPairOf),
+                    ),
+                    runSettings = it.session.runSettings.copy(
+                        safeModeEnabled = snapshot.safeModeEnabled,
+                        forceAttackTestEnabled = snapshot.forceAttackTest,
+                        vrKoTagClear = snapshot.vrKoTagClear,
+                        vrKoSelinuxBlock = snapshot.vrKoSelinuxBlock,
+                    ),
+                    access = it.session.access.copy(
+                        shizukuEnabled = snapshot.shizukuEnabled,
+                        shizukuStatus = snapshot.shizukuStatus,
+                        selectedManagerPackage = repository.selectedManagerPackage(),
+                    ),
+                    support = it.session.support.copy(
+                        hasProfile = loaded?.hasProfile ?: false,
+                        layers = loaded?.layers,
+                        importedProfilePresent = profileController.importedProfileExists(),
+                    ),
+                ),
+                report = it.report.copy(
+                    crashShellAvailable = repository.crashShellStatus() != ShizukuStatus.NOT_RUNNING,
+                ),
             )
         }
         refreshMergeRows()
@@ -2243,11 +2195,11 @@ class GhostlockViewModel(
     private fun showNotice(titleRes: Int, messageRes: Int, docUrl: String? = null) {
         mutableState.update {
             it.copy(
-                dialog = AppDialog.Notice(
+                overlay = it.overlay.copy(dialog = AppDialog.Notice(
                     titleRes = titleRes,
                     messageRes = messageRes,
                     docUrl = docUrl,
-                ),
+                )),
             )
         }
     }
@@ -2283,7 +2235,7 @@ class GhostlockViewModel(
 
     private suspend fun runParse(request: ParseRequest) {
         if (!beginOperation(showLogSheet = false)) return
-        mutableState.update { it.copy(generationStep = GenerationStep.Parsing) }
+        mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Parsing)) }
         try {
             when (
                 val result = parseSourceUseCase(
@@ -2374,14 +2326,14 @@ class GhostlockViewModel(
         }
         mutableState.update {
             it.copy(
-                generationStep = GenerationStep.Confirm,
-                dialog = AppDialog.ListDialog(
+                generation = it.generation.copy(step = GenerationStep.Confirm),
+                overlay = it.overlay.copy(dialog = AppDialog.ListDialog(
                     titleRes = R.string.parse_route_title,
                     items = choices.map { choice ->
                         RouteDisplay.optionLabel(choice.route, choice.carrier)
                     },
                     grades = choices.map { choice -> RouteDisplay.grade(choice.route) },
-                ),
+                )),
             )
         }
     }
@@ -2452,11 +2404,11 @@ class GhostlockViewModel(
         }
         mutableState.update {
             it.copy(
-                generationStep = GenerationStep.Confirm,
-                dialog = AppDialog.ListDialog(
+                generation = it.generation.copy(step = GenerationStep.Confirm),
+                overlay = it.overlay.copy(dialog = AppDialog.ListDialog(
                     titleRes = title,
                     itemResIds = listOf(attach, R.string.parse_phys_skip),
-                ),
+                )),
             )
         }
     }
@@ -2527,15 +2479,15 @@ class GhostlockViewModel(
         }
         mutableState.update {
             it.copy(
-                generationStep = GenerationStep.Confirm,
-                dialog = AppDialog.ListDialog(
+                generation = it.generation.copy(step = GenerationStep.Confirm),
+                overlay = it.overlay.copy(dialog = AppDialog.ListDialog(
                     titleRes = R.string.parse_lock_title,
                     itemResIds = listOf(
                         R.string.parse_lock_page,
                         R.string.parse_lock_anchor,
                     ),
                     grades = listOf(null, anchorSafety),
-                ),
+                )),
             )
         }
         return true
@@ -2565,8 +2517,8 @@ class GhostlockViewModel(
         parseStep = ParseStep.Plan(result, plans, decision)
         mutableState.update {
             it.copy(
-                generationStep = GenerationStep.Confirm,
-                dialog = AppDialog.ListDialog(
+                generation = it.generation.copy(step = GenerationStep.Confirm),
+                overlay = it.overlay.copy(dialog = AppDialog.ListDialog(
                     titleRes = if (decision.pageOffered) {
                         R.string.parse_plan_title_conditional
                     } else {
@@ -2584,7 +2536,7 @@ class GhostlockViewModel(
                     } else {
                         null
                     },
-                ),
+                )),
             )
         }
     }
@@ -2649,7 +2601,7 @@ class GhostlockViewModel(
              * operation has normally ended by now; if it has not, do not let
              * its `running` flag hide the progress. */
             if (!beginOperation(showLogSheet = false)) {
-                mutableState.update { it.copy(running = true) }
+                mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(running = true))) }
             }
             send(GhostlockEffect.KeepScreenAwake(true))
             try {
@@ -2680,18 +2632,18 @@ class GhostlockViewModel(
             )
             mutableState.update {
                 it.copy(
-                    stridePicker = StridePickerUiState(
+                    overlay = it.overlay.copy(stridePicker = StridePickerUiState(
                         recommendation = recommendation,
                         selectedValue = recommendation.recommendedValue,
                         footerRes = R.string.stride_footer_export,
-                    ),
-                    executionSheetVisible = false,
+                    )),
+                    session = it.session.copy(run = it.session.run.copy(sheetVisible = false)),
                 )
             }
         } else {
             /* No stride picker: the save prompt takes over. Close the probe
              * sheet first so the SAF activity is not left behind a modal. */
-            mutableState.update { it.copy(executionSheetVisible = false) }
+            mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(sheetVisible = false))) }
             finishGeneratedProfile(
                 document,
                 result.documentName,
@@ -2708,7 +2660,7 @@ class GhostlockViewModel(
     }
 
     fun onOverwriteConfirm() {
-        mutableState.update { it.copy(overwriteDialogVisible = false, overwriteMessage = "") }
+        mutableState.update { it.copy(overlay = it.overlay.copy(overwriteVisible = false, overwriteMessage = "")) }
         confirmPendingOperation()
     }
 
@@ -2718,11 +2670,9 @@ class GhostlockViewModel(
         appendLog("result: overwrite cancelled")
         mutableState.update {
             it.copy(
-                generationStep = GenerationStep.Idle,
-                overwriteDialogVisible = false,
-                overwriteMessage = "",
-                running = false,
-                executionSheetDismissible = true,
+                generation = it.generation.copy(step = GenerationStep.Idle),
+                overlay = it.overlay.copy(overwriteVisible = false, overwriteMessage = ""),
+                session = it.session.copy(run = it.session.run.copy(running = false, sheetDismissible = true)),
             )
         }
     }
@@ -2737,12 +2687,9 @@ class GhostlockViewModel(
     private fun showOverwriteDialog(releases: List<String>) {
         mutableState.update {
             it.copy(
-                generationStep = GenerationStep.Confirm,
-                overwriteDialogVisible = true,
-                overwriteMessage = overwriteSummary(releases),
-                /* The confirmation must be the only overlay on screen; a log
-                 * sheet behind it would swallow its taps. */
-                executionSheetVisible = false,
+                generation = it.generation.copy(step = GenerationStep.Confirm),
+                overlay = it.overlay.copy(overwriteVisible = true, overwriteMessage = overwriteSummary(releases)),
+                session = it.session.copy(run = it.session.run.copy(sheetVisible = false)),
             )
         }
     }
@@ -2756,7 +2703,7 @@ class GhostlockViewModel(
 
     private fun dismissDialog() {
         managerPickerOpen = false
-        mutableState.update { it.copy(dialog = null) }
+        mutableState.update { it.copy(overlay = it.overlay.copy(dialog = null)) }
     }
 
     private fun appendLog(line: String) {
@@ -2764,7 +2711,9 @@ class GhostlockViewModel(
         val tagged = if (line.startsWith("result:")) "<k> $line" else line
         val entry = formatLog(tagged)
         val uiLine = GhostlockLogLine(entry.text, toneColor(entry.tone))
-        mutableState.update { it.copy(logLines = it.logLines + uiLine) }
+        mutableState.update { it.copy(
+            session = it.session.copy(run = it.session.run.copy(logLines = it.session.run.logLines + uiLine)),
+        ) }
     }
 
     private fun beginOperation(showLogSheet: Boolean = true): Boolean {
@@ -2773,12 +2722,14 @@ class GhostlockViewModel(
         mutableState.update {
             if (showLogSheet) {
                 it.copy(
-                    running = true,
-                    executionSheetVisible = true,
-                    executionSheetDismissible = false,
+                    session = it.session.copy(
+                        run = it.session.run.copy(running = true, sheetVisible = true, sheetDismissible = false),
+                    ),
                 )
             } else {
-                it.copy(running = true)
+                it.copy(
+                    session = it.session.copy(run = it.session.run.copy(running = true)),
+                )
             }
         }
         return true
@@ -2786,7 +2737,9 @@ class GhostlockViewModel(
 
     private fun endOperation() {
         running = false
-        mutableState.update { it.copy(running = false, executionSheetDismissible = true) }
+        mutableState.update { it.copy(
+            session = it.session.copy(run = it.session.run.copy(running = false, sheetDismissible = true)),
+        ) }
     }
 
     private fun send(effect: GhostlockEffect) {
