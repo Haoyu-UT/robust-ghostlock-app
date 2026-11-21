@@ -196,6 +196,14 @@ from Parameters → 查看问题.
 - Empty state should be unreachable; if it is reached, show 没有发现问题 and offer 重新检查 (a
   refetch), never a blank screen.
 
+**Validation is a verdict, not a document model.** It is computed once per trigger from the
+resolved profile (`supportOutcome`), never per keystroke or per field: no draft, no dirty state,
+no as-you-type validation, no per-field validity. It is still state — `SessionState.support`, one
+writer, a generation, and the trigger list in `support-status-state-plan.md` §2.5 — but the UI
+never validates anything itself. A new way for the inputs to change is a new trigger; that list is
+the whole refresh model. There is no file observer: the app's copy is app-private and changes only
+through import, so editing the original externally requires a re-import, which is itself a trigger.
+
 ### 3.5 Run sheet
 
 ```
