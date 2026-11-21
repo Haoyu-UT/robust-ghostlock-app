@@ -60,10 +60,21 @@ import com.ghostlock.app.domain.model.VrKoMode
 import com.ghostlock.app.ui.nav.NavController
 import com.ghostlock.app.ui.nav.Screen
 import com.ghostlock.app.ui.state.AdvancedActions
+import com.ghostlock.app.ui.state.BuiltinActions
+import com.ghostlock.app.ui.state.BuiltinState
+import com.ghostlock.app.ui.state.GenerationActions
+import com.ghostlock.app.ui.state.GenerationState
 import com.ghostlock.app.ui.state.HomeActions
+import com.ghostlock.app.ui.state.MeasurementsActions
+import com.ghostlock.app.ui.state.MergePreviewActions
+import com.ghostlock.app.ui.state.OverlayActions
+import com.ghostlock.app.ui.state.OverlayState
 import com.ghostlock.app.ui.state.ParametersActions
+import com.ghostlock.app.ui.state.ReportActions
+import com.ghostlock.app.ui.state.ReportState
 import com.ghostlock.app.ui.state.RunSettingsActions
 import com.ghostlock.app.ui.state.SessionState
+import com.ghostlock.app.ui.state.VrKoActions
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -272,12 +283,23 @@ private fun closeScreen(screen: Screen, actions: GhostlockActions) {
 internal fun GhostlockApp(
     state: GhostlockUiState,
     session: SessionState,
+    report: ReportState,
+    overlay: OverlayState,
+    generation: GenerationState,
+    builtin: BuiltinState,
     nav: NavController,
     actions: GhostlockActions,
     homeActions: HomeActions,
     runSettingsActions: RunSettingsActions,
     advancedActions: AdvancedActions,
     parameterActions: ParametersActions,
+    reportActions: ReportActions,
+    overlayActions: OverlayActions,
+    generationActions: GenerationActions,
+    builtinActions: BuiltinActions,
+    vrKoActions: VrKoActions,
+    measurementsActions: MeasurementsActions,
+    mergePreviewActions: MergePreviewActions,
 ) {
     MiuixTheme(
         colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
@@ -315,7 +337,7 @@ internal fun GhostlockApp(
                         MainScreen(session = session, actions = homeActions)
                     }
                     entry<Screen.VrKo>(swipeDismiss = swipeBack) {
-                        VrKoScreen(state = state, actions = actions)
+                        VrKoScreen(state = session, actions = vrKoActions)
                     }
                     entry<Screen.Advanced>(swipeDismiss = swipeBack) {
                         AdvancedScreen(state = session, actions = advancedActions)
@@ -324,29 +346,37 @@ internal fun GhostlockApp(
                         RunSettingsScreen(state = session, actions = runSettingsActions)
                     }
                     entry<Screen.Generation>(swipeDismiss = swipeBack) {
-                        GenerationScreen(state = state, actions = actions)
+                        GenerationScreen(
+                            state = session,
+                            generation = generation,
+                            actions = generationActions,
+                        )
                     }
                     entry<Screen.About>(swipeDismiss = swipeBack) {
                         AboutScreen(onBack = actions::onCloseAbout)
                     }
                     entry<Screen.Measurements>(swipeDismiss = swipeBack) {
-                        MeasurementsScreen(state = state, actions = actions)
+                        MeasurementsScreen(state = session, actions = measurementsActions)
                     }
                     entry<Screen.Parameters>(swipeDismiss = swipeBack) {
                         ParameterScreen(state = session, actions = parameterActions)
                     }
                     entry<Screen.Builtin>(swipeDismiss = swipeBack) {
-                        BuiltinProfileScreen(state = state, actions = actions)
+                        BuiltinProfileScreen(
+                            state = session,
+                            builtin = builtin,
+                            actions = builtinActions,
+                        )
                     }
                     entry<Screen.MergePreview>(swipeDismiss = swipeBack) {
-                        MergePreviewScreen(state = state, actions = actions)
+                        MergePreviewScreen(state = session, actions = mergePreviewActions)
                     }
                 }
-                GhostlockDialog(state = state, actions = actions)
-                GhostlockOverwriteDialog(state = state, actions = actions)
-                RunLogPickerDialog(state = state, actions = actions)
-                StridePickerDialog(state = state, actions = actions)
-                GhostlockExecutionSheet(state = state, actions = actions)
+                GhostlockDialog(state = session, overlay = overlay, actions = overlayActions)
+                GhostlockOverwriteDialog(overlay = overlay, actions = overlayActions)
+                RunLogPickerDialog(report = report, actions = reportActions)
+                StridePickerDialog(overlay = overlay, actions = overlayActions)
+                GhostlockExecutionSheet(state = session, report = report, actions = reportActions)
             }
         }
     }
@@ -379,15 +409,19 @@ internal fun pageContentPadding(
     )
 }
 
+/* The report slice rides along by the migration's uniform signature; nothing
+ * on this sheet reads it yet, so the parameter is deliberately unused. */
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun GhostlockExecutionSheet(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    report: ReportState,
+    actions: ReportActions,
 ) {
     OverlayBottomSheet(
-        show = state.executionSheetVisible,
+        show = state.run.sheetVisible,
         title = stringResource(R.string.log_title),
-        allowDismiss = state.executionSheetDismissible,
+        allowDismiss = state.run.sheetDismissible,
         onDismissRequest = actions::onCloseExecutionSheet,
         startAction = {
             IconButton(onClick = actions::onCopyLogs) {
@@ -400,7 +434,7 @@ private fun GhostlockExecutionSheet(
         },
         endAction = {
             IconButton(
-                enabled = state.executionSheetDismissible,
+                enabled = state.run.sheetDismissible,
                 onClick = actions::onCloseExecutionSheet,
             ) {
                 Icon(
@@ -410,7 +444,7 @@ private fun GhostlockExecutionSheet(
             }
         },
         content = {
-            if (!state.executionSheetDismissible) {
+            if (!state.run.sheetDismissible) {
                 Text(
                     text = stringResource(R.string.action_running),
                     modifier = Modifier.padding(bottom = 8.dp),
@@ -419,7 +453,7 @@ private fun GhostlockExecutionSheet(
                 )
             }
             LogPanel(
-                lines = state.logLines,
+                lines = state.run.logLines,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 240.dp, max = 520.dp)
@@ -428,17 +462,17 @@ private fun GhostlockExecutionSheet(
             /* The run's visible verdict and the two terminal actions. The
              * manager itself is never auto-launched by the app: on a late-load
              * ROM its own restart is what takes the foreground mid-handoff. */
-            if (state.executionSheetDismissible) {
+            if (state.run.sheetDismissible) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (state.runStatus != RunStatus.Idle) {
+                    if (state.run.status != RunStatus.Idle) {
                         Text(
                             text = stringResource(
-                                if (state.runStatus == RunStatus.Success) {
+                                if (state.run.status == RunStatus.Success) {
                                     R.string.run_status_root_active
                                 } else {
                                     R.string.run_status_failed
@@ -453,7 +487,7 @@ private fun GhostlockExecutionSheet(
                     }
                     TextButton(
                         text = stringResource(R.string.run_log_export),
-                        onClick = actions::onExportRunLog,
+                        onClick = actions::onOpenExportRunLog,
                     )
                     TextButton(
                         text = stringResource(R.string.run_notif_open_manager),
@@ -465,12 +499,16 @@ private fun GhostlockExecutionSheet(
     )
 }
 
+/* The session slice rides along by the migration's uniform signature; the
+ * dialog reads only the overlay slice, so the parameter is deliberately unused. */
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun GhostlockDialog(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    overlay: OverlayState,
+    actions: OverlayActions,
 ) {
-    val current = state.dialog
+    val current = overlay.dialog
     /* Keep the last dialog rendered while the overlay plays its exit
      * animation; `show` still follows the single source of truth. */
     var lastDialog by remember { mutableStateOf<AppDialog?>(null) }
@@ -693,10 +731,10 @@ private fun GhostlockDialog(
 
 @Composable
 private fun RunLogPickerDialog(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    report: ReportState,
+    actions: ReportActions,
 ) {
-    val step = state.reportWizardStep
+    val step = report.step
     val titleRes = when (step) {
         ReportWizardStep.Choice -> R.string.report_choice_title
         ReportWizardStep.Developer -> R.string.report_developer_title
@@ -710,20 +748,20 @@ private fun RunLogPickerDialog(
         ReportWizardStep.Generate -> R.string.report_step_generate_summary
         ReportWizardStep.Import -> R.string.report_step_import_summary
         ReportWizardStep.Export ->
-            if (state.reportExportDone) {
+            if (report.exportDone) {
                 R.string.report_step_export_done_summary
             } else {
                 R.string.report_step_export_summary
             }
     }
     OverlayDialog(
-        show = state.runLogPickerVisible,
+        show = report.pickerVisible,
         title = stringResource(titleRes),
         summary = stringResource(summaryRes),
         onDismissRequest = actions::onRunLogPickerDismiss,
         content = {
             Column(modifier = Modifier.fillMaxWidth()) {
-                val plan = state.reportFlowSteps
+                val plan = report.steps
                 val index = plan.indexOf(step)
                 if (plan.size > 1 && index >= 0) {
                     Text(
@@ -741,14 +779,14 @@ private fun RunLogPickerDialog(
                     )
                 }
                 when (step) {
-                    ReportWizardStep.Choice -> ReportChoiceStep(state, actions)
+                    ReportWizardStep.Choice -> ReportChoiceStep(report, actions)
                     ReportWizardStep.Developer -> ReportDeveloperStep(actions)
-                    ReportWizardStep.Generate -> ReportGenerateStep(state, actions)
-                    ReportWizardStep.Import -> ReportImportStep(state, actions)
-                    ReportWizardStep.Export -> ReportExportStep(state, actions)
+                    ReportWizardStep.Generate -> ReportGenerateStep(report, actions)
+                    ReportWizardStep.Import -> ReportImportStep(report, actions)
+                    ReportWizardStep.Export -> ReportExportStep(report, actions)
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-                ReportWizardNav(step, state, actions)
+                ReportWizardNav(step, report, actions)
             }
         },
     )
@@ -756,8 +794,8 @@ private fun RunLogPickerDialog(
 
 /** The first screen when no kernel log is in hand: attach a system report or not. */
 @Composable
-private fun ReportChoiceStep(state: GhostlockUiState, actions: GhostlockActions) {
-    CrashEvidenceCard(state)
+private fun ReportChoiceStep(report: ReportState, actions: ReportActions) {
+    CrashEvidenceCard(report)
     TextButton(
         modifier = Modifier.fillMaxWidth(),
         text = stringResource(R.string.report_append),
@@ -778,7 +816,7 @@ private fun ReportChoiceStep(state: GhostlockUiState, actions: GhostlockActions)
 
 /** Developer options is off; About phone is the way in. */
 @Composable
-private fun ReportDeveloperStep(actions: GhostlockActions) {
+private fun ReportDeveloperStep(actions: ReportActions) {
     Text(
         text = stringResource(R.string.report_developer_body),
         style = MiuixTheme.textStyles.body2,
@@ -799,7 +837,7 @@ private fun ReportDeveloperStep(actions: GhostlockActions) {
 
 /** Developer options is on: the system generates the report from its own UI. */
 @Composable
-private fun ReportGenerateStep(state: GhostlockUiState, actions: GhostlockActions) {
+private fun ReportGenerateStep(report: ReportState, actions: ReportActions) {
     /* One primary card, then the manual routes as rows: the shell generator is
      * the fast path (no computer, auto-import), and the two fallbacks carry
      * their own how-to instead of three stacked paragraphs. The shell verdict
@@ -816,19 +854,19 @@ private fun ReportGenerateStep(state: GhostlockUiState, actions: GhostlockAction
                     .fillMaxWidth()
                     .padding(top = 10.dp),
                 text = stringResource(
-                    if (state.bugreportGenerating) {
+                    if (report.generating) {
                         R.string.report_generate_progress
                     } else {
                         R.string.report_generate_action
                     },
                 ),
-                enabled = state.crashShellAvailable && !state.bugreportGenerating,
+                enabled = report.crashShellAvailable && !report.generating,
                 colors = ButtonDefaults.textButtonColorsPrimary(),
                 onClick = actions::onReportGenerateBugreport,
             )
             Text(
                 text = stringResource(
-                    if (!state.crashShellAvailable) {
+                    if (!report.crashShellAvailable) {
                         R.string.report_generate_unavailable
                     } else {
                         R.string.report_generate_card_summary
@@ -894,16 +932,16 @@ private fun ReportGenerateStep(state: GhostlockUiState, actions: GhostlockAction
 
 /** Pick the report the user just generated. */
 @Composable
-private fun ReportImportStep(state: GhostlockUiState, actions: GhostlockActions) {
-    CrashEvidenceCard(state)
+private fun ReportImportStep(report: ReportState, actions: ReportActions) {
+    CrashEvidenceCard(report)
     TextButton(
         modifier = Modifier.fillMaxWidth(),
         text = stringResource(R.string.report_add_bugreport),
-        enabled = !state.bugreportImporting,
+        enabled = !report.importing,
         colors = ButtonDefaults.textButtonColorsPrimary(),
         onClick = actions::onAddBugreport,
     )
-    if (state.bugreportImporting) {
+    if (report.importing) {
         Text(
             text = stringResource(R.string.report_importing),
             style = MiuixTheme.textStyles.body2,
@@ -915,9 +953,9 @@ private fun ReportImportStep(state: GhostlockUiState, actions: GhostlockActions)
 
 /** The destination is chosen for the user straight away; this screen is the fallback. */
 @Composable
-private fun ReportExportStep(state: GhostlockUiState, actions: GhostlockActions) {
-    CrashEvidenceCard(state)
-    val evidence = state.crashEvidence
+private fun ReportExportStep(report: ReportState, actions: ReportActions) {
+    CrashEvidenceCard(report)
+    val evidence = report.crashEvidence
     if (evidence?.crashEvidence != true) {
         ReportWarningCard(
             stringResource(
@@ -939,11 +977,11 @@ private fun ReportExportStep(state: GhostlockUiState, actions: GhostlockActions)
         colors = ButtonDefaults.textButtonColorsPrimary(),
         onClick = actions::onExportReportBundle,
     )
-    if (state.reportExportDone) {
+    if (report.exportDone) {
         Text(
             text = stringResource(
                 R.string.report_saved,
-                state.lastReportName ?: state.lastReportUri.orEmpty(),
+                report.lastReportName ?: report.lastReportUri.orEmpty(),
             ),
             style = MiuixTheme.textStyles.body2,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -954,7 +992,7 @@ private fun ReportExportStep(state: GhostlockUiState, actions: GhostlockActions)
             onClick = actions::onReportShare,
         )
     }
-    if (state.runLogs.isNotEmpty()) {
+    if (report.runLogs.isNotEmpty()) {
         ReportTextLink(
             text = stringResource(R.string.run_log_clear),
             onClick = actions::onClearRunLogs,
@@ -966,15 +1004,15 @@ private fun ReportExportStep(state: GhostlockUiState, actions: GhostlockActions)
 @Composable
 private fun ReportWizardNav(
     step: ReportWizardStep,
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    report: ReportState,
+    actions: ReportActions,
 ) {
     /* Choice is the decision screen; Export ends the flow. The screens in
      * between go back or continue; Back reaches Choice for the export-only
      * branch. While a report is being parsed no transition is allowed: both
      * directions stay visible but disabled, and the dialog's dismiss is
      * ignored (see the ViewModel). */
-    val busy = state.bugreportImporting
+    val busy = report.importing
     val bugreportStep = when (step) {
         ReportWizardStep.Developer,
         ReportWizardStep.Generate,
@@ -1056,8 +1094,8 @@ private fun ReportWarningCard(text: String) {
 
 /** What the app already holds about the last crash, and where it came from. */
 @Composable
-private fun CrashEvidenceCard(state: GhostlockUiState) {
-    val evidence = state.crashEvidence
+private fun CrashEvidenceCard(report: ReportState) {
+    val evidence = report.crashEvidence
     var details by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -1142,10 +1180,10 @@ private fun evidenceStatus(evidence: CrashEvidenceInfo?): String = when {
  */
 @Composable
 private fun StridePickerDialog(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    overlay: OverlayState,
+    actions: OverlayActions,
 ) {
-    val picker = state.stridePicker ?: return
+    val picker = overlay.stridePicker ?: return
     val recommendation = picker.recommendation
     var detailsExpanded by remember { mutableStateOf(false) }
     OverlayDialog(
@@ -1332,13 +1370,13 @@ private fun strideReasonText(reason: StrideReason): String = when (reason) {
 
 @Composable
 private fun GhostlockOverwriteDialog(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    overlay: OverlayState,
+    actions: OverlayActions,
 ) {
     OverlayDialog(
-        show = state.overwriteDialogVisible,
+        show = overlay.overwriteVisible,
         title = stringResource(R.string.overwrite_title),
-        summary = stringResource(R.string.overwrite_message, state.overwriteMessage),
+        summary = stringResource(R.string.overwrite_message, overlay.overwriteMessage),
         onDismissRequest = actions::onOverwriteDismiss,
         content = {
             Row(modifier = Modifier.fillMaxWidth()) {

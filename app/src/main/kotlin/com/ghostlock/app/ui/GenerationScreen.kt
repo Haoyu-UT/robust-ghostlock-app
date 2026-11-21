@@ -23,6 +23,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ghostlock.app.R
+import com.ghostlock.app.ui.state.GenerationActions
+import com.ghostlock.app.ui.state.GenerationState
+import com.ghostlock.app.ui.state.SessionState
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
@@ -44,8 +47,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  */
 @Composable
 internal fun GenerationScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    generation: GenerationState,
+    actions: GenerationActions,
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
@@ -76,9 +80,9 @@ internal fun GenerationScreen(
                     bottom = padding.calculateBottomPadding() + 16.dp,
                 ),
         ) {
-            StepRow(state.generationStep)
+            StepRow(generation.step)
             Spacer(Modifier.height(16.dp))
-            when (state.generationStep) {
+            when (generation.step) {
                 GenerationStep.Idle -> SourceStep(actions)
                 GenerationStep.Parsing -> ParsingStep(state)
                 GenerationStep.Confirm -> ConfirmStep()
@@ -134,7 +138,7 @@ private fun StepRow(step: GenerationStep) {
 }
 
 @Composable
-private fun SourceStep(actions: GhostlockActions) {
+private fun SourceStep(actions: GenerationActions) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         insideMargin = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
@@ -159,7 +163,7 @@ private fun SourceStep(actions: GhostlockActions) {
 }
 
 @Composable
-private fun ParsingStep(state: GhostlockUiState) {
+private fun ParsingStep(state: SessionState) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         insideMargin = PaddingValues(16.dp),
@@ -170,7 +174,7 @@ private fun ParsingStep(state: GhostlockUiState) {
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
             )
-            state.logLines.takeLast(3).forEach { line ->
+            state.run.logLines.takeLast(3).forEach { line ->
                 Text(
                     text = line.displayText(),
                     fontSize = 12.sp,
@@ -198,7 +202,7 @@ private fun ConfirmStep() {
 }
 
 @Composable
-private fun SaveStep(actions: GhostlockActions) {
+private fun SaveStep(actions: GenerationActions) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         insideMargin = PaddingValues(16.dp),
@@ -229,7 +233,7 @@ private fun SaveStep(actions: GhostlockActions) {
 }
 
 @Composable
-private fun FailedStep(state: GhostlockUiState, actions: GhostlockActions) {
+private fun FailedStep(state: SessionState, actions: GenerationActions) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         insideMargin = PaddingValues(16.dp),
@@ -240,7 +244,7 @@ private fun FailedStep(state: GhostlockUiState, actions: GhostlockActions) {
                 fontSize = 14.sp,
                 color = secondaryText(),
             )
-            state.logLines.lastOrNull()?.let { line ->
+            state.run.logLines.lastOrNull()?.let { line ->
                 Text(
                     text = line.displayText(),
                     fontSize = 12.sp,

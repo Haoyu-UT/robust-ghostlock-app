@@ -27,6 +27,10 @@ import androidx.compose.ui.unit.sp
 import com.ghostlock.app.BuildConfig
 import com.ghostlock.app.R
 import com.ghostlock.app.ui.state.AdvancedActions
+import com.ghostlock.app.ui.state.BuiltinActions
+import com.ghostlock.app.ui.state.BuiltinState
+import com.ghostlock.app.ui.state.MeasurementsActions
+import com.ghostlock.app.ui.state.MergePreviewActions
 import com.ghostlock.app.ui.state.ParametersActions
 import com.ghostlock.app.ui.state.SessionState
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -366,8 +370,9 @@ private fun formatProfileTime(millis: Long): String =
  */
 @Composable
 internal fun BuiltinProfileScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    builtin: BuiltinState,
+    actions: BuiltinActions,
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
@@ -399,12 +404,12 @@ internal fun BuiltinProfileScreen(
             item(key = "top-space") { Spacer(Modifier.height(12.dp)) }
             item(key = "local-kernel") {
                 ProfileHintBanner(
-                    text = stringResource(R.string.local_kernel, state.kernelRelease),
+                    text = stringResource(R.string.local_kernel, state.device.kernelRelease),
                     modifier = Modifier.preferencePageItem(),
                 )
             }
-            if (state.activeBuiltinProfile == null && !state.importedProfilePresent &&
-                !state.executionHasProfile
+            if (builtin.active == null && !state.support.importedProfilePresent &&
+                !state.support.hasProfile
             ) {
                 item(key = "auto-no-match") {
                     ProfileHintBanner(
@@ -423,35 +428,35 @@ internal fun BuiltinProfileScreen(
             item(key = "auto") {
                 BuiltinProfileRow(
                     title = stringResource(R.string.load_builtin_auto),
-                    selected = !state.importedProfilePresent &&
-                            state.activeBuiltinProfile == null,
+                    selected = !state.support.importedProfilePresent &&
+                            builtin.active == null,
                     onClick = { actions.onSelectBuiltinProfile(null) },
                     modifier = Modifier.preferencePageItem(),
                 )
             }
-            if (state.builtinTemplates.isNotEmpty()) {
+            if (builtin.templates.isNotEmpty()) {
                 item(key = "templates-title") {
                     SmallTitle(text = stringResource(R.string.templates_section))
                 }
-                items(state.builtinTemplates, key = { "template:$it" }) { release ->
+                items(builtin.templates, key = { "template:$it" }) { release ->
                     BuiltinProfileRow(
                         title = release,
-                        selected = !state.importedProfilePresent &&
-                                state.activeBuiltinProfile == release,
+                        selected = !state.support.importedProfilePresent &&
+                                builtin.active == release,
                         onClick = { actions.onSelectBuiltinProfile(release) },
                         modifier = Modifier.preferencePageItem(),
                     )
                 }
             }
-            if (state.builtinProfiles.isNotEmpty()) {
+            if (builtin.releases.isNotEmpty()) {
                 item(key = "kernels-title") {
                     SmallTitle(text = stringResource(R.string.kernels_section))
                 }
-                items(state.builtinProfiles, key = { "kernel:$it" }) { release ->
+                items(builtin.releases, key = { "kernel:$it" }) { release ->
                     BuiltinProfileRow(
                         title = release,
-                        selected = !state.importedProfilePresent &&
-                                state.activeBuiltinProfile == release,
+                        selected = !state.support.importedProfilePresent &&
+                                builtin.active == release,
                         onClick = { actions.onSelectBuiltinProfile(release) },
                         modifier = Modifier.preferencePageItem(),
                     )
@@ -488,8 +493,8 @@ private fun BuiltinProfileRow(
  */
 @Composable
 internal fun MeasurementsScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    actions: MeasurementsActions,
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
@@ -498,7 +503,7 @@ internal fun MeasurementsScreen(
                 title = stringResource(R.string.measurements_title),
                 scrollBehavior = scrollBehavior,
                 navigationIcon = {
-                    IconButton(onClick = actions::onCloseMeasurements) {
+                    IconButton(onClick = actions::close) {
                         Icon(
                             imageVector = MiuixIcons.Back,
                             contentDescription = stringResource(R.string.action_back),
@@ -523,7 +528,7 @@ internal fun MeasurementsScreen(
                     modifier = Modifier.preferencePageItem(),
                 )
             }
-            if (state.measuredKernels.isEmpty()) {
+            if (state.measurements.measuredKernels.isEmpty()) {
                 item(key = "empty") {
                     ProfileHintBanner(
                         text = stringResource(R.string.measurements_empty),
@@ -531,7 +536,7 @@ internal fun MeasurementsScreen(
                     )
                 }
             }
-            items(state.measuredKernels, key = { it.release }) { kernel ->
+            items(state.measurements.measuredKernels, key = { it.release }) { kernel ->
                 Card(modifier = Modifier.preferencePageItem()) {
                     Column(
                         modifier = Modifier
@@ -599,8 +604,8 @@ internal fun MeasurementsScreen(
  */
 @Composable
 internal fun MergePreviewScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    actions: MergePreviewActions,
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
@@ -609,7 +614,7 @@ internal fun MergePreviewScreen(
                 title = stringResource(R.string.merge_preview_title),
                 scrollBehavior = scrollBehavior,
                 navigationIcon = {
-                    IconButton(onClick = actions::onCloseMergePreview) {
+                    IconButton(onClick = actions::close) {
                         Icon(
                             imageVector = MiuixIcons.Back,
                             contentDescription = stringResource(R.string.action_back),
@@ -634,7 +639,7 @@ internal fun MergePreviewScreen(
                     modifier = Modifier.preferencePageItem(),
                 )
             }
-            items(state.mergeRows, key = { it.path }) { row ->
+            items(state.measurements.mergeRows, key = { it.path }) { row ->
                 Card(modifier = Modifier.preferencePageItem()) {
                     Column(
                         modifier = Modifier
@@ -677,7 +682,7 @@ internal fun MergePreviewScreen(
             item(key = "export") {
                 TextButton(
                     text = stringResource(R.string.merge_export),
-                    onClick = actions::onExportMergedProfile,
+                    onClick = actions::exportMerged,
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                     modifier = Modifier
                         .preferencePageItem()

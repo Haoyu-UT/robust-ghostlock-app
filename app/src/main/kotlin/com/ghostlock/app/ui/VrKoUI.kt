@@ -13,6 +13,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ghostlock.app.R
 import com.ghostlock.app.domain.model.VrKoMode
+import com.ghostlock.app.ui.state.SessionState
+import com.ghostlock.app.ui.state.VrKoActions
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
@@ -82,8 +84,8 @@ private fun vrKoSelinuxBlockSummary(release: String, mode: VrKoMode): String {
  */
 @Composable
 internal fun VrKoScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    actions: VrKoActions,
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
@@ -92,7 +94,7 @@ internal fun VrKoScreen(
                 title = stringResource(R.string.vr_ko_entry_label),
                 scrollBehavior = scrollBehavior,
                 navigationIcon = {
-                    IconButton(onClick = actions::onCloseVrKo) {
+                    IconButton(onClick = actions::close) {
                         Icon(
                             imageVector = MiuixIcons.Back,
                             contentDescription = stringResource(R.string.action_back),
@@ -118,24 +120,27 @@ internal fun VrKoScreen(
                         OverlaySpinnerPreference(
                             title = stringResource(R.string.vr_ko_tag_clear_label),
                             items = vrKoModeItems(),
-                            selectedIndex = state.vrKoTagClear.ordinal,
-                            summary = vrKoTagClearSummary(state.kernelRelease, state.vrKoTagClear),
+                            selectedIndex = state.runSettings.vrKoTagClear.ordinal,
+                            summary = vrKoTagClearSummary(
+                                state.device.kernelRelease,
+                                state.runSettings.vrKoTagClear,
+                            ),
                             showValue = true,
                             onSelectedIndexChange = { index ->
-                                actions.onVrKoTagClearChanged(VrKoMode.entries[index])
+                                actions.tagClearChanged(VrKoMode.entries[index])
                             },
                         )
                         OverlaySpinnerPreference(
                             title = stringResource(R.string.vrko_selinux_block_label),
                             items = vrKoModeItems(),
-                            selectedIndex = state.vrKoSelinuxBlock.ordinal,
+                            selectedIndex = state.runSettings.vrKoSelinuxBlock.ordinal,
                             summary = vrKoSelinuxBlockSummary(
-                                state.kernelRelease,
-                                state.vrKoSelinuxBlock,
+                                state.device.kernelRelease,
+                                state.runSettings.vrKoSelinuxBlock,
                             ),
                             showValue = true,
                             onSelectedIndexChange = { index ->
-                                actions.onVrKoSelinuxBlockChanged(VrKoMode.entries[index])
+                                actions.selinuxBlockChanged(VrKoMode.entries[index])
                             },
                         )
                     }

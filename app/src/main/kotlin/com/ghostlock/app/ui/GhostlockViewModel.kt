@@ -57,10 +57,21 @@ import com.ghostlock.app.domain.usecase.SelectCpuPairUseCase
 import com.ghostlock.app.ui.nav.NavController
 import com.ghostlock.app.ui.nav.Screen
 import com.ghostlock.app.ui.state.AdvancedActions
+import com.ghostlock.app.ui.state.BuiltinActions
+import com.ghostlock.app.ui.state.BuiltinState
+import com.ghostlock.app.ui.state.GenerationActions
+import com.ghostlock.app.ui.state.GenerationState
 import com.ghostlock.app.ui.state.HomeActions
+import com.ghostlock.app.ui.state.MeasurementsActions
+import com.ghostlock.app.ui.state.MergePreviewActions
+import com.ghostlock.app.ui.state.OverlayActions
+import com.ghostlock.app.ui.state.OverlayState
 import com.ghostlock.app.ui.state.ParametersActions
+import com.ghostlock.app.ui.state.ReportActions
+import com.ghostlock.app.ui.state.ReportState
 import com.ghostlock.app.ui.state.RunSettingsActions
 import com.ghostlock.app.ui.state.SessionState
+import com.ghostlock.app.ui.state.VrKoActions
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -169,6 +180,41 @@ private fun GhostlockUiState.toSessionState(): SessionState = SessionState(
     ),
 )
 
+/** The report flow's slice, field for field. */
+private fun GhostlockUiState.toReportState(): ReportState = ReportState(
+    step = reportWizardStep,
+    steps = reportFlowSteps,
+    lastReportName = lastReportName,
+    lastReportUri = lastReportUri,
+    exportDone = reportExportDone,
+    runLogs = runLogs,
+    pickerVisible = runLogPickerVisible,
+    importing = bugreportImporting,
+    generating = bugreportGenerating,
+    crashEvidence = crashEvidence,
+    crashShellAvailable = crashShellAvailable,
+)
+
+/** The app-wide overlays' slice, field for field. */
+private fun GhostlockUiState.toOverlayState(): OverlayState = OverlayState(
+    dialog = dialog,
+    stridePicker = stridePicker,
+    overwriteVisible = overwriteDialogVisible,
+    overwriteMessage = overwriteMessage,
+)
+
+/** The generation flow's slice, field for field. */
+private fun GhostlockUiState.toGenerationState(): GenerationState = GenerationState(
+    step = generationStep,
+)
+
+/** The builtin-profile picker's slice, field for field. */
+private fun GhostlockUiState.toBuiltinState(): BuiltinState = BuiltinState(
+    releases = builtinProfiles,
+    templates = builtinTemplates,
+    active = activeBuiltinProfile,
+)
+
 enum class DocumentRequest {
     SelectProfile, BootImage, XblImage, PayloadImage, UefiImage, VendorBootImage, DtboImage,
 }
@@ -244,6 +290,24 @@ class GhostlockViewModel(
         .map { it.toSessionState() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toSessionState())
 
+    /* The remaining screens' slices, derived exactly like [session] from the
+     * one mutable state, so no consumer can observe a second truth. */
+    val report: StateFlow<ReportState> = mutableState
+        .map { it.toReportState() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toReportState())
+
+    val overlay: StateFlow<OverlayState> = mutableState
+        .map { it.toOverlayState() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toOverlayState())
+
+    val generation: StateFlow<GenerationState> = mutableState
+        .map { it.toGenerationState() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toGenerationState())
+
+    val builtin: StateFlow<BuiltinState> = mutableState
+        .map { it.toBuiltinState() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toBuiltinState())
+
     /* The four narrow action surfaces, one stable adapter each (prefer
      * adapters over renaming the view model's methods). */
     private val homeActionsImpl = object : HomeActions {
@@ -284,10 +348,96 @@ class GhostlockViewModel(
         override fun clearExternalProfile() = onClearExternalProfile()
     }
 
+    /* The verbs whose names match a view model method are qualified with the
+     * view model receiver: unqualified they would resolve to the adapter's own
+     * override and recurse. */
+    private val reportActionsImpl = object : ReportActions {
+        override fun onOpenExportRunLog() = onExportRunLog()
+        override fun onAddBugreport() = this@GhostlockViewModel.onAddBugreport()
+        override fun onReportGenerateBugreport() = this@GhostlockViewModel.onReportGenerateBugreport()
+        override fun onCopyBugreportCommand() = this@GhostlockViewModel.onCopyBugreportCommand()
+        override fun onOpenDeveloperOptions() = this@GhostlockViewModel.onOpenDeveloperOptions()
+        override fun onOpenAboutPhone() = this@GhostlockViewModel.onOpenAboutPhone()
+        override fun onReportNext() = this@GhostlockViewModel.onReportNext()
+        override fun onReportBack() = this@GhostlockViewModel.onReportBack()
+        override fun onReportGoToImport() = this@GhostlockViewModel.onReportGoToImport()
+        override fun onReportAppend() = this@GhostlockViewModel.onReportAppend()
+        override fun onReportExportOnly() = this@GhostlockViewModel.onReportExportOnly()
+        override fun onReportRecheckDeveloper() = this@GhostlockViewModel.onReportRecheckDeveloper()
+        override fun onReportShare() = this@GhostlockViewModel.onReportShare()
+        override fun onRunLogPickerDismiss() = this@GhostlockViewModel.onRunLogPickerDismiss()
+        override fun onClearRunLogs() = this@GhostlockViewModel.onClearRunLogs()
+        override fun onExportReportBundle() = this@GhostlockViewModel.onExportReportBundle()
+        override fun onBugreportPicked(uri: String?) = this@GhostlockViewModel.onBugreportPicked(uri)
+        override fun onCloseExecutionSheet() = this@GhostlockViewModel.onCloseExecutionSheet()
+        override fun onCopyLogs() = copyLogs()
+        override fun onOpenManager() = this@GhostlockViewModel.onOpenManager()
+    }
+
+    private val overlayActionsImpl = object : OverlayActions {
+        override fun onDialogItemSelected(index: Int) =
+            this@GhostlockViewModel.onDialogItemSelected(index)
+
+        override fun onDialogInputChange(value: String) =
+            this@GhostlockViewModel.onDialogInputChange(value)
+
+        override fun onDialogConfirm(value: String) =
+            this@GhostlockViewModel.onDialogConfirm(value)
+
+        override fun onDialogDismiss() = this@GhostlockViewModel.onDialogDismiss()
+        override fun onDialogExportLog() = this@GhostlockViewModel.onDialogExportLog()
+        override fun onStrideOptionSelected(value: Int) =
+            this@GhostlockViewModel.onStrideOptionSelected(value)
+
+        override fun onStrideUse() = this@GhostlockViewModel.onStrideUse()
+        override fun onStrideSkip() = this@GhostlockViewModel.onStrideSkip()
+        override fun onStridePickerDismiss() = this@GhostlockViewModel.onStridePickerDismiss()
+        override fun onOverwriteConfirm() = this@GhostlockViewModel.onOverwriteConfirm()
+        override fun onOverwriteDismiss() = this@GhostlockViewModel.onOverwriteDismiss()
+    }
+
+    private val generationActionsImpl = object : GenerationActions {
+        override fun onOpenGeneration() = this@GhostlockViewModel.onOpenGeneration()
+        override fun onCloseGeneration() = this@GhostlockViewModel.onCloseGeneration()
+        override fun onSaveGeneratedProfile() = this@GhostlockViewModel.onSaveGeneratedProfile()
+        override fun onRestartGeneration() = this@GhostlockViewModel.onRestartGeneration()
+        override fun onParseOta() = promptParseUrl()
+        override fun onParseImage() = parseOffsets()
+    }
+
+    private val builtinActionsImpl = object : BuiltinActions {
+        override fun onOpenBuiltinProfiles() = this@GhostlockViewModel.onOpenBuiltinProfiles()
+        override fun onCloseBuiltinProfiles() = this@GhostlockViewModel.onCloseBuiltinProfiles()
+        override fun onSelectBuiltinProfile(release: String?) =
+            this@GhostlockViewModel.onSelectBuiltinProfile(release)
+    }
+
+    private val vrKoActionsImpl = object : VrKoActions {
+        override fun tagClearChanged(mode: VrKoMode) = setVrKoTagClear(mode)
+        override fun selinuxBlockChanged(mode: VrKoMode) = setVrKoSelinuxBlock(mode)
+        override fun close() = onCloseVrKo()
+    }
+
+    private val measurementsActionsImpl = object : MeasurementsActions {
+        override fun close() = onCloseMeasurements()
+    }
+
+    private val mergePreviewActionsImpl = object : MergePreviewActions {
+        override fun close() = onCloseMergePreview()
+        override fun exportMerged() = onExportMergedProfile()
+    }
+
     fun homeActions(): HomeActions = homeActionsImpl
     fun runSettingsActions(): RunSettingsActions = runSettingsActionsImpl
     fun advancedActions(): AdvancedActions = advancedActionsImpl
     fun parametersActions(): ParametersActions = parametersActionsImpl
+    fun reportActions(): ReportActions = reportActionsImpl
+    fun overlayActions(): OverlayActions = overlayActionsImpl
+    fun generationActions(): GenerationActions = generationActionsImpl
+    fun builtinActions(): BuiltinActions = builtinActionsImpl
+    fun vrKoActions(): VrKoActions = vrKoActionsImpl
+    fun measurementsActions(): MeasurementsActions = measurementsActionsImpl
+    fun mergePreviewActions(): MergePreviewActions = mergePreviewActionsImpl
 
     /** The one navigation truth: screens are pushed and popped, never flagged. */
     internal val nav = NavController()
