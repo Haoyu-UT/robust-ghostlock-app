@@ -348,10 +348,14 @@ code is touched. The full chain run at N4 is a functional regression check, not 
 ## 9. 进度 — progress
 
 - [ ] **N0** — characterization: nav/state mapping tests for what is pure today, the screenshot
-  matrix, the Robolectric/Miuix experiment, `tools/ui-matrix.sh`.
-- [ ] **V0** — the static prototype (`ui-visual-design.md` §7.1), the look gate before any product
-  code moves.
-- [ ] **N1** — typed navigation.
+  matrix, the Robolectric/Miuix experiment, `tools/ui-matrix.sh`. *(The pre-refactor screenshots
+  exist; the rest is open.)*
+- [x] **V0** — the static prototype (`ui-visual-design.md` §7.1), the look gate before any product
+  code moves. *(Build 789, debug, on the diting; the button hierarchy was corrected after review.)*
+- [x] **N1** — typed navigation. *(2026-11-21: `Screen` + `NavController`; the 12 screen flags,
+  `navigationPath`, `syncNavigationPath` and the stack reconciliation are gone. 5 unit tests;
+  device sweep through Advanced → Parameters → LoadConfig → Builtin, VrKo, Measurements, About,
+  the editor chain and the top-bar/system back.)*
 - [ ] **N2** — typed dialogs + `ParseState`.
 - [ ] **N3** — `SupportStatus` (the support plan, re-homed) + editor state holder.
 - [ ] **N4** — delete the three editor screens (§3.7), then per-screen states/actions and the

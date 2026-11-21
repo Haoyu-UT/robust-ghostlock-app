@@ -68,6 +68,8 @@ import com.ghostlock.app.domain.model.RunLogEntry
 import com.ghostlock.app.domain.model.ShizukuStatus
 import com.ghostlock.app.domain.model.UserProfileFile
 import com.ghostlock.app.domain.model.VrKoMode
+import com.ghostlock.app.ui.nav.NavController
+import com.ghostlock.app.ui.nav.Screen
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -86,11 +88,8 @@ import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Copy
-import top.yukonga.miuix.kmp.nav.core.NavBackStack
 import top.yukonga.miuix.kmp.nav.core.NavDisplay
 import top.yukonga.miuix.kmp.nav.core.NavDisplayEffects
-import top.yukonga.miuix.kmp.nav.core.NavKey
-import top.yukonga.miuix.kmp.nav.core.navBackStackOf
 import top.yukonga.miuix.kmp.nav.core.rememberNavSystemCornerRadius
 import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
@@ -193,17 +192,8 @@ data class GhostlockUiState(
     val executionHasProfile: Boolean = false,
     val executionFields: List<ExecutionFieldValue> = emptyList(),
     val executionEditing: Map<String, String> = emptyMap(),
-    val advancedScreenVisible: Boolean = false,
-    /** The vr.ko anti-root countermeasure options screen. */
-    val vrKoVisible: Boolean = false,
-    /** Read-only measurements screen state. */
-    val measurementsVisible: Boolean = false,
     val measuredKernels: List<MeasuredKernelInfo> = emptyList(),
     val debugKernelLogEnabled: Boolean = true,
-    val aboutVisible: Boolean = false,
-    val parametersVisible: Boolean = false,
-    val profileOverrideVisible: Boolean = false,
-    val advancedOverrideVisible: Boolean = false,
     /** Stored document edited by the open session; null for the builtin. */
     val editTargetName: String? = null,
     val profileOverrideRelease: String = "",
@@ -217,12 +207,10 @@ data class GhostlockUiState(
     val profileFallback: String? = null,
     /** Manually selected builtin source; null means automatic matching. */
     val activeBuiltinProfile: String? = null,
-    val builtinScreenVisible: Boolean = false,
     /** Unfilled reference templates, listed separately on the builtin picker. */
     val builtinTemplates: List<String> = emptyList(),
     /** Builtin releases sorted by similarity to the device kernel. */
     val builtinProfiles: List<String> = emptyList(),
-    val loadConfigVisible: Boolean = false,
     /** The app-private imported copy exists (the external selection). */
     val importedProfilePresent: Boolean = false,
     /** Which layers the last resolution applied, and which it deliberately did not. */
@@ -231,12 +219,9 @@ data class GhostlockUiState(
     val stridePicker: StridePickerUiState? = null,
     /** Measured facts that would change the active profile. */
     val mergeRows: List<MeasurementMergeRow> = emptyList(),
-    val mergePreviewVisible: Boolean = false,
     /** Diff of the editor session against the bundle. */
-    val profileDiffVisible: Boolean = false,
     val profileDiffRows: List<ProfileDiffRow> = emptyList(),
     /** One-time legacy app-data cleanup. */
-    val legacyVisible: Boolean = false,
     val legacyPresent: Boolean = false,
     val legacyProfiles: List<UserProfileFile> = emptyList(),
     val legacyOverridePresent: Boolean = false,
@@ -363,102 +348,35 @@ interface GhostlockActions {
     fun onProfileOverrideChanged(path: String, value: String)
 }
 
-internal sealed interface GhostlockScreen : NavKey {
-    data object Main : GhostlockScreen
-    data object VrKo : GhostlockScreen
-    data object Advanced : GhostlockScreen
-    data object About : GhostlockScreen
-    data object Measurements : GhostlockScreen
-    data object Parameters : GhostlockScreen
-    data object LoadConfig : GhostlockScreen
-    data object Builtin : GhostlockScreen
-    data object MergePreview : GhostlockScreen
-    data object ProfileDiff : GhostlockScreen
-    data object Legacy : GhostlockScreen
-    data object ProfileOverride : GhostlockScreen
-    data object AdvancedOverride : GhostlockScreen
-}
 
-internal fun navigationPath(state: GhostlockUiState): List<GhostlockScreen> {
-    val path = mutableListOf<GhostlockScreen>(GhostlockScreen.Main)
-    if (state.legacyVisible) {
-        path += GhostlockScreen.Legacy
-        return path
-    }
-    if (state.mergePreviewVisible) {
-        path += GhostlockScreen.MergePreview
-        return path
-    }
-    if (state.vrKoVisible) {
-        path += GhostlockScreen.VrKo
-        return path
-    }
-    if (!state.advancedScreenVisible) return path
-    path += GhostlockScreen.Advanced
-    if (state.aboutVisible) {
-        path += GhostlockScreen.About
-        return path
-    }
-    if (state.measurementsVisible) {
-        path += GhostlockScreen.Measurements
-        return path
-    }
-    if (!state.parametersVisible) return path
-    path += GhostlockScreen.Parameters
-    if (state.loadConfigVisible) {
-        path += GhostlockScreen.LoadConfig
-        if (state.builtinScreenVisible) path += GhostlockScreen.Builtin
-    }
-    if (state.profileOverrideVisible) {
-        path += GhostlockScreen.ProfileOverride
-        if (state.advancedOverrideVisible) path += GhostlockScreen.AdvancedOverride
-        if (state.profileDiffVisible) path += GhostlockScreen.ProfileDiff
-    }
-    return path
-}
-
-internal fun syncNavigationPath(backStack: NavBackStack, desired: List<GhostlockScreen>) {
-    var common = 0
-    while (common < backStack.size && common < desired.size &&
-        backStack[common] == desired[common]
-    ) {
-        common++
-    }
-    while (backStack.size > common) backStack.removeAt(backStack.lastIndex)
-    backStack.addAll(desired.drop(common))
-}
-
-private fun closeScreen(screen: GhostlockScreen, actions: GhostlockActions) {
+private fun closeScreen(screen: Screen, actions: GhostlockActions) {
     when (screen) {
-        GhostlockScreen.Main -> Unit
-        GhostlockScreen.VrKo -> actions.onCloseVrKo()
-        GhostlockScreen.Advanced -> actions.onCloseAdvanced()
-        GhostlockScreen.About -> actions.onCloseAbout()
-        GhostlockScreen.Measurements -> actions.onCloseMeasurements()
-        GhostlockScreen.Parameters -> actions.onCloseParameters()
-        GhostlockScreen.LoadConfig -> actions.onCloseLoadConfig()
-        GhostlockScreen.Builtin -> actions.onCloseBuiltinProfiles()
-        GhostlockScreen.MergePreview -> actions.onCloseMergePreview()
-        GhostlockScreen.ProfileDiff -> actions.onCloseProfileDiff()
-        GhostlockScreen.Legacy -> actions.onCloseLegacyCleanup()
-        GhostlockScreen.ProfileOverride -> actions.onCloseProfileOverrides()
-        GhostlockScreen.AdvancedOverride -> actions.onCloseAdvancedOverrides()
+        Screen.Main -> Unit
+        Screen.VrKo -> actions.onCloseVrKo()
+        Screen.Advanced -> actions.onCloseAdvanced()
+        Screen.About -> actions.onCloseAbout()
+        Screen.Measurements -> actions.onCloseMeasurements()
+        Screen.Parameters -> actions.onCloseParameters()
+        Screen.LoadConfig -> actions.onCloseLoadConfig()
+        Screen.Builtin -> actions.onCloseBuiltinProfiles()
+        Screen.MergePreview -> actions.onCloseMergePreview()
+        Screen.ProfileDiff -> actions.onCloseProfileDiff()
+        Screen.Legacy -> actions.onCloseLegacyCleanup()
+        Screen.ProfileOverride -> actions.onCloseProfileOverrides()
+        Screen.AdvancedOverride -> actions.onCloseAdvancedOverrides()
     }
 }
 
 @Composable
 internal fun GhostlockApp(
     state: GhostlockUiState,
+    nav: NavController,
     actions: GhostlockActions,
 ) {
     MiuixTheme(
         colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
     ) {
-        val desiredPath = navigationPath(state)
-        val backStack = remember {
-            navBackStackOf(GhostlockScreen.Main).apply { addAll(desiredPath.drop(1)) }
-        }
-        LaunchedEffect(desiredPath) { syncNavigationPath(backStack, desiredPath) }
+        val backStack = nav.backStack
         val swipeBack = if (LocalLayoutDirection.current == LayoutDirection.Rtl) {
             NavSwipeDirection.RightToLeft
         } else {
@@ -479,52 +397,51 @@ internal fun GhostlockApp(
                             state.overwriteDialogVisible -> actions.onOverwriteDismiss()
                             state.dialogVisible -> actions.onDialogDismiss()
                             else -> {
-                                val screen = backStack.lastOrNull() as? GhostlockScreen
-                                if (screen != null && screen != GhostlockScreen.Main) {
-                                    closeScreen(screen, actions)
-                                    backStack.removeAt(backStack.lastIndex)
+                                if (nav.canPop) {
+                                    val screen = nav.current
+                                    if (screen != Screen.Main) closeScreen(screen, actions)
                                 }
                             }
                         }
                     },
                 ) {
-                    entry<GhostlockScreen.Main>(swipeDismiss = NavSwipeDirection.None) {
+                    entry<Screen.Main>(swipeDismiss = NavSwipeDirection.None) {
                         MainScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.VrKo>(swipeDismiss = swipeBack) {
+                    entry<Screen.VrKo>(swipeDismiss = swipeBack) {
                         VrKoScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.Advanced>(swipeDismiss = swipeBack) {
+                    entry<Screen.Advanced>(swipeDismiss = swipeBack) {
                         AdvancedScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.About>(swipeDismiss = swipeBack) {
+                    entry<Screen.About>(swipeDismiss = swipeBack) {
                         AboutScreen(onBack = actions::onCloseAbout)
                     }
-                    entry<GhostlockScreen.Measurements>(swipeDismiss = swipeBack) {
+                    entry<Screen.Measurements>(swipeDismiss = swipeBack) {
                         MeasurementsScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.Parameters>(swipeDismiss = swipeBack) {
+                    entry<Screen.Parameters>(swipeDismiss = swipeBack) {
                         ParameterScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.LoadConfig>(swipeDismiss = swipeBack) {
+                    entry<Screen.LoadConfig>(swipeDismiss = swipeBack) {
                         LoadConfigScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.Builtin>(swipeDismiss = swipeBack) {
+                    entry<Screen.Builtin>(swipeDismiss = swipeBack) {
                         BuiltinProfileScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.MergePreview>(swipeDismiss = swipeBack) {
+                    entry<Screen.MergePreview>(swipeDismiss = swipeBack) {
                         MergePreviewScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.ProfileDiff>(swipeDismiss = swipeBack) {
+                    entry<Screen.ProfileDiff>(swipeDismiss = swipeBack) {
                         ProfileDiffScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.Legacy>(swipeDismiss = swipeBack) {
+                    entry<Screen.Legacy>(swipeDismiss = swipeBack) {
                         LegacyCleanupScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.ProfileOverride>(swipeDismiss = swipeBack) {
+                    entry<Screen.ProfileOverride>(swipeDismiss = swipeBack) {
                         ProfileOverrideScreen(state = state, actions = actions)
                     }
-                    entry<GhostlockScreen.AdvancedOverride>(swipeDismiss = swipeBack) {
+                    entry<Screen.AdvancedOverride>(swipeDismiss = swipeBack) {
                         AdvancedOverrideScreen(state = state, actions = actions)
                     }
                 }

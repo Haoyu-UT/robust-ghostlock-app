@@ -56,6 +56,8 @@ import com.ghostlock.app.domain.usecase.ParseSourceUseCase
 import com.ghostlock.app.domain.usecase.ReadDocumentUseCase
 import com.ghostlock.app.domain.usecase.RunExploitUseCase
 import com.ghostlock.app.domain.usecase.SelectCpuPairUseCase
+import com.ghostlock.app.ui.nav.NavController
+import com.ghostlock.app.ui.nav.Screen
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -158,6 +160,9 @@ class GhostlockViewModel(
     private val profileController get() = repository.profileController()
 
     val state = mutableState.asStateFlow()
+
+    /** The one navigation truth: screens are pushed and popped, never flagged. */
+    internal val nav = NavController()
     val effects = effectChannel.receiveAsFlow()
 
     private var kernelSnapshot: KernelSnapshot? = null
@@ -423,19 +428,7 @@ class GhostlockViewModel(
 
     /* advanced-ui: the merged screen loads its editors and debug prefs. */
     fun onOpenAdvanced() {
-        mutableState.update {
-            it.copy(
-                advancedScreenVisible = true,
-                vrKoVisible = false,
-                aboutVisible = false,
-                measurementsVisible = false,
-                parametersVisible = false,
-                loadConfigVisible = false,
-                builtinScreenVisible = false,
-                profileOverrideVisible = false,
-                advancedOverrideVisible = false,
-            )
-        }
+        nav.push(Screen.Advanced)
         loadExecutionProfile()
         viewModelScope.launch(Dispatchers.IO) {
             val settings = repository.debugSettings()
@@ -448,45 +441,21 @@ class GhostlockViewModel(
     }
 
     fun onCloseAdvanced() {
-        mutableState.update {
-            it.copy(
-                advancedScreenVisible = false,
-                vrKoVisible = false,
-                aboutVisible = false,
-                measurementsVisible = false,
-                parametersVisible = false,
-                loadConfigVisible = false,
-                builtinScreenVisible = false,
-                profileOverrideVisible = false,
-                advancedOverrideVisible = false,
-            )
-        }
+        nav.pop()
     }
 
     /** Opens the vr.ko anti-root countermeasure options screen from the home entry. */
     fun onOpenVrKo() {
-        mutableState.update {
-            it.copy(
-                vrKoVisible = true,
-                advancedScreenVisible = false,
-                aboutVisible = false,
-                measurementsVisible = false,
-                parametersVisible = false,
-                loadConfigVisible = false,
-                builtinScreenVisible = false,
-                profileOverrideVisible = false,
-                advancedOverrideVisible = false,
-            )
-        }
+        nav.push(Screen.VrKo)
     }
 
     fun onCloseVrKo() {
-        mutableState.update { it.copy(vrKoVisible = false) }
+        nav.pop()
     }
 
     /** Opens the read-only measured-facts screen and refreshes its store. */
     fun onOpenMeasurements() {
-        mutableState.update { it.copy(measurementsVisible = true) }
+        nav.push(Screen.Measurements)
         viewModelScope.launch(Dispatchers.IO) {
             val kernels = runCatching { repository.measurements() }.getOrDefault(emptyList())
             mutableState.update { it.copy(measuredKernels = kernels) }
@@ -494,50 +463,26 @@ class GhostlockViewModel(
     }
 
     fun onCloseMeasurements() {
-        mutableState.update { it.copy(measurementsVisible = false) }
+        nav.pop()
     }
 
     fun onOpenParameters() {
-        mutableState.update {
-            it.copy(
-                advancedScreenVisible = true,
-                parametersVisible = true,
-                loadConfigVisible = false,
-                builtinScreenVisible = false,
-                profileOverrideVisible = false,
-                advancedOverrideVisible = false,
-            )
-        }
+        nav.push(Screen.Parameters)
         loadExecutionProfile()
     }
 
     fun onCloseParameters() {
-        mutableState.update {
-            it.copy(
-                parametersVisible = false,
-                loadConfigVisible = false,
-                builtinScreenVisible = false,
-                profileOverrideVisible = false,
-                advancedOverrideVisible = false,
-            )
-        }
+        nav.pop()
     }
 
     /** Opens the configuration-loading screen (source selection). */
     fun onOpenLoadConfig() {
-        mutableState.update {
-            it.copy(
-                loadConfigVisible = true,
-                builtinScreenVisible = false,
-                profileOverrideVisible = false,
-                advancedOverrideVisible = false,
-            )
-        }
+        nav.push(Screen.LoadConfig)
         viewModelScope.launch(Dispatchers.IO) { refreshLegacyState() }
     }
 
     fun onCloseLoadConfig() {
-        mutableState.update { it.copy(loadConfigVisible = false, builtinScreenVisible = false) }
+        nav.pop()
     }
 
     /** Picks an SD-card profile document; selecting it wins over the bundle. */
@@ -586,12 +531,12 @@ class GhostlockViewModel(
                 send(GhostlockEffect.Toast(R.string.merge_nothing))
                 return@launch
             }
-            mutableState.update { it.copy(mergePreviewVisible = true) }
+            nav.push(Screen.MergePreview)
         }
     }
 
     fun onCloseMergePreview() {
-        mutableState.update { it.copy(mergePreviewVisible = false) }
+        nav.pop()
     }
 
     fun onExportMergedProfile() {
@@ -615,12 +560,13 @@ class GhostlockViewModel(
     fun onOpenProfileDiff() {
         viewModelScope.launch(Dispatchers.IO) {
             val rows = runCatching { repository.editSessionDiff() }.getOrDefault(emptyList())
-            mutableState.update { it.copy(profileDiffRows = rows, profileDiffVisible = true) }
+            mutableState.update { it.copy(profileDiffRows = rows) }
+            nav.push(Screen.ProfileDiff)
         }
     }
 
     fun onCloseProfileDiff() {
-        mutableState.update { it.copy(profileDiffVisible = false) }
+        nav.pop()
     }
 
     fun onRebaseToBundle() {
@@ -648,12 +594,13 @@ class GhostlockViewModel(
     /* ---- legacy app-data cleanup ---- */
 
     fun onOpenLegacyCleanup() {
-        mutableState.update { it.copy(legacyVisible = true) }
+        nav.push(Screen.Legacy)
         viewModelScope.launch(Dispatchers.IO) { refreshLegacyState() }
     }
 
     fun onCloseLegacyCleanup() {
-        mutableState.update { it.copy(legacyVisible = false, legacyCleanupConfirm = false) }
+        mutableState.update { it.copy(legacyCleanupConfirm = false) }
+        nav.pop()
     }
 
     fun onLegacyExport(name: String, applyOverride: Boolean) {
@@ -687,7 +634,7 @@ class GhostlockViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val ok = runCatching { repository.finishLegacyCleanup() }.getOrDefault(false)
             refreshLegacyState()
-            if (ok) mutableState.update { it.copy(legacyVisible = false) }
+            if (ok) nav.pop()
             send(
                 GhostlockEffect.Toast(
                     if (ok) R.string.legacy_cleanup_done else R.string.legacy_cleanup_failed,
@@ -703,11 +650,11 @@ class GhostlockViewModel(
     }
 
     fun onShowAbout() {
-        mutableState.update { it.copy(aboutVisible = true) }
+        nav.push(Screen.About)
     }
 
     fun onCloseAbout() {
-        mutableState.update { it.copy(aboutVisible = false) }
+        nav.pop()
     }
 
     /**
@@ -1226,14 +1173,9 @@ class GhostlockViewModel(
             applyExecutionConfig(config, preserveEditing = false)
             applyAdvancedConfig(config, preserveEditing = false)
             mutableState.update {
-                it.copy(
-                    builtinScreenVisible = false,
-                    advancedOverrideVisible = false,
-                    profileOverrideVisible = true,
-                    editTargetName = repository.editSessionTarget(),
-                    loadConfigVisible = false,
-                )
+                it.copy(editTargetName = repository.editSessionTarget())
             }
+            nav.push(Screen.ProfileOverride)
         }
     }
 
@@ -1318,7 +1260,7 @@ class GhostlockViewModel(
     /** Opens the builtin picker; overrides stay keyed to the device kernel. */
     fun onOpenBuiltinProfiles() {
         val snapshot = kernelSnapshot ?: return
-        mutableState.update { it.copy(builtinScreenVisible = true) }
+        nav.push(Screen.Builtin)
         viewModelScope.launch(Dispatchers.IO) {
             val releases = runCatching { profileController.builtinReleases() }
                 .getOrDefault(emptyList())
@@ -1346,7 +1288,7 @@ class GhostlockViewModel(
     }
 
     fun onCloseBuiltinProfiles() {
-        mutableState.update { it.copy(builtinScreenVisible = false) }
+        nav.pop()
     }
 
     fun onSelectBuiltinProfile(release: String?) {
@@ -1404,22 +1346,17 @@ class GhostlockViewModel(
 
     fun onCloseProfileOverrides() {
         repository.endEditSession()
-        mutableState.update {
-            it.copy(
-                profileOverrideVisible = false,
-                advancedOverrideVisible = false,
-                editTargetName = null,
-            )
-        }
+        mutableState.update { it.copy(editTargetName = null) }
+        nav.pop()
     }
 
     fun onOpenAdvancedOverrides() {
-        mutableState.update { it.copy(advancedOverrideVisible = true) }
+        nav.push(Screen.AdvancedOverride)
         loadEditSession()
     }
 
     fun onCloseAdvancedOverrides() {
-        mutableState.update { it.copy(advancedOverrideVisible = false) }
+        nav.pop()
     }
 
     /** Advanced edits are draft-only; saving the session commits them. */

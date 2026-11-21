@@ -299,6 +299,7 @@ private fun GhostlockRoute(
     }
     GhostlockApp(
         state = state,
+        nav = viewModel.nav,
         actions = object : GhostlockActions {
             override fun onRun() = viewModel.onRun()
             override fun onProfileInvalid() = viewModel.onProfileInvalid()
