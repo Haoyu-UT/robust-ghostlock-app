@@ -505,4 +505,18 @@
     <string name="home_run_failed">Failed</string>
     <string name="run_settings_title">Run settings</string>
     <string name="run_settings_summary">CPU pair, safe mode, Shizuku, vr.ko</string>
+    <!-- Generation flow (V3) -->
+    <string name="gen_step_source">1 Source</string>
+    <string name="gen_step_parse">2 Parse</string>
+    <string name="gen_step_confirm">3 Confirm</string>
+    <string name="gen_step_save">4 Save</string>
+    <string name="gen_parsing">Parsing…</string>
+    <string name="gen_confirm_hint">Choose the route and plan</string>
+    <string name="gen_generated">Profile generated</string>
+    <string name="gen_save_hint">Save the file first; it takes effect only after you load it.</string>
+    <string name="gen_save">Save to file</string>
+    <string name="gen_failed_hint">No profile was generated; check the input and retry.</string>
+    <string name="gen_retry">Start over</string>
+    <string name="gen_source_hint">The required images are determined after you choose.</string>
+    <string name="gen_local_summary">boot.img · ota.zip · vendor_boot · dtbo</string>
 </resources>

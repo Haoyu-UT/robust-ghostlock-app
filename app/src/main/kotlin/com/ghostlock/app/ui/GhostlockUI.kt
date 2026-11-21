@@ -126,6 +126,8 @@ data class GhostlockUiState(
     val running: Boolean = false,
     /** The last run's terminal status, shown in the sheet footer. */
     val runStatus: RunStatus = RunStatus.Idle,
+    /** Profile generation: which step the dedicated screen shows. */
+    val generationStep: GenerationStep = GenerationStep.Idle,
     val cpuPairLabels: List<String> = emptyList(),
     val cpuPairIndex: Int = 0,
     /** CPU pair from the resolved profile when it differs from the device pick. */
@@ -214,6 +216,9 @@ enum class ReportWizardStep { Choice, Developer, Generate, Import, Export }
 /** The last attack run's state; the run-status notification mirrors it. */
 enum class RunStatus { Idle, Running, Success, Failure }
 
+/** The profile-generation flow's step; the generation screen renders one at a time. */
+enum class GenerationStep { Idle, Parsing, Confirm, Save, Failed }
+
 /**
  * One line per layer that is present but deliberately not applied. Shared by
  * the start-up notice and the profile screen's banner, so the two can never
@@ -241,6 +246,10 @@ interface GhostlockActions {
     fun onOpenLastRunLog()
     fun onOpenRunSettings()
     fun onCloseRunSettings()
+    fun onOpenGeneration()
+    fun onCloseGeneration()
+    fun onSaveGeneratedProfile()
+    fun onRestartGeneration()
     fun onCloseExecutionSheet()
     fun onCopyLogs()
     fun onExportRunLog()
@@ -333,6 +342,7 @@ private fun closeScreen(screen: Screen, actions: GhostlockActions) {
         Screen.VrKo -> actions.onCloseVrKo()
         Screen.Advanced -> actions.onCloseAdvanced()
         Screen.RunSettings -> actions.onCloseRunSettings()
+        Screen.Generation -> actions.onCloseGeneration()
         Screen.About -> actions.onCloseAbout()
         Screen.Measurements -> actions.onCloseMeasurements()
         Screen.Parameters -> actions.onCloseParameters()
@@ -395,6 +405,9 @@ internal fun GhostlockApp(
                     }
                     entry<Screen.RunSettings>(swipeDismiss = swipeBack) {
                         RunSettingsScreen(state = state, actions = actions)
+                    }
+                    entry<Screen.Generation>(swipeDismiss = swipeBack) {
+                        GenerationScreen(state = state, actions = actions)
                     }
                     entry<Screen.About>(swipeDismiss = swipeBack) {
                         AboutScreen(onBack = actions::onCloseAbout)

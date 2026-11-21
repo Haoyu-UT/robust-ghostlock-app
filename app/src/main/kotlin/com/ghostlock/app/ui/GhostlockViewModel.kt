@@ -167,6 +167,8 @@ class GhostlockViewModel(
 
     private var kernelSnapshot: KernelSnapshot? = null
     private var pendingParse: ParseRequest? = null
+    /** The generated document waiting on the generation screen's save step. */
+    private var pendingGeneratedProfile: PendingGeneratedProfile? = null
     /** The platform's recommended images already offered this session. */
     private var physVendorBootOffered = false
     private var physXblOffered = false
@@ -1717,6 +1719,36 @@ class GhostlockViewModel(
         nav.pop()
     }
 
+    fun onOpenGeneration() {
+        resetParseSession()
+        pendingGeneratedProfile = null
+        mutableState.update { it.copy(generationStep = GenerationStep.Idle) }
+        nav.push(Screen.Generation)
+    }
+
+    fun onCloseGeneration() {
+        nav.pop()
+    }
+
+    /** Step 4: the generated document is written through the system picker. */
+    fun onSaveGeneratedProfile() {
+        val pending = pendingGeneratedProfile ?: return
+        pendingGeneratedProfile = null
+        requestProfileWrite(
+            PendingProfileWrite(
+                text = pending.text,
+                suggestedName = pending.name,
+                selectAfterWrite = true,
+            ),
+        )
+    }
+
+    fun onRestartGeneration() {
+        resetParseSession()
+        pendingGeneratedProfile = null
+        mutableState.update { it.copy(generationStep = GenerationStep.Idle) }
+    }
+
     fun onCloseExecutionSheet() {
         if (running && !state.value.executionSheetDismissible) return
         mutableState.update { it.copy(executionSheetVisible = false) }
@@ -1974,6 +2006,10 @@ class GhostlockViewModel(
      * Applies the chosen stride in memory and asks the user where to export the
      * generated document. Nothing is stored by the app; the export is the save.
      */
+    private fun markGenerationFailed() {
+        mutableState.update { it.copy(generationStep = GenerationStep.Failed) }
+    }
+
     private fun finishGeneratedProfile(
         document: String,
         name: String?,
@@ -1991,6 +2027,12 @@ class GhostlockViewModel(
         if (stride != null) appendLog("stride: kernelsnitch.mm_struct_sz = $stride")
         val suggested = name?.takeIf { it.endsWith(".conf") }
             ?: exportDocumentName(release)
+        if (nav.current == Screen.Generation) {
+            /* The stepped flow ends on its save step; the write starts there. */
+            pendingGeneratedProfile = PendingGeneratedProfile(text, suggested)
+            mutableState.update { it.copy(generationStep = GenerationStep.Save) }
+            return
+        }
         requestProfileWrite(
             PendingProfileWrite(
                 text = text,
@@ -2047,6 +2089,9 @@ class GhostlockViewModel(
             appendLog("result: profile source choice cancelled")
         }
         pendingSelectUri = null
+        if (state.value.generationStep == GenerationStep.Confirm) {
+            mutableState.update { it.copy(generationStep = GenerationStep.Idle) }
+        }
         dismissDialog()
     }
 
@@ -2260,6 +2305,7 @@ class GhostlockViewModel(
             appendLog("error: invalid OTA URL: $url")
             appendLog("result: parse failed")
             showNotice(R.string.parse_result_title, R.string.parse_failed_url)
+            markGenerationFailed()
             return
         }
         appendLog("parse OTA: $url")
@@ -2314,7 +2360,8 @@ class GhostlockViewModel(
                 if (Locale.getDefault().language == "zh") "MEDIATEK_ZH.md" else "MEDIATEK.md"
 
     private suspend fun runParse(request: ParseRequest) {
-        if (!beginOperation()) return
+        if (!beginOperation(showLogSheet = false)) return
+        mutableState.update { it.copy(generationStep = GenerationStep.Parsing) }
         try {
             when (
                 val result = parseSourceUseCase(
@@ -2337,6 +2384,7 @@ class GhostlockViewModel(
                     if (feasible.isEmpty()) {
                         appendLog("result: route ambiguity without a usable route")
                         showNotice(R.string.parse_result_title, R.string.parse_failed)
+                        markGenerationFailed()
                     } else {
                         val options = result.options
                         appendLog(
@@ -2352,12 +2400,14 @@ class GhostlockViewModel(
                 ParseResult.AlreadyPresent -> {
                     appendLog("result: offsets already present")
                     showNotice(R.string.parse_result_title, R.string.offsets_already_exist)
+                    markGenerationFailed()
                 }
 
                 is ParseResult.Failed -> {
                     result.reason?.let { appendLog("parse failed: $it") }
                     appendLog("result: ${parseFailureResult(result.code)}")
                     showNotice(R.string.parse_result_title, parseFailureToast(result.code))
+                    markGenerationFailed()
                 }
             }
         } finally {
@@ -2405,6 +2455,7 @@ class GhostlockViewModel(
         }
         mutableState.update {
             it.copy(
+                generationStep = GenerationStep.Confirm,
                 dialog = AppDialog.ListDialog(
                     titleRes = R.string.parse_route_title,
                     items = choices.map { choice ->
@@ -2477,6 +2528,7 @@ class GhostlockViewModel(
         parseDialogStage = ParseDialogStage.PhysImage
         mutableState.update {
             it.copy(
+                generationStep = GenerationStep.Confirm,
                 dialog = AppDialog.ListDialog(
                     titleRes = title,
                     itemResIds = listOf(attach, R.string.parse_phys_skip),
@@ -2553,6 +2605,7 @@ class GhostlockViewModel(
         }
         mutableState.update {
             it.copy(
+                generationStep = GenerationStep.Confirm,
                 dialog = AppDialog.ListDialog(
                     titleRes = R.string.parse_lock_title,
                     itemResIds = listOf(
@@ -2594,6 +2647,7 @@ class GhostlockViewModel(
         parseDialogStage = ParseDialogStage.Plan
         mutableState.update {
             it.copy(
+                generationStep = GenerationStep.Confirm,
                 dialog = AppDialog.ListDialog(
                     titleRes = if (decision.pageOffered) {
                         R.string.parse_plan_title_conditional
@@ -2676,14 +2730,8 @@ class GhostlockViewModel(
              * save prompt cannot be delayed by a sleeping activity. The parse
              * operation has normally ended by now; if it has not, do not let
              * its `running` flag hide the progress. */
-            if (!beginOperation(showLogSheet = true)) {
-                mutableState.update {
-                    it.copy(
-                        running = true,
-                        executionSheetVisible = true,
-                        executionSheetDismissible = false,
-                    )
-                }
+            if (!beginOperation(showLogSheet = false)) {
+                mutableState.update { it.copy(running = true) }
             }
             send(GhostlockEffect.KeepScreenAwake(true))
             try {
@@ -2752,6 +2800,7 @@ class GhostlockViewModel(
         appendLog("result: overwrite cancelled")
         mutableState.update {
             it.copy(
+                generationStep = GenerationStep.Idle,
                 overwriteDialogVisible = false,
                 overwriteMessage = "",
                 running = false,
@@ -2774,6 +2823,7 @@ class GhostlockViewModel(
     private fun showOverwriteDialog(releases: List<String>) {
         mutableState.update {
             it.copy(
+                generationStep = GenerationStep.Confirm,
                 overwriteDialogVisible = true,
                 overwriteMessage = overwriteSummary(releases),
                 /* The confirmation must be the only overlay on screen; a log
@@ -2864,4 +2914,6 @@ class GhostlockViewModel(
     private sealed interface PendingConfirmation {
         data class Parse(val request: ParseRequest) : PendingConfirmation
     }
+
+    private data class PendingGeneratedProfile(val text: String, val name: String)
 }

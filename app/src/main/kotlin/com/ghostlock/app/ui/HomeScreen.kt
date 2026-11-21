@@ -93,7 +93,7 @@ internal fun HomeScreen(
                 ArrowPreference(
                     title = stringResource(R.string.home_generate_profile),
                     summary = stringResource(R.string.home_generate_profile_summary),
-                    onClick = actions::onGenerateProfile,
+                    onClick = actions::onOpenGeneration,
                 )
                 ArrowPreference(
                     title = stringResource(R.string.load_config_title),
@@ -346,5 +346,5 @@ private fun shortRelease(release: String): String =
     release.substringBefore('-').ifBlank { release }
 
 @Composable
-private fun secondaryText(): Color =
+internal fun secondaryText(): Color =
     MiuixTheme.colorScheme.onSurface.copy(alpha = 0.68f)

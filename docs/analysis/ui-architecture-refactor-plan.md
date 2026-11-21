@@ -375,8 +375,12 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   高级选项) and the pinned bar; settings moved to Advanced → 运行设置. 9 `SupportStatusTest` cases;
   device check on the diting. `FieldsInvalid` opens Parameters until the validation report
   (N4a).)*
-- [ ] **V2–V4** — Parameters, the generation flow, and the run sheet / run settings polish /
-  report header (`ui-visual-design.md` §6).
+- [x] **V3** — the generation flow. *(2026-11-21: a dedicated screen with 来源 / 解析 / 确认 /
+  保存; the parse no longer opens the run log sheet; the generated document waits on the save
+  step instead of opening the SAF picker itself. Route/plan/phys/overwrite choices are still
+  dialogs over step 3 until N2b. Device: step 1, the failed step with its last line and retry.)*
+- [ ] **V2–V4** — Parameters, and the run sheet / report header polish
+  (`ui-visual-design.md` §6).
 
 ## 10. Decisions needed (operator sign-off)
 
