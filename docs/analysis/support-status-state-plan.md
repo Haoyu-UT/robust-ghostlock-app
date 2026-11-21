@@ -5,6 +5,10 @@ structures, cross-file contracts); per AGENTS.md no code lands before approval. 
 motivates it is in this repo's history review and in
 `external/github_error_reports/5.4.233-qgki-gbb70cde46897/README.md` (port repository).
 
+**Sequencing (2026-11-21):** this plan is slice **N3** of
+`ui-architecture-refactor-plan.md`; §11 there records the amendments (the session holder and the
+editor holder). The decisions in §5 and the gate in §6 S5 are unchanged.
+
 ## 0. Scope rule
 
 Implement exactly the slices in §6. Anything not listed is outside this change; if something not
@@ -121,19 +125,21 @@ suspend fun supportOutcome(release: String, pair: CpuPair): SupportOutcome
 ### 2.3 Ownership
 
 ```kotlin
-// GhostlockViewModel
-private val home: StateFlow<HomeState>        // device info + settings + deviceDefault
-private val editor: StateFlow<EditorState>    // the editor session ONLY
+// SessionViewModel (activity-scoped) — ui-architecture-refactor-plan.md §3.5
+private val session: StateFlow<SessionState>  // device, access, settings, run, support
 private var resolutionGeneration = 0L
 private val resolutionMutex = Mutex()
+
+// EditorStateHolder (screen-scoped) — the editor session ONLY
+val editor: StateFlow<EditorState>
 ```
 
-- `HomeState.support: SupportOutcome` is the single source for the badge, the button, the run
-  gate, the toast and the Parameters source cards.
-- `EditorState` owns `editTargetName`, the session's config projections
-  (`editorFields`, `editorInvalidPaths`, `editorRoute`, `editorFallback`, `editorRoots`,
-  `editorEditing`). **No editor action writes `HomeState`.** `onCloseProfileOverrides()` clears
-  `EditorState` only; the Home verdict cannot change because the session closed.
+`SessionState.support` replaces this plan's `HomeState`; Home and Parameters both read it, so the
+single-source requirement is unchanged. The editor is a separate holder, so no editor action can
+write session state. `EditorState` owns `editTargetName`, the session's config projections
+(`editorFields`, `editorInvalidPaths`, `editorRoute`, `editorFallback`, `editorRoots`,
+`editorEditing`). `onCloseProfileOverrides()` clears `EditorState` only; the Home verdict cannot
+change because the session closed.
 
 ### 2.4 Serialization and generations
 
@@ -276,12 +282,14 @@ through a pure mapping function with an equivalence test against today's predica
 `:app:testDebugUnitTest`, `:profile-core:test`, `assembleDebug`.
 
 **S2 — lifecycle.** `refreshSnapshot()` becomes `refetchSupport()` with the generation guard and
-mutex; `snapshot()` stops resolving; the editor session moves to `EditorState`; migration moves
-to `initialize()`. Gate: S0's H1/H4/H2 groups green.
+mutex; `snapshot()` stops resolving; the editor session moves to `EditorState` behind an
+`EditorStateHolder` (the N4 pattern applied to one screen); migration moves to `initialize()`.
+Gate: S0's H1/H4/H2 groups green.
 
-**S3 — consumers and run.** Card/Button/toast/Parameters consume `SupportStatus`; the duplicated
-predicates and message ladders are deleted; the run receives the resolved config. Gate: S0's
-D7/R1/A5 groups green; diting smoke of Ready/Blocked (see S5).
+**S3 — consumers and run.** Card/Button/toast/Parameters consume `SupportStatus` through their
+per-screen actions (`ui-architecture-refactor-plan.md` N4); the duplicated predicates and message
+ladders are deleted; the run receives the resolved config. Gate: S0's D7/R1/A5 groups green; diting
+smoke of Ready/Blocked (see S5).
 
 **S4 — cleanups.** D1/D3 deletion, D2 coverage change, D4/D6 states and strings. Gate: the log
 golden and the string-pair test; `ProfileLayersTest` removal recorded.
@@ -322,6 +330,6 @@ render their own status; a valid profile reaches `Ready` and a full run complete
 
 ## 9. Status
 
-Plan written 2026-11-20. No code before operator approval of §5's decisions. On approval:
-S0 lands first and is expected red; each subsequent slice carries its own gate; the device gate
-(S5) closes the change.
+Plan written 2026-11-20. Sequenced as N3 of `ui-architecture-refactor-plan.md` on 2026-11-21. No
+code before operator approval of §5's decisions. On approval: S0 lands first and is expected red;
+each subsequent slice carries its own gate; the device gate (S5) closes the change.
