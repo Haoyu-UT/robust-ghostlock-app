@@ -15,6 +15,8 @@
 
 #include "compat/carrier_engine.h"
 
+#include "support/cpu_affinity.hpp"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/futex.h>
@@ -254,26 +256,10 @@ namespace {
     }
 
     /* Pin one thread and verify the kernel kept it. A cpuset ceiling or a
-     * vendor affinity override can accept or silently rewrite the request;
-     * sched_getaffinity is the only readback that says which CPU the thread
-     * will actually run on. */
+     * vendor affinity override can accept or silently rewrite the request; the
+     * shared helper's exact readback is the only truth. */
     bool pin_cpu(uint32_t cpu) noexcept {
-        cpu_set_t set;
-        CPU_ZERO(&set);
-        CPU_SET(static_cast<int>(cpu), &set);
-        if (sched_setaffinity(0, sizeof(set), &set) != 0) return false;
-        cpu_set_t actual;
-        CPU_ZERO(&actual);
-        if (sched_getaffinity(0, sizeof(actual), &actual) != 0) return false;
-        int count = 0;
-        bool has_requested = false;
-        for (int i = 0; i < CPU_SETSIZE; i++) {
-            if (CPU_ISSET(i, &actual)) {
-                count++;
-                if (i == static_cast<int>(cpu)) has_requested = true;
-            }
-        }
-        return has_requested && count == 1;
+        return ghostlock::cpu_affinity::pin_current_thread(static_cast<int>(cpu)).exact;
     }
 
     /* The available-highest fallback. The universe is every CPU the process
@@ -285,17 +271,15 @@ namespace {
      * says the pin took effect, so a vendor affinity override (setaffinity
      * returns success, readback differs) is skipped instead of retried.
      * Ranks by cpuinfo_max_freq (the cluster order the native picker uses)
-     * and never returns the other thread's CPU. The thread's original mask
-     * is restored before returning; resolve_cpu() pins the chosen CPU again. */
+     * and never returns the other thread's CPU. The shared probe restores
+     * the thread's mask after each candidate; resolve_cpu() pins the chosen
+     * CPU again. */
     int fallback_cpu(int exclude) noexcept {
-        cpu_set_t original;
-        CPU_ZERO(&original);
-        const bool have_original = sched_getaffinity(0, sizeof(original), &original) == 0;
         int best = -1;
         long best_khz = -1;
         for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
             if (cpu == exclude) continue;
-            if (!pin_cpu(static_cast<uint32_t>(cpu))) continue;
+            if (!ghostlock::cpu_affinity::probe_cpu(cpu)) continue;
             char path[96];
             std::snprintf(path, sizeof(path),
                           "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpu);
@@ -310,8 +294,34 @@ namespace {
                 best = cpu;
             }
         }
-        if (have_original) (void) sched_setaffinity(0, sizeof(original), &original);
         return best;
+    }
+
+    /* The kernel's own answer to "which CPUs can this 32-bit thread use":
+     * probe a single-CPU mask on every possible CPU; a core without AArch32
+     * EL0 refuses it. Logged once per helper invocation. */
+    void log_compat_cpus_once() noexcept {
+        static bool logged = false;
+        if (logged) return;
+        logged = true;
+        cpu_set_t capable;
+        CPU_ZERO(&capable);
+        int first_error = 0;
+        for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+            int error = 0;
+            if (ghostlock::cpu_affinity::probe_cpu(cpu, nullptr, &error)) {
+                CPU_SET(cpu, &capable);
+            } else if (first_error == 0) {
+                first_error = error;
+            }
+        }
+        char mask[256] = "unreadable";
+        ghostlock::cpu_affinity::format_mask(capable, mask, sizeof(mask));
+        char line[320];
+        std::snprintf(line, sizeof(line),
+                      "compat-engine: aarch32 cpus=%s first_error=%d",
+                      mask, first_error);
+        log_line(line);
     }
 
     /* Before the dance: log the CPU the thread is on, try the preferred CPU,
@@ -319,6 +329,7 @@ namespace {
      * Constant retries; false when no attempt satisfies the condition. */
     bool resolve_cpu(Engine *engine, int role, uint32_t preferred, int exclude,
                      const char *name) noexcept {
+        log_compat_cpus_once();
         for (int attempt = 0; attempt < 4; attempt++) {
             const int before = sched_getcpu();
             const int target = attempt == 0

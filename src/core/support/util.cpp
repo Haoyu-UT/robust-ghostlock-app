@@ -86,10 +86,14 @@ namespace ghostlock::support {
         std::array < char, 32 > enforce{};
         std::array < char, 4096 > status{};
         std::array < char, 160 > limits{};
+        std::array < char, 32 > panic_on_oops{};
         snprintf(limits.data(), limits.size(),
                  "NoNewPrivs=? Seccomp=? Seccomp_filters=?");
         read_first_line("/proc/self/attr/current", attr.data(), attr.size());
         read_first_line("/sys/fs/selinux/enforce", enforce.data(), enforce.size());
+        /* The fact that decides whether an oops panics or wedges. */
+        read_first_line("/proc/sys/kernel/panic_on_oops", panic_on_oops.data(),
+                        panic_on_oops.size());
         support::UniqueFd fd(open("/proc/self/status", O_RDONLY | O_CLOEXEC));
         if (fd.valid()) {
             const ssize_t n = read(fd.get(), status.data(), status.size() - 1);
@@ -139,6 +143,7 @@ namespace ghostlock::support {
                    getpid(), getuid(), geteuid(), getgid(), getegid(), boot_ms,
                    attr.data(), enforce.data());
         pr_success("startup limits pid=%d %s\n", getpid(), limits.data());
+        pr_success("startup sysctl pid=%d panic_on_oops=%s\n", getpid(), panic_on_oops.data());
         pr_success("build config pid=%d label=%s slide=pselect main=pselect\n",
                    getpid(), kernel::BUILD_VARIANT_LABEL);
         pr_success("p0 profile pid=%d phys_offset=%016llx kernel_phys_load=%016llx "

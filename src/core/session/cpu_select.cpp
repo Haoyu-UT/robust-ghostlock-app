@@ -6,6 +6,8 @@
 
 #include <sched.h>
 
+#include "kernelsnitch/utils.h"
+
 namespace ghostlock::cpu_select {
     namespace {
         long read_max_khz(int cpu) {
@@ -41,18 +43,26 @@ namespace ghostlock::cpu_select {
     std::vector<Candidate> available_candidates() {
         std::vector<Candidate> out;
         cpu_set_t allowed;
-        if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) return out;
+        if (!cpu_affinity::read_mask(&allowed)) {
+            pr_warning("cpu select: sched_getaffinity failed errno=%d\n", errno);
+            return out;
+        }
+        char allowed_text[128] = {};
+        cpu_affinity::format_mask(allowed, allowed_text, sizeof(allowed_text));
+        pr_info("cpu select: allowed=%s\n", allowed_text);
         for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
-            if (!CPU_ISSET(static_cast<size_t>(cpu), &allowed)) continue;
-            cpu_set_t one;
-            CPU_ZERO(&one);
-            CPU_SET(static_cast<size_t>(cpu), &one);
+            if (!CPU_ISSET(cpu, &allowed)) continue;
             /* A cpuset ceiling or an inactive CPU refuses here even though the
-             * affinity mask still lists it; this probe is the only truth. */
-            if (sched_setaffinity(0, sizeof(one), &one) != 0) continue;
+             * affinity mask still lists it; this probe is the only truth. The
+             * shared probe restores the mask after each candidate. */
+            int probe_error = 0;
+            if (!cpu_affinity::probe_cpu(cpu, nullptr, &probe_error)) {
+                pr_warning("cpu select: cpu%d refused pin errno=%d\n",
+                           cpu, probe_error);
+                continue;
+            }
             out.push_back({cpu, read_max_khz(cpu)});
         }
-        (void) sched_setaffinity(0, sizeof(allowed), &allowed);
         return out;
     }
 } // namespace ghostlock::cpu_select

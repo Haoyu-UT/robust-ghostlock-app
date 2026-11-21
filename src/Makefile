@@ -265,7 +265,7 @@ $(HOST_BUILD_DIR)/runtime_config_test: core/tests/runtime_config_test.cpp core/s
 
 $(HOST_BUILD_DIR)/cpu_select_test: core/tests/cpu_select_test.cpp core/session/cpu_select.h core/session/cpu_select.cpp
 	@mkdir -p $(HOST_BUILD_DIR)
-	$(HOST_CXX) $(HOST_CXXFLAGS) -Icore core/tests/cpu_select_test.cpp core/session/cpu_select.cpp -o $@
+	$(HOST_CXX) $(HOST_CXXFLAGS) -Icore core/tests/cpu_select_test.cpp core/session/cpu_select.cpp core/support/native_resource.cpp -o $@
 
 $(HOST_BUILD_DIR)/backend_contract_test: core/tests/backend_contract_test.cpp \
   core/route/backend_contract.hpp core/route/backend_policy.hpp core/route/component_catalog.hpp \
