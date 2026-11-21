@@ -2597,8 +2597,18 @@ class GhostlockViewModel(
              * save prompt cannot be delayed by a sleeping activity. The parse
              * operation has normally ended by now; if it has not, do not let
              * its `running` flag hide the progress. */
-            if (!beginOperation(showLogSheet = false)) {
-                mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(running = true))) }
+            if (!beginOperation()) {
+                mutableState.update {
+                    it.copy(
+                        session = it.session.copy(
+                            run = it.session.run.copy(
+                                running = true,
+                                sheetVisible = true,
+                                sheetDismissible = false,
+                            ),
+                        ),
+                    )
+                }
             }
             send(GhostlockEffect.KeepScreenAwake(true))
             try {
