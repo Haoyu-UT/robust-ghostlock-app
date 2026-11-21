@@ -22,11 +22,11 @@ class NavControllerTest {
 
         nav.push(Screen.Advanced)
         nav.push(Screen.Parameters)
-        nav.push(Screen.LoadConfig)
+        nav.push(Screen.Builtin)
 
-        assertEquals(Screen.LoadConfig, nav.current)
+        assertEquals(Screen.Builtin, nav.current)
         assertEquals(
-            listOf(Screen.Main, Screen.Advanced, Screen.Parameters, Screen.LoadConfig),
+            listOf(Screen.Main, Screen.Advanced, Screen.Parameters, Screen.Builtin),
             nav.backStack.toList(),
         )
 
@@ -66,7 +66,7 @@ class NavControllerTest {
         val nav = NavController()
         nav.push(Screen.Advanced)
         nav.push(Screen.Parameters)
-        nav.push(Screen.LoadConfig)
+        nav.push(Screen.Builtin)
 
         assertTrue(nav.popTo(Screen.Advanced))
 

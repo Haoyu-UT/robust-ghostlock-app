@@ -1133,19 +1133,6 @@ class GhostlockViewModel(
         selectCpuPairUseCase(index)
         kernelSnapshot = snapshot.copy(selectedCpuPair = index)
         mutableState.update { it.copy(cpuPairIndex = index) }
-        /* Picking a preset pair replaces an explicit profile selection. */
-        if (mutableState.value.customCpuPair != null) {
-            viewModelScope.launch(Dispatchers.IO) {
-                val config = runCatching {
-                    profileController.clearSelectedCpus(
-                        snapshot.kernelRelease,
-                        snapshot.cpuPairs[index],
-                    )
-                }.getOrNull() ?: return@launch
-                applyExecutionConfig(config)
-                applyAdvancedConfig(config)
-            }
-        }
     }
 
     fun toggleSafeMode(enabled: Boolean) {

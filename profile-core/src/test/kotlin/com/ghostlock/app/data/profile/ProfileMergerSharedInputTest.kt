@@ -39,12 +39,12 @@ class ProfileMergerSharedInputTest {
         val other = profile("other", routeWaitMs = null)
 
         val first = ProfileMerger.resolveMerged(
-            deviceRelease = "diting", builtin = diting, imported = null, overrides = null,
+            deviceRelease = "diting", builtin = diting, imported = null,
             tuningExecution = tuning["execution"].asValueMap(), pair = CpuPairView(0, 1),
             routePresets = presets,
         )
         val second = ProfileMerger.resolveMerged(
-            deviceRelease = "other", builtin = other, imported = null, overrides = null,
+            deviceRelease = "other", builtin = other, imported = null,
             tuningExecution = tuning["execution"].asValueMap(), pair = CpuPairView(0, 1),
             routePresets = presets,
         )
@@ -57,7 +57,7 @@ class ProfileMergerSharedInputTest {
     fun `resolving leaves the caller's tuning and presets untouched`() {
         ProfileMerger.resolveMerged(
             deviceRelease = "diting", builtin = profile("diting", routeWaitMs = 30L),
-            imported = null, overrides = null,
+            imported = null,
             tuningExecution = tuning["execution"].asValueMap(), pair = CpuPairView(0, 1),
             routePresets = presets,
         )

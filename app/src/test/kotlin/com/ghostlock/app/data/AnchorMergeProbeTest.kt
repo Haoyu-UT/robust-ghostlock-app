@@ -9,35 +9,14 @@ import org.junit.Test
 /**
  * Throwaway probe (batch D debugging): does `route.select_stack.lock_anchor_image`
  * survive the Kotlin half of the profile pipeline — HOCON parse of the REAL
- * document on disk + ProfileMerger.resolveMerged against the REAL
- * `debug_profile_overrides` body read from the app's preference backup?
+ * document on disk + ProfileMerger.resolveMerged?
  *
- * Both inputs are the real artifacts, not a transcription, so a pass rules the
+ * The input is the real artifact, not a transcription, so a pass rules the
  * Kotlin pipeline out as the drop site and points at the native/wire side.
  */
 class AnchorMergeProbeTest {
     private val release = "5.10.236-android12-9-00003-gfb24cf99ad97-ab14313284"
     private val anchor = 44279184L
-
-    /** The stored prefs body, verbatim, from external/port/app-prefs-backup/. */
-    private val overrideText = """
-        "$release" {
-          execution {
-            selected_cpus {
-              main = 4
-              consumer = 5
-            }
-          }
-          route {
-            select_stack {
-              waiter_shift = null
-            }
-          }
-          fallback {
-            to = "none"
-          }
-        }
-    """.trimIndent()
 
     private fun locateConf(): File {
         var dir: File? = File(System.getProperty("user.dir")).absoluteFile
@@ -50,7 +29,7 @@ class AnchorMergeProbeTest {
     }
 
     @Test
-    fun `real document plus real override body keep the anchor`() {
+    fun `real document keeps the anchor`() {
         // A. the document as the app reads it
         val confFile = locateConf()
         println("CONF: ${confFile.absolutePath}")
@@ -59,16 +38,10 @@ class AnchorMergeProbeTest {
         val docRoute = (doc["route"] as? Map<*, *>)?.get("select_stack") as? Map<*, *>
         println("A. parsed doc route.select_stack = $docRoute")
 
-        // B. the override body the app stores, keyed by release
-        val allOverrides = HoconSupport.parseValue(overrideText).asValueMap()
-        val overrides = allOverrides?.get(release).asValueMap()
-        println("B. override body = $overrides")
-
         val merged = ProfileMerger.resolveMerged(
             deviceRelease = release,
             builtin = null,
             imported = doc,
-            overrides = overrides,
             tuningExecution = null,
             pair = CpuPairView(4, 5),
             routePresets = emptyMap(),
@@ -90,7 +63,7 @@ class AnchorMergeProbeTest {
         println("SIZE with anchor    = ${renderWith.toByteArray(Charsets.UTF_8).size}")
         val noAnchor = HoconSupport.parseValue(confFile.readText()).asValueMap()!!
         ((noAnchor["route"] as Map<*, *>)["select_stack"] as MutableMap<String, Any?>).remove("lock_anchor_image")
-        val mergedNo = ProfileMerger.resolveMerged(release, null, noAnchor, overrides, null, CpuPairView(4, 5), emptyMap())
+        val mergedNo = ProfileMerger.resolveMerged(release, null, noAnchor, null, CpuPairView(4, 5), emptyMap())
         println("SIZE without anchor = ${HoconSupport.render(mergedNo).toByteArray(Charsets.UTF_8).size}")
         val line = renderWith.lines().first { it.contains("lock_anchor_image") }
         println("anchor line = '${line}' (${line.toByteArray(Charsets.UTF_8).size + 1} bytes with newline)")

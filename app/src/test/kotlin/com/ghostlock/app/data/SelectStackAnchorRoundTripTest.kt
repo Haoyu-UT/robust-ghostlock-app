@@ -48,20 +48,12 @@ class SelectStackAnchorRoundTripTest {
         )
     }
 
-    /** The advanced-override body the device stores; it carries the same branch. */
-    private val overrides = valueMapOf(
-        "execution" to valueMapOf("selected_cpus" to valueMapOf("main" to 4L, "consumer" to 5L)),
-        "route" to valueMapOf("select_stack" to valueMapOf("waiter_shift" to null)),
-        "fallback" to valueMapOf("to" to "none"),
-    )
-
     /** Runs the real resolution chain and returns the resolved native document. */
     private fun nativeProfile(document: ValueMap): Profile {
         val merged = ProfileMerger.resolveMerged(
             deviceRelease = release,
             builtin = null,
             imported = document,
-            overrides = overrides,
             tuningExecution = null,
             pair = CpuPairView(4, 5),
             routePresets = emptyMap(),

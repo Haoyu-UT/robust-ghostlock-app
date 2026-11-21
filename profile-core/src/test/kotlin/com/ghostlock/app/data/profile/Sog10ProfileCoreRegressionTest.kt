@@ -52,7 +52,6 @@ class Sog10ProfileCoreRegressionTest {
             deviceRelease = release,
             builtin = profile,
             imported = null,
-            overrides = null,
             tuningExecution = tuning,
             pair = CpuPairView(0, 1),
             routePresets = presets,

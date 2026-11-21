@@ -35,30 +35,8 @@ class EditorPhysMapTest {
             preferences = context.getSharedPreferences("editor-phys-$release", 0)
                 .also { it.edit().clear().commit() },
             deviceCodename = device,
-            overrideStore = MemoryOverrideStore(),
             forcedSelection = ProfileSelection.Bundled(release),
         )
-
-    @Test
-    fun `editing the physical load keeps the other devices and exports v2`() = runBlocking {
-        val release = "5.10.198-android12-9-00085-g226a9632f13d-ab11136126"
-        val pair = CpuPair(4, 5)
-        val controller = controller(release, "diting")
-        controller.updateAdvanced(release, pair, mapOf("kernel_phys_load" to 0x11223344L))
-
-        val document = entry(controller.renderResolved(release, pair) ?: error("no render"))
-        assertEquals(2, (document["schema_version"] as Number).toInt())
-
-        val diting = PerDevicePhys.resolveFor(document, listOf("diting")).document
-        assertEquals(0x11223344L, diting["kernel_phys_load"])
-        assertEquals(0x80000000L, diting["kernel_phys_offset"])
-        val yunluo = PerDevicePhys.resolveFor(document, listOf("yunluo")).document
-        assertEquals(0x40000000L, yunluo["kernel_phys_load"])
-        assertEquals(0x40000000L, yunluo["kernel_phys_offset"])
-        val rubens = PerDevicePhys.resolveFor(document, listOf("rubens")).document
-        assertEquals(0x40000000L, rubens["kernel_phys_load"])
-        assertEquals(0x40000000L, rubens["kernel_phys_offset"])
-    }
 
     @Test
     fun `a device absent from the map cannot load the profile to edit`() = runBlocking {
@@ -86,7 +64,6 @@ class EditorPhysMapTest {
             preferences = context.getSharedPreferences("editor-phys-load-only", 0)
                 .also { it.edit().clear().commit() },
             deviceCodename = "diting",
-            overrideStore = MemoryOverrideStore(),
             forcedSelection = ProfileSelection.External,
         )
 

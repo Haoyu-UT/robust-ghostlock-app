@@ -65,7 +65,6 @@ import java.util.concurrent.atomic.AtomicReference
 /** Android implementation of the domain repository. All platform I/O lives here. */
 class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private companion object {
-        const val OffsetsFileName = "offsets.conf"
         const val LegacyOffsetsFileName = "offsets.json"
         const val FeasibleReportFileName = "offsets_feasible.json"
         const val OptionsReportFileName = "offsets_options.json"
@@ -93,7 +92,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         const val PrefVrKoSelinuxBlock = "vrko_selinux_block"
 
         const val PrefDebugKernelLogEnabled = "debug_kernel_log_enabled"
-        const val PrefDebugProfileOverrides = "debug_profile_overrides"
         /** Root-manager choice (package name); absent means Auto. */
         const val PrefManagerPackage = "manager_package"
 
@@ -128,7 +126,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private val filesDir: File = appContext.filesDir
     private val preferences get() =
         appContext.getSharedPreferences("ghostlock_prefs", Context.MODE_PRIVATE)
-    private val offsetsFile get() = File(filesDir, OffsetsFileName)
     private val builtinProfiles = BuiltinProfileCatalog(appContext)
     /** Ground-truth facts; written only from a completed run's root phase. */
     private val measuredProfiles = MeasuredProfileStore(File(filesDir, MeasuredDbFileName))
@@ -165,51 +162,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         restoreVrKoTagClear()
         restoreVrKoSelinuxBlock()
         dropLegacyOffsetsCache()
-        migrateLegacyOffsetsStore()
     }
 
     /** The old JSON offsets cache is not compatible and is discarded. */
     private fun dropLegacyOffsetsCache() {
         runCatching { File(filesDir, LegacyOffsetsFileName).delete() }
-    }
-
-    /**
-     * Old builds kept imported offsets and parameter overrides in one HOCON
-     * file. Split it: overrides move to preferences, then the legacy file is
-     * dropped.
-     */
-    private fun migrateLegacyOffsetsStore() {
-        if (!offsetsFile.isFile) return
-        runCatching {
-            val entries = parseEntries(offsetsFile.readText()) ?: return@runCatching
-            for (raw in entries) {
-                val entry = raw.asValueMap() ?: continue
-                val release = (entry["release"] as? String).orEmpty()
-                if (release.isEmpty()) continue
-                val overrides = valueMapOf()
-                (entry.remove("execution") as? Map<*, *>)?.let { overrides["execution"] = it }
-                (entry.remove("route") as? Map<*, *>)?.let { overrides["route"] = it }
-                (entry.remove("fallback") as? Map<*, *>)?.let { overrides["fallback"] = it }
-                if (overrides.isNotEmpty()) mergeLegacyOverrides(release, overrides)
-            }
-            offsetsFile.delete()
-        }.onFailure {
-            android.util.Log.e("GhostLock", "legacy offsets migration failed", it)
-        }
-    }
-
-    private fun mergeLegacyOverrides(release: String, overrides: ValueMap) {
-        val raw = preferences.getString(PrefDebugProfileOverrides, null)
-        val all = runCatching { HoconSupport.parseValue(raw ?: "") }
-            .getOrNull().asValueMap() ?: valueMapOf()
-        deepMergeValues(all.mutableChild(release), overrides)
-        preferences.edit {
-            putString(PrefDebugProfileOverrides, HoconSupport.render(all))
-            /* The migration is this build writing them, so they apply (§B.7);
-             * leaving them unstamped would silently disable a user's own
-             * offsets on the very update that carried them over. */
-            putString(AndroidProfileConfigController.PrefOverridesBuildSha, BuildConfig.BUILD_IDENTITY)
-        }
     }
 
     override suspend fun snapshot(): KernelSnapshot {
@@ -1667,7 +1624,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             context = appContext,
             externalProfiles = externalProfileStore,
             preferences = preferences,
-            overrideStore = MemoryOverrideStore(),
             forcedSelection = profileController.currentSelection(release),
         )
         editSession = session

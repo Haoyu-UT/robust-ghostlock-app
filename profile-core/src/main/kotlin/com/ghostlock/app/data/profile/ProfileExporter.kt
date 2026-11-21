@@ -69,7 +69,6 @@ object ProfileExporter {
                 deviceRelease = actualRelease,
                 builtin = resolved,
                 imported = null,
-                overrides = null,
                 tuningExecution = tuningExecution,
                 pair = CpuPairView(0, 1),
                 routePresets = routePresets,

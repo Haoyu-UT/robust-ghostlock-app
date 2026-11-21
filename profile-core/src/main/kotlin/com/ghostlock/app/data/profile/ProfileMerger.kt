@@ -17,14 +17,13 @@ object ProfileMerger {
     private val RouteNames: List<String> = RouteKind.entries.map { it.token }
 
     /**
-     * common execution preset -> built-in -> imported -> sparse override, then
-     * the session CPU pair is forced in and the selected route groups are filled.
+     * common execution preset -> built-in -> imported, then the session CPU
+     * pair is forced in and the selected route groups are filled.
      */
     fun resolveMerged(
         deviceRelease: String,
         builtin: ValueMap?,
         imported: ValueMap?,
-        overrides: ValueMap?,
         tuningExecution: ValueMap?,
         pair: CpuPairView,
         routePresets: Map<String, ValueMap>,
@@ -46,11 +45,8 @@ object ProfileMerger {
             if (tuningExecution != null) put("execution", tuningExecution.copyValue().asValueMap())
         }
         val resolved = mergeSource(
-            mergeSource(
-                if (builtin == null) defaults else deepMergeValues(defaults, builtin),
-                imported,
-            ),
-            overrides,
+            if (builtin == null) defaults else deepMergeValues(defaults, builtin),
+            imported,
         )
         resolved["schema_version"] = 1
         resolved["release"] = deviceRelease

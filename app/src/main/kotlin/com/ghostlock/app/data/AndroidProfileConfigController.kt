@@ -30,10 +30,8 @@ import com.ghostlock.app.domain.repository.ProfileConfigController
  * (`filesDir/profiles/imported_profile.conf`) and no persisted override layer.
  * Resolution order is external > builtin > bundled.
  *
- * Live runs resolve the selection with no sparse edits. An editor session gets
- * a private [MemoryOverrideStore] and a pinned [ProfileSelection]; its edits
- * live only as long as the session, and rendering an exported document is its
- * only save. See `docs/analysis/measured-db-plan.md`.
+ * The resolved document is the source itself: there is no sparse edit layer.
+ * See `docs/analysis/measured-db-plan.md`.
  */
 internal class AndroidProfileConfigController(
     context: Context,
@@ -54,8 +52,6 @@ internal class AndroidProfileConfigController(
      */
     private val deviceCodename: String? = Build.DEVICE,
     private val deviceAliases: List<String> = DeviceIdentity.aliases(),
-    /** Live runs: empty. Editor sessions: their private in-memory map. */
-    private val overrideStore: OverrideStore = EmptyOverrideStore,
     /** Pins the source for an editor session; null follows the stored choice. */
     forcedSelection: ProfileSelection? = null,
 ) : ProfileConfigController {
@@ -68,8 +64,7 @@ internal class AndroidProfileConfigController(
 
     override suspend fun load(release: String, pair: CpuPair): ProfileConfig {
         migrateLegacyExternalSelection(release)
-        val overrides = activeOverrides(release)
-        val resolution = resolve(release, pair, overrides)
+        val resolution = resolve(release, pair)
         val full = resolution.profile
         if (full == null) {
             return ProfileConfig(
@@ -98,12 +93,8 @@ internal class AndroidProfileConfigController(
          * geometry, so a field the profile did not carry appears as an
          * editable `null` row instead of being invisible. */
         val complete = completeProfileFields(full, route, fallbackTo)
-        val baseline = if (overrides == null) {
-            full
-        } else {
-            resolve(release, pair, null).profile ?: full
-        }
-        val roots = buildTree(complete, "", baseline, overrides ?: valueMapOf())
+        val baseline = full
+        val roots = buildTree(complete, "")
         /* The anchor trio lives in the active route's own branch; the native
          * writes only that section to the wire (NativeProfile: "only the
          * active route's route.* section is written"). */
@@ -382,134 +373,6 @@ internal class AndroidProfileConfigController(
             ?.takeIf { it.isNotEmpty() && it != "null" }
     }
 
-    override suspend fun updateRoute(
-        release: String,
-        pair: CpuPair,
-        route: String?,
-    ): ProfileConfig {
-        val override = overrideStore.read(release)
-        if (route.isNullOrBlank()) {
-            override.remove("route")
-        } else {
-            val existingBranch = override["route"].asValueMap()?.get(route).asValueMap()
-                ?: routeBranchTemplate(route)
-            override["route"] = valueMapOf(route to existingBranch)
-            pruneOverrideBranches(override, "route", route)
-        }
-        overrideStore.write(release, override)
-        return load(release, pair)
-    }
-
-    override suspend fun updateFallback(
-        release: String,
-        pair: CpuPair,
-        fallbackTo: String?,
-    ): ProfileConfig {
-        val override = overrideStore.read(release)
-        if (fallbackTo.isNullOrBlank()) {
-            override.remove("fallback")
-        } else {
-            val fallback = override["fallback"].asValueMap() ?: valueMapOf()
-            fallback["to"] = fallbackTo
-            if (fallbackTo in ProfileConfig.Routes) {
-                val branch = fallback["route"].asValueMap()?.get(fallbackTo).asValueMap()
-                    ?: routeBranchTemplate(fallbackTo)
-                fallback["route"] = valueMapOf(fallbackTo to branch)
-            } else {
-                fallback.remove("route")
-            }
-            override["fallback"] = fallback
-            pruneOverrideBranches(override, "fallback", fallbackTo.takeIf { it in ProfileConfig.Routes })
-        }
-        overrideStore.write(release, override)
-        return load(release, pair)
-    }
-
-    override suspend fun updateGeneral(
-        release: String,
-        pair: CpuPair,
-        values: Map<String, Long>,
-    ): ProfileConfig {
-        val override = overrideStore.read(release)
-        val execution = override.mutableChild("execution")
-        for ((path, value) in values) {
-            if (path.startsWith("execution.")) {
-                execution.setValueAt(path.removePrefix("execution."), value)
-            } else {
-                override.setValueAt(path, value)
-            }
-        }
-        overrideStore.write(release, override)
-        return load(release, pair)
-    }
-
-    override suspend fun updateAdvanced(
-        release: String,
-        pair: CpuPair,
-        values: Map<String, Long>,
-    ): ProfileConfig {
-        /* Rebuild the sparse map from scratch: only values that differ from
-         * the base survive, so untouched fields can never stay highlighted. */
-        val baseline = resolve(release, pair, null).profile
-        if (baseline != null) {
-            val rebuilt = valueMapOf()
-            for ((path, value) in values) {
-                if (path.isEmpty() || path == "release" ||
-                    path.startsWith("execution.selected_cpus")
-                ) {
-                    continue
-                }
-                if (value != baseline.getLongAt(path)) rebuilt.setValueAt(path, value)
-            }
-            /* The advanced editor carries neither the fallback choice nor the
-             * selected CPUs (and may drop a route branch the baseline already
-             * matches); keep all three. */
-            val current = overrideStore.read(release)
-            current["route"].asValueMap()?.let { route -> rebuilt.putIfAbsent("route", route) }
-            current["execution"].asValueMap()?.get("selected_cpus")?.let { cpus ->
-                rebuilt.mutableChild("execution")["selected_cpus"] = cpus
-            }
-            current["fallback"].asValueMap()?.let { fallback ->
-                val rebuiltFallback = rebuilt["fallback"].asValueMap()
-                if (rebuiltFallback == null) {
-                    rebuilt["fallback"] = fallback
-                } else {
-                    fallback["to"]?.let { rebuiltFallback["to"] = it }
-                }
-            }
-            overrideStore.write(release, rebuilt)
-        }
-        return load(release, pair)
-    }
-
-    override suspend fun reset(release: String, pair: CpuPair): ProfileConfig {
-        overrideStore.write(release, valueMapOf())
-        return load(release, pair)
-    }
-
-    override suspend fun resetGeneral(release: String, pair: CpuPair): ProfileConfig {
-        val override = overrideStore.read(release)
-        override.remove("execution")
-        overrideStore.write(release, override)
-        return load(release, pair)
-    }
-
-    override suspend fun resetAdvanced(release: String, pair: CpuPair): ProfileConfig {
-        val override = overrideStore.read(release)
-        override.keys.toList().filter { it != "execution" }.forEach(override::remove)
-        overrideStore.write(release, override)
-        return load(release, pair)
-    }
-
-    override suspend fun clearSelectedCpus(release: String, pair: CpuPair): ProfileConfig {
-        val override = overrideStore.read(release)
-        val execution = override["execution"].asValueMap()
-        execution?.remove("selected_cpus")
-        if (execution != null && execution.isEmpty()) override.remove("execution")
-        overrideStore.write(release, override)
-        return load(release, pair)
-    }
-
     /**
      * Renders the resolved profile as the document an export writes. The
      * caller adds the lineage header and the user picks the destination; this
@@ -534,7 +397,7 @@ internal class AndroidProfileConfigController(
          * into the running device's entry. */
         val selection = currentSelection(release)
         val source = selection?.let { runCatching { loadSource(release, it).document }.getOrNull() }
-        val resolved = resolve(release, pair, activeOverrides(release)).profile ?: return null
+        val resolved = resolve(release, pair).profile ?: return null
         val view = resolved.copyValue().asValueMap() ?: return null
         for ((path, value) in extraValues) view.setValueAt(path, value)
         val route = routeNameOf(view)
@@ -557,8 +420,8 @@ internal class AndroidProfileConfigController(
 
     /**
      * Restore the source's per-device physical maps into an export. The
-     * running device's entry takes the resolved value (the editor override or
-     * the source's own value); every other device key is preserved. A source
+     * running device's entry takes the resolved value (or the source's own
+     * value); every other device key is preserved. A source
      * field that is null stays null (the native default), and an edited value
      * for a device the source did not carry adds its key.
      */
@@ -595,27 +458,27 @@ internal class AndroidProfileConfigController(
 
     /** Renders the resolved profile verbatim (no trimming) for debug dumps. */
     override fun renderResolvedForDebug(release: String, pair: CpuPair): String? {
-        val resolved = resolve(release, pair, activeOverrides(release)).profile ?: return null
+        val resolved = resolve(release, pair).profile ?: return null
         val view = resolved.copyValue().asValueMap() ?: return null
         return HoconSupport.render(view)
     }
 
     /** Numeric leaves of the resolved profile, the measured merge's comparison. */
     fun resolvedNumbers(release: String, pair: CpuPair): Map<String, Long>? {
-        val resolved = resolve(release, pair, activeOverrides(release)).profile ?: return null
+        val resolved = resolve(release, pair).profile ?: return null
         return numericLeaves(resolved)
     }
 
     /** Values of [release]'s active profile that differ from the bundle. */
     override fun diffAgainstBundle(release: String, pair: CpuPair): List<ProfileDiffRow> {
-        val current = resolve(release, pair, activeOverrides(release)).profile ?: return emptyList()
+        val current = resolve(release, pair).profile ?: return emptyList()
         val bundled = resolveFor(
-            release, pair, null, ProfileSelection.Bundled(release),
+            release, pair, ProfileSelection.Bundled(release),
         ).profile ?: return emptyList()
         return numericDiff(current, bundled)
     }
 
-    /** Moves the session's base to the bundled document, keeping its edits. */
+    /** Moves the session's base to the bundled document. */
     override suspend fun rebaseToBundle(release: String, pair: CpuPair): ProfileConfig {
         if (forcedSelection != null) forcedSelection = ProfileSelection.Bundled(release)
         return load(release, pair)
@@ -624,9 +487,6 @@ internal class AndroidProfileConfigController(
     /** The selection a resolution of [release] would use right now. */
     fun currentSelection(release: String): ProfileSelection? =
         forcedSelection ?: liveSelection(release)
-
-    /** Test seam: the session's in-memory edit map; never persisted. */
-    internal fun overrideSnapshot(release: String): ValueMap = overrideStore.read(release)
 
     /** Human label of the source, for the editor banner and export name. */
     fun currentSelectionLabel(release: String): String? = when (val source = currentSelection(release)) {
@@ -644,7 +504,7 @@ internal class AndroidProfileConfigController(
     fun nativeDocumentFor(text: String, release: String, pair: CpuPair): ByteArray? {
         val entry = ProfileDocumentParser.entryForRelease(text, release, ::loadBundledInclude)
             ?: return null
-        val merged = runCatching { merge(release, pair, entry, null) }.getOrNull() ?: return null
+        val merged = runCatching { merge(release, pair, entry) }.getOrNull() ?: return null
         val route = routeNameOf(merged)
         val fallbackTo = fallbackTargetOf(merged)
         val invalid = validateProfileFields(merged, route, fallbackTo) +
@@ -775,11 +635,11 @@ internal class AndroidProfileConfigController(
     }
 
     /**
-     * Resolved on demand: the result depends on the selection, the CPU pair and
-     * the session's edits, so a cached document would go stale.
+     * Resolved on demand: the result depends on the selection and the CPU pair,
+     * so a cached document would go stale.
      */
     override fun nativeDocument(config: ProfileConfig, pipeline: String?): ByteArray? = synchronized(lock) {
-        val resolved = resolve(config.release, config.pair, activeOverrides(config.release)).profile
+        val resolved = resolve(config.release, config.pair).profile
             ?: return@synchronized null
         buildNativeDocument(config.release, resolved, pipeline)?.toBinary()
     }
@@ -816,9 +676,6 @@ internal class AndroidProfileConfigController(
         val selection: ProfileSelection?,
     )
 
-    private fun activeOverrides(release: String): ValueMap? =
-        overrideStore.read(release).takeIf { it.isNotEmpty() }
-
     /** External > builtin > bundled. A stored external selection is the user's
      * statement: it stays the source even when its release names another image,
      * and the identity check then refuses instead of silently using the bundle. */
@@ -833,19 +690,18 @@ internal class AndroidProfileConfigController(
     private fun storedExternalSelection(): ProfileSelection.External? =
         if (externalProfiles.importedProfileExists()) ProfileSelection.External else null
 
-    private fun resolve(release: String, pair: CpuPair, overrides: ValueMap?): Resolution =
-        resolveFor(release, pair, overrides, forcedSelection ?: liveSelection(release))
+    private fun resolve(release: String, pair: CpuPair): Resolution =
+        resolveFor(release, pair, forcedSelection ?: liveSelection(release))
 
     private fun resolveFor(
         release: String,
         pair: CpuPair,
-        overrides: ValueMap?,
         selection: ProfileSelection?,
     ): Resolution {
         val source = loadSource(release, selection)
         val document = source.document
             ?: return Resolution(null, layersFor(selection, source.error, source.readFailure), selection)
-        val merged = runCatching { merge(release, pair, document, overrides) }
+        val merged = runCatching { merge(release, pair, document) }
         val layers = layersFor(selection, source.error ?: merged.exceptionOrNull()?.message)
         return Resolution(merged.getOrNull(), layers, selection)
     }
@@ -854,7 +710,6 @@ internal class AndroidProfileConfigController(
         release: String,
         pair: CpuPair,
         document: ValueMap,
-        overrides: ValueMap?,
     ): ValueMap {
         /* A controller without any device identity (test/exporter callers) is
          * device-neutral: the maps resolve to the native default, as the
@@ -873,7 +728,6 @@ internal class AndroidProfileConfigController(
             deviceRelease = release,
             builtin = resolvedDocument,
             imported = null,
-            overrides = overrides,
             tuningExecution = tuningExecution,
             pair = CpuPairView(pair.primary, pair.consumer),
             routePresets = routePresets,
@@ -1064,43 +918,6 @@ internal class AndroidProfileConfigController(
         }
     }
 
-    /** Initialises a switched-to branch with its fields so they can be filled. */
-    private fun routeBranchTemplate(route: String): ValueMap {
-        val template = valueMapOf()
-        RouteBranchFields[route].orEmpty().forEach { template[it] = null }
-        return template
-    }
-
-    /**
-     * After a route/fallback switch only the selected branch survives in the
-     * sparse edit map; edits of the previous branch would otherwise pull the
-     * choice back or shadow the new branch's fields.
-     */
-    private fun pruneOverrideBranches(entry: ValueMap, key: String, keep: String?) {
-        val container = if (key == "fallback") {
-            entry["fallback"].asValueMap()?.get("route").asValueMap()
-        } else {
-            entry[key].asValueMap()
-        }
-        if (container != null) {
-            container.keys.toList()
-                .filter { it != keep }
-                .forEach(container::remove)
-            if (container.isEmpty()) {
-                if (key == "fallback") {
-                    entry["fallback"].asValueMap()?.remove("route")
-                } else {
-                    entry.remove(key)
-                }
-            }
-        }
-        if (key == "fallback") {
-            entry["fallback"].asValueMap()?.let { fallback ->
-                if (fallback.isEmpty()) entry.remove("fallback")
-            }
-        }
-    }
-
     // ---- controller model helpers ----
 
     private fun generalFields(
@@ -1183,8 +1000,6 @@ internal class AndroidProfileConfigController(
     private fun buildTree(
         node: ValueMap,
         prefix: String,
-        baseline: ValueMap,
-        override: ValueMap,
     ): List<ProfileFieldNode> {
         val groups = mutableListOf<ProfileFieldNode>()
         val leaves = mutableListOf<ProfileFieldNode>()
@@ -1195,12 +1010,11 @@ internal class AndroidProfileConfigController(
                     /* Execution tuning is edited on the general page
                      * (ProfileOverrideScreen / ExecutionEditor), not here. */
                     if (key == "execution") continue
-                    val children = buildTree(value.asValueMap() ?: valueMapOf(), path, baseline, override)
+                    val children = buildTree(value.asValueMap() ?: valueMapOf(), path)
                     if (children.isNotEmpty()) {
                         groups += ProfileFieldNode(
                             path = path,
                             name = key,
-                            overridden = children.any { it.overridden },
                             children = children,
                         )
                     }
@@ -1209,13 +1023,10 @@ internal class AndroidProfileConfigController(
                 value is Number -> if (path != "schema_version" && path != "release" &&
                     path != "recommend_shizuku"
                 ) {
-                    val overrideValue = override.getLongAt(path)
                     leaves += ProfileFieldNode(
                         path = path,
                         name = key,
                         value = value.toLong(),
-                        overridden = overrideValue != null &&
-                            overrideValue != baseline.getLongAt(path),
                     )
                 }
 
@@ -1226,7 +1037,6 @@ internal class AndroidProfileConfigController(
                         path = path,
                         name = key,
                         value = null,
-                        overridden = override.getValueAt(path) != null,
                     )
                 }
             }
@@ -1325,9 +1135,13 @@ internal class AndroidProfileConfigController(
             PrefExternalUri, PrefExternalName, PrefExternalRelease,
             PrefExternalSha256, PrefExternalParent, PrefExternalParentSha256,
         )
-
-        /* Legacy storage keys, read only by the one-time cleanup flow. */
-        const val PrefDebugProfileOverrides = "debug_profile_overrides"
-        const val PrefOverridesBuildSha = "debug_profile_overrides_build"
     }
+}
+
+/** One resolution source, in precedence order (external > builtin > bundled). */
+internal sealed interface ProfileSelection {
+    data class Bundled(val release: String) : ProfileSelection
+    data class Builtin(val release: String) : ProfileSelection
+    /** The app-private imported copy; its presence is the whole selection. */
+    object External : ProfileSelection
 }
