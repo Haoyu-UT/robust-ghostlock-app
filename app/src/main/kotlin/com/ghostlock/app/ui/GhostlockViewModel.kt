@@ -40,10 +40,8 @@ import com.ghostlock.app.domain.model.ProfileImportResult
 import com.ghostlock.app.domain.model.RootManagerCandidate
 import com.ghostlock.app.domain.model.nextPhysImage
 import com.ghostlock.app.domain.model.sourceSuppliesLoad
-import com.ghostlock.app.domain.model.ProfileDiffRow
 import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.RunLogEntry
-import com.ghostlock.app.domain.model.ProfileFieldNode
 import com.ghostlock.app.domain.model.RouteVerdict
 import com.ghostlock.app.domain.model.ShizukuStatus
 import com.ghostlock.app.domain.model.StrideProbe
@@ -325,16 +323,16 @@ class GhostlockViewModel(
     }
 
     /* profile-ui: the controller owns loading, merging and persistence. */
-    fun loadExecutionProfile(preserveEditing: Boolean = false) {
+    fun loadExecutionProfile() {
         val snapshot = kernelSnapshot ?: return
         val pair = snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair) ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            applyExecutionConfig(profileController.load(snapshot.kernelRelease, pair), preserveEditing)
+            applyExecutionConfig(profileController.load(snapshot.kernelRelease, pair))
             refreshMergeRows()
         }
     }
 
-    private fun applyExecutionConfig(config: ProfileConfig, preserveEditing: Boolean) {
+    private fun applyExecutionConfig(config: ProfileConfig) {
         /* The run consumes exactly this resolution (D7); nothing re-loads later. */
         resolvedProfile = config
         mutableState.update { state ->
@@ -342,9 +340,6 @@ class GhostlockViewModel(
                 executionRelease = config.release,
                 executionHasProfile = config.hasProfile,
                 executionFields = config.general,
-                executionEditing = if (preserveEditing) state.executionEditing
-                else config.general.associate { field -> field.path to field.value.toString() },
-                profileInvalidPaths = config.invalidPaths,
                 profileRoute = config.route,
                 profileFallback = config.fallbackTo,
                 activeBuiltinProfile = profileController.activeBuiltinRelease(),
@@ -389,15 +384,6 @@ class GhostlockViewModel(
         val current = state.value.profileFallback
         if (fallback == current || (fallback == "none" && current == null)) return
         mutableState.update { it.copy(profileFallback = fallback) }
-    }
-
-    /** General edits are draft-only; saving the session commits them. */
-    fun updateExecutionField(path: String, value: String) {
-        mutableState.update {
-            it.copy(
-                executionEditing = it.executionEditing + (path to value),
-            )
-        }
     }
 
     /* advanced-ui: the merged screen loads its editors and debug prefs. */
@@ -467,8 +453,8 @@ class GhostlockViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             when (val result = repository.selectExternalProfile(uri)) {
                 is ProfileImportResult.Accepted -> {
-                    applyExecutionConfig(result.config, preserveEditing = false)
-                    applyAdvancedConfig(result.config, preserveEditing = false)
+                    applyExecutionConfig(result.config)
+                    applyAdvancedConfig(result.config)
                     refreshSnapshot()
                     refreshMergeRows()
                     send(GhostlockEffect.Toast(R.string.user_profile_loaded))
@@ -495,8 +481,8 @@ class GhostlockViewModel(
                 send(GhostlockEffect.Toast(R.string.user_profile_load_failed))
                 return@launch
             }
-            applyExecutionConfig(config, preserveEditing = false)
-            applyAdvancedConfig(config, preserveEditing = false)
+            applyExecutionConfig(config)
+            applyAdvancedConfig(config)
             refreshSnapshot()
             refreshMergeRows()
             send(GhostlockEffect.Toast(R.string.user_profile_unloaded))
@@ -534,42 +520,6 @@ class GhostlockViewModel(
                 selectAfterWrite = true,
             ),
         )
-    }
-
-    /* ---- editor diff/rebase ---- */
-
-    fun onOpenProfileDiff() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val rows = runCatching { repository.editSessionDiff() }.getOrDefault(emptyList())
-            mutableState.update { it.copy(profileDiffRows = rows) }
-            nav.push(Screen.ProfileDiff)
-        }
-    }
-
-    fun onCloseProfileDiff() {
-        nav.pop()
-    }
-
-    fun onRebaseToBundle() {
-        val snapshot = kernelSnapshot ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            val config = runCatching { repository.rebaseEditSession() }.getOrNull()
-            if (config == null) {
-                send(GhostlockEffect.Toast(R.string.execution_save_failed))
-                return@launch
-            }
-            applyExecutionConfig(config, preserveEditing = false)
-            applyAdvancedConfig(config, preserveEditing = false)
-            val rows = runCatching { repository.editSessionDiff() }.getOrDefault(emptyList())
-            mutableState.update {
-                it.copy(
-                    editTargetName = repository.editSessionTarget()
-                        ?: snapshot.kernelRelease,
-                    profileDiffRows = rows,
-                )
-            }
-            send(GhostlockEffect.Toast(R.string.profile_rebased))
-        }
     }
 
     /** Queues a document and opens the system destination dialog for it. */
@@ -1087,101 +1037,6 @@ class GhostlockViewModel(
         return snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair)
     }
 
-    /** Opens the editor for the profile the attack controller currently loads. */
-    fun onOpenProfileOverrides() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val config = runCatching { repository.beginEditSession() }.getOrNull()
-            if (config == null) {
-                send(GhostlockEffect.Toast(R.string.user_profile_load_failed))
-                return@launch
-            }
-            applyExecutionConfig(config, preserveEditing = false)
-            applyAdvancedConfig(config, preserveEditing = false)
-            mutableState.update {
-                it.copy(editTargetName = repository.editSessionTarget())
-            }
-            nav.push(Screen.ProfileOverride)
-        }
-    }
-
-    /** Reloads the session, dropping every unsaved edit. */
-    fun onRevertProfileEdits() {
-        loadEditSession()
-        send(GhostlockEffect.Toast(R.string.profile_reverted))
-    }
-
-    private fun loadEditSession(preserveEditing: Boolean = false) {
-        val snapshot = kernelSnapshot ?: return
-        val pair = snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair) ?: return
-        val session = repository.editSessionController() ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            val release = repository.editSessionRelease() ?: snapshot.kernelRelease
-            val config = runCatching { session.load(release, pair) }.getOrNull()
-                ?: return@launch
-            applyExecutionConfig(config, preserveEditing)
-            applyAdvancedConfig(config, preserveEditing)
-        }
-    }
-
-    /** Writes the draft (general, route/fallback, advanced) into the session. */
-    private suspend fun commitDraftToSession(): ProfileConfig? {
-        val snapshot = kernelSnapshot ?: return null
-        val pair = snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair) ?: return null
-        val session = repository.editSessionController() ?: return null
-        val release = repository.editSessionRelease() ?: snapshot.kernelRelease
-        val general = mutableState.value.executionEditing.mapNotNull { (path, text) ->
-            text.trim().toLongOrNull()?.let { value -> path to value }
-        }.toMap()
-        session.updateGeneral(release, pair, general)
-        session.updateRoute(release, pair, mutableState.value.profileRoute)
-        session.updateFallback(release, pair, mutableState.value.profileFallback)
-        /* General edits share the execution.* tree paths. The advanced rebuild
-         * replaces the whole edit map, so the drafts must be merged in or the
-         * general edits would be dropped. */
-        val drafts = mutableState.value.profileOverrideEditing +
-                mutableState.value.executionEditing
-        val advanced = drafts.mapNotNull { (path, text) ->
-            text.trim().toLongOrNull()?.let { value -> path to value }
-        }.toMap()
-        return runCatching { session.updateAdvanced(release, pair, advanced) }.getOrNull()
-    }
-
-    /**
-     * Exports the edited session. There is no other save: the document on the
-     * SD card is the profile, and an unexported edit is lost.
-     */
-    private fun exportEditSession(selectAfterWrite: Boolean) {
-        viewModelScope.launch(Dispatchers.IO) {
-            if (commitDraftToSession() == null) {
-                send(GhostlockEffect.Toast(R.string.execution_save_failed))
-                return@launch
-            }
-            val snapshot = kernelSnapshot ?: return@launch
-            val text = repository.editSessionDocument()
-            if (text == null) {
-                send(GhostlockEffect.Toast(R.string.export_failed))
-                return@launch
-            }
-            val stem = repository.editSessionTarget()
-                ?.substringBeforeLast('.')
-                ?.takeIf { it.isNotEmpty() }
-                ?: snapshot.kernelRelease.replace(Regex("[^A-Za-z0-9._-]"), "_")
-            requestProfileWrite(
-                PendingProfileWrite(
-                    text = text,
-                    suggestedName = "$stem.conf",
-                    selectAfterWrite = selectAfterWrite,
-                ),
-            )
-        }
-    }
-
-    fun onSaveProfileEdits() = exportEditSession(selectAfterWrite = true)
-
-    fun onSaveProfileAs() = exportEditSession(selectAfterWrite = true)
-
-    fun onExportProfileEdits() = exportEditSession(selectAfterWrite = true)
-
     /** Opens the builtin picker; overrides stay keyed to the device kernel. */
     fun onOpenBuiltinProfiles() {
         val snapshot = kernelSnapshot ?: return
@@ -1229,8 +1084,8 @@ class GhostlockViewModel(
                 send(GhostlockEffect.Toast(R.string.load_builtin_failed))
                 return@launch
             }
-            applyExecutionConfig(config, preserveEditing = false)
-            applyAdvancedConfig(config, preserveEditing = false)
+            applyExecutionConfig(config)
+            applyAdvancedConfig(config)
             refreshSnapshot()
             refreshMergeRows()
             send(GhostlockEffect.Toast(R.string.load_builtin_done))
@@ -1269,40 +1124,9 @@ class GhostlockViewModel(
         return 0
     }
 
-    fun onCloseProfileOverrides() {
-        repository.endEditSession()
-        mutableState.update { it.copy(editTargetName = null) }
-        nav.pop()
-    }
-
-    fun onOpenAdvancedOverrides() {
-        nav.push(Screen.AdvancedOverride)
-        loadEditSession()
-    }
-
-    fun onCloseAdvancedOverrides() {
-        nav.pop()
-    }
-
-    /** Advanced edits are draft-only; saving the session commits them. */
-    fun onProfileOverrideChanged(path: String, value: String) {
-        mutableState.update {
-            it.copy(
-                profileOverrideEditing = it.profileOverrideEditing + (path to value),
-            )
-        }
-    }
-
-    private fun applyAdvancedConfig(config: ProfileConfig, preserveEditing: Boolean) {
+    private fun applyAdvancedConfig(config: ProfileConfig) {
         mutableState.update { state ->
             state.copy(
-                profileOverrideRelease = config.release,
-                profileOverrideRoots = config.roots,
-                profileOverrideEditing = if (preserveEditing) state.profileOverrideEditing
-                else flattenLeaves(config.roots).associate { field ->
-                    field.path to (field.value?.toString() ?: "")
-                },
-                profileInvalidPaths = config.invalidPaths,
                 profileRoute = config.route,
                 profileFallback = config.fallbackTo,
                 activeBuiltinProfile = profileController.activeBuiltinRelease(),
@@ -1311,9 +1135,6 @@ class GhostlockViewModel(
             )
         }
     }
-
-    private fun flattenLeaves(nodes: List<ProfileFieldNode>): List<ProfileFieldNode> =
-        nodes.flatMap { node -> if (node.isGroup) flattenLeaves(node.children) else listOf(node) }
 
     fun selectCpuPair(index: Int) {
         val snapshot = kernelSnapshot ?: return
@@ -1330,8 +1151,8 @@ class GhostlockViewModel(
                         snapshot.cpuPairs[index],
                     )
                 }.getOrNull() ?: return@launch
-                applyExecutionConfig(config, preserveEditing = false)
-                applyAdvancedConfig(config, preserveEditing = false)
+                applyExecutionConfig(config)
+                applyAdvancedConfig(config)
             }
         }
     }
@@ -2084,7 +1905,6 @@ class GhostlockViewModel(
                 shizukuStatus = snapshot.shizukuStatus,
                 crashShellAvailable =
                     repository.crashShellStatus() != ShizukuStatus.NOT_RUNNING,
-                profileInvalidPaths = loaded?.invalidPaths ?: emptySet(),
                 executionHasProfile = loaded?.hasProfile ?: false,
                 profileLayers = loaded?.layers,
                 importedProfilePresent = profileController.importedProfileExists(),

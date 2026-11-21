@@ -18,7 +18,4 @@ internal sealed interface Screen : NavKey {
     data object LoadConfig : Screen
     data object Builtin : Screen
     data object MergePreview : Screen
-    data object ProfileDiff : Screen
-    data object ProfileOverride : Screen
-    data object AdvancedOverride : Screen
 }

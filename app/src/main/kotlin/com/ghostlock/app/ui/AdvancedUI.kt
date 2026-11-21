@@ -1,13 +1,8 @@
 package com.ghostlock.app.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,16 +10,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
@@ -33,16 +22,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ghostlock.app.BuildConfig
 import com.ghostlock.app.R
-import com.ghostlock.app.domain.model.MeasuredKernelInfo
-import com.ghostlock.app.domain.model.MeasurementMergeRow
-import com.ghostlock.app.domain.model.ProfileConfig
-import com.ghostlock.app.domain.model.ProfileDiffRow
-import com.ghostlock.app.domain.model.ProfileFieldNode
-import com.ghostlock.app.domain.model.ProfileLayers
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
-import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -50,16 +32,12 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.basic.TextFieldDefaults
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.icon.basic.Check
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonLocation
 import top.yukonga.miuix.kmp.preference.RadioButtonPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -84,9 +62,6 @@ private fun profileDocsUrl(): String =
 
 private fun Modifier.preferencePageItem(): Modifier =
     this.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 12.dp)
-
-private fun Modifier.profileTreeItem(depth: Int): Modifier =
-    this.fillMaxWidth().padding(start = (12 + depth * 12).dp, end = 12.dp, bottom = 12.dp)
 
 @Composable
 private fun ProfileDocsCard(onOpen: () -> Unit) {
@@ -319,17 +294,6 @@ internal fun ParameterScreen(
                     )
                 }
             }
-            if (state.executionHasProfile) {
-                item(key = "override") {
-                    Card {
-                        ArrowPreference(
-                            title = stringResource(R.string.edit_loaded_profile),
-                            summary = stringResource(R.string.override_summary),
-                            onClick = actions::onOpenProfileOverrides,
-                        )
-                    }
-                }
-            }
             item(key = "docs") {
                 ProfileDocsCard { uriHandler.openUri(profileDocsUrl()) }
             }
@@ -464,131 +428,6 @@ internal fun LoadConfigScreen(
 private fun formatProfileTime(millis: Long): String =
     SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
 
-/** Parameter overrides: general editor, its reset and the advanced submenu. */
-@Composable
-internal fun ProfileOverrideScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
-) {
-    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = stringResource(R.string.override_title),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(onClick = actions::onCloseProfileOverrides) {
-                        Icon(
-                            imageVector = MiuixIcons.Back,
-                            contentDescription = stringResource(R.string.action_back),
-                        )
-                    }
-                },
-            )
-        },
-    ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .imePadding()
-                .scrollEndHaptic()
-                .overScrollVertical()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            contentPadding = pageContentPadding(
-                paddingValues, top = 0.dp, bottom = 0.dp, horizontalMin = 0.dp,
-            ),
-        ) {
-            item(key = "top-space") { Spacer(Modifier.height(12.dp)) }
-            item(key = "general-banner") {
-                val source = buildList {
-                    /* The session's own base, not the live copy: a rebase to the
-                     * bundle changes this banner while the copy still exists. */
-                    val externalApplied = state.profileLayers?.externalApplied == true
-                    if (externalApplied) {
-                        add(stringResource(R.string.profile_kind_external))
-                    }
-                    state.activeBuiltinProfile?.let {
-                        add(stringResource(R.string.builtin_profile_label, it))
-                        add(stringResource(R.string.target_kernel, state.executionRelease))
-                    }
-                    if (!externalApplied && state.activeBuiltinProfile == null) {
-                        add(stringResource(R.string.builtin_profile_label, state.executionRelease))
-                    }
-                    state.editTargetName?.let {
-                        add(stringResource(R.string.editing_profile, it))
-                    }
-                }.joinToString("\n")
-                ProfileHintBanner(
-                    text = source,
-                    modifier = Modifier.preferencePageItem(),
-                )
-            }
-            if (state.executionHasProfile) {
-                item(key = "fields") {
-                    ExecutionEditor(
-                        state = state,
-                        actions = actions,
-                        modifier = Modifier.preferencePageItem(),
-                    )
-                }
-            }
-            item(key = "advanced") {
-                Card(modifier = Modifier.preferencePageItem()) {
-                    ArrowPreference(
-                        title = stringResource(R.string.debug_profile_override),
-                        summary = stringResource(R.string.debug_profile_override_summary),
-                        onClick = actions::onOpenAdvancedOverrides,
-                    )
-                }
-            }
-            item(key = "actions") {
-                Column(
-                    modifier = Modifier.preferencePageItem(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    ProfileHintBanner(
-                        text = stringResource(R.string.profile_editor_memory_hint),
-                    )
-                    TextButton(
-                        text = stringResource(R.string.override_export),
-                        onClick = actions::onSaveProfileEdits,
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    TextButton(
-                        text = stringResource(R.string.profile_export_as_new),
-                        onClick = actions::onSaveProfileAs,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        TextButton(
-                            text = stringResource(R.string.profile_compare_bundle),
-                            onClick = actions::onOpenProfileDiff,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(
-                            text = stringResource(R.string.profile_rebase),
-                            onClick = actions::onRebaseToBundle,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    TextButton(
-                        text = stringResource(R.string.profile_revert),
-                        onClick = actions::onRevertProfileEdits,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-            item(key = "bottom-space") {
-                Spacer(Modifier.height(24.dp).navigationBarsPadding())
-            }
-        }
-    }
-}
-
 /**
  * Builtin picker: the device kernel stays pinned on top, every bundled
  * release follows, ordered by how close it is to the device kernel.
@@ -710,119 +549,6 @@ private fun BuiltinProfileRow(
     }
 }
 
-/** Tree editor for every numeric leaf of the resolved profile. */
-@Composable
-internal fun AdvancedOverrideScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
-) {
-    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
-    val expanded = remember { mutableStateMapOf<String, Boolean>() }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = stringResource(R.string.debug_profile_override),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(onClick = actions::onCloseAdvancedOverrides) {
-                        Icon(
-                            imageVector = MiuixIcons.Back,
-                            contentDescription = stringResource(R.string.action_back),
-                        )
-                    }
-                },
-            )
-        },
-    ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .imePadding()
-                .scrollEndHaptic()
-                .overScrollVertical()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            contentPadding = pageContentPadding(
-                paddingValues, top = 0.dp, bottom = 0.dp, horizontalMin = 0.dp,
-            ),
-        ) {
-            item(key = "top-space") { Spacer(Modifier.height(12.dp)) }
-            item(key = "warning") {
-                ProfileHintBanner(
-                    text = stringResource(R.string.debug_profile_override_warning),
-                    warning = true,
-                    modifier = Modifier.preferencePageItem(),
-                )
-            }
-            item(key = "route") {
-                Card(modifier = Modifier.preferencePageItem()) {
-                    Column {
-                        OverlaySpinnerPreference(
-                            title = stringResource(R.string.route_label),
-                            items = (listOf(stringResource(R.string.route_auto)) + ProfileConfig.Routes)
-                                .map { DropdownItem(icon = null, title = it) },
-                            selectedIndex = ProfileConfig.Routes.indexOf(state.profileRoute) + 1,
-                            showValue = true,
-                            onSelectedIndexChange = actions::onRouteChanged,
-                        )
-                        OverlaySpinnerPreference(
-                            title = stringResource(R.string.fallback_label),
-                            items = (listOf(stringResource(R.string.fallback_none)) + ProfileConfig.Routes)
-                                .map { DropdownItem(icon = null, title = it) },
-                            selectedIndex = ProfileConfig.Routes.indexOf(state.profileFallback) + 1,
-                            showValue = true,
-                            onSelectedIndexChange = actions::onFallbackChanged,
-                        )
-                    }
-                }
-            }
-            item(key = "release") {
-                val source = buildList {
-                    add(
-                        stringResource(
-                            R.string.loaded_profile,
-                            state.activeBuiltinProfile ?: state.profileOverrideRelease,
-                        ),
-                    )
-                    if (state.activeBuiltinProfile != null) {
-                        add(stringResource(R.string.target_kernel, state.profileOverrideRelease))
-                    }
-                    if (state.profileLayers?.externalApplied == true) {
-                        add(stringResource(R.string.profile_kind_external))
-                    }
-                }.joinToString("\n")
-                ProfileHintBanner(
-                    text = source,
-                    warning = state.activeBuiltinProfile != null,
-                    modifier = Modifier.preferencePageItem(),
-                )
-            }
-            item(key = "tree") {
-                Column {
-                    ProfileTree(
-                        nodes = state.profileOverrideRoots,
-                        depth = 0,
-                        editing = state.profileOverrideEditing,
-                        invalidPaths = state.profileInvalidPaths,
-                        expanded = expanded,
-                        onToggle = { path, value -> expanded[path] = value },
-                        onValueChange = actions::onProfileOverrideChanged,
-                    )
-                }
-            }
-            item(key = "actions") {
-                TextButton(
-                    text = stringResource(R.string.profile_revert),
-                    onClick = actions::onRevertProfileEdits,
-                    modifier = Modifier.preferencePageItem(),
-                )
-            }
-            item(key = "bottom-space") {
-                Spacer(Modifier.height(24.dp).navigationBarsPadding())
-            }
-        }
-    }
-}
-
 /**
  * Read-only view of the measured database: per kernel, each root-measured fact
  * with its source, time and the raw evidence line it came from. Nothing here
@@ -934,95 +660,6 @@ internal fun MeasurementsScreen(
     }
 }
 
-/** Parent/child tree with collapsible groups and highlighted overrides. */
-@Composable
-private fun ProfileTree(    nodes: List<ProfileFieldNode>,
-    depth: Int,
-    editing: Map<String, String>,
-    invalidPaths: Set<String>,
-    expanded: MutableMap<String, Boolean>,
-    onToggle: (String, Boolean) -> Unit,
-    onValueChange: (String, String) -> Unit,
-) {
-    nodes.forEach { node ->
-        if (node.isGroup) {
-            val isExpanded = expanded[node.path] ?: false
-            val arrowRotation by animateFloatAsState(
-                targetValue = if (isExpanded) 90f else 0f,
-                label = "group-arrow",
-            )
-            Column {
-                Card(
-                    modifier = Modifier.profileTreeItem(depth),
-                    showIndication = true,
-                    onClick = { onToggle(node.path, !isExpanded) },
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = node.name,
-                            modifier = Modifier.weight(1f),
-                            fontSize = if (depth == 0) 17.sp else 15.sp,
-                            fontWeight = if (node.overridden) FontWeight.Bold
-                            else FontWeight.SemiBold,
-                            color = if (node.overridden) OverrideHighlight
-                            else MiuixTheme.colorScheme.onSurface,
-                        )
-                        Icon(
-                            imageVector = MiuixIcons.Basic.ArrowRight,
-                            contentDescription = null,
-                            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            modifier = Modifier
-                                .size(18.dp)
-                                .rotate(arrowRotation),
-                        )
-                    }
-                }
-                AnimatedVisibility(
-                    visible = isExpanded,
-                    enter = expandVertically(),
-                    exit = shrinkVertically(),
-                ) {
-                    Column {
-                        ProfileTree(
-                            nodes = node.children,
-                            depth = depth + 1,
-                            editing = editing,
-                            invalidPaths = invalidPaths,
-                            expanded = expanded,
-                            onToggle = onToggle,
-                            onValueChange = onValueChange,
-                        )
-                    }
-                }
-            }
-        } else {
-            val text = editing[node.path].orEmpty()
-            val invalid = isFieldInputInvalid(text) || node.path in invalidPaths
-            TextField(
-                value = text,
-                onValueChange = { value -> onValueChange(node.path, value) },
-                label = fieldLabel(node.path, node.name),
-                colors = when {
-                    invalid ->
-                        TextFieldDefaults.textFieldColors(labelColor = FieldErrorHighlight)
-
-                    node.overridden ->
-                        TextFieldDefaults.textFieldColors(labelColor = OverrideHighlight)
-
-                    else -> TextFieldDefaults.textFieldColors()
-                },
-                modifier = Modifier.profileTreeItem(depth),
-                singleLine = true,
-            )
-        }
-    }
-}
-
 /**
  * Home merge preview: the facts the measured database would change, their raw
  * evidence, and the one action that matters — exporting a new document. The
@@ -1114,83 +751,6 @@ internal fun MergePreviewScreen(
                         .preferencePageItem()
                         .fillMaxWidth(),
                 )
-            }
-            item(key = "bottom-space") {
-                Spacer(Modifier.height(24.dp).navigationBarsPadding())
-            }
-        }
-    }
-}
-
-/** Read-only list of the editor session's differences from the bundle. */
-@Composable
-internal fun ProfileDiffScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
-) {
-    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = stringResource(R.string.profile_diff_title),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(onClick = actions::onCloseProfileDiff) {
-                        Icon(
-                            imageVector = MiuixIcons.Back,
-                            contentDescription = stringResource(R.string.action_back),
-                        )
-                    }
-                },
-            )
-        },
-    ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .scrollEndHaptic()
-                .overScrollVertical()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            contentPadding = pageContentPadding(paddingValues),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            if (state.profileDiffRows.isEmpty()) {
-                item(key = "empty") {
-                    ProfileHintBanner(
-                        text = stringResource(R.string.profile_diff_empty),
-                        modifier = Modifier.preferencePageItem(),
-                    )
-                }
-            }
-            items(state.profileDiffRows, key = { it.path }) { row ->
-                Card(modifier = Modifier.preferencePageItem()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = row.path,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MiuixTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = buildString {
-                                append(stringResource(R.string.profile_diff_current))
-                                append(": ")
-                                append(row.current ?: "—")
-                                append("    ")
-                                append(stringResource(R.string.profile_diff_bundled))
-                                append(": ")
-                                append(row.bundled ?: "—")
-                            },
-                            style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        )
-                    }
-                }
             }
             item(key = "bottom-space") {
                 Spacer(Modifier.height(24.dp).navigationBarsPadding())

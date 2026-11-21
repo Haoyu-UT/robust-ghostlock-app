@@ -336,16 +336,9 @@ private fun GhostlockRoute(
             override fun onDialogDismiss() = viewModel.onDialogDismiss()
             override fun onOverwriteConfirm() = viewModel.onOverwriteConfirm()
             override fun onOverwriteDismiss() = viewModel.onOverwriteDismiss()
-            override fun onExecutionFieldChanged(path: String, value: String) =
-                viewModel.updateExecutionField(path, value)
-
             override fun onRouteChanged(index: Int) = viewModel.onRouteChanged(index)
             override fun onFallbackChanged(index: Int) = viewModel.onFallbackChanged(index)
             override fun onExportProfile() = viewModel.onExportProfile()
-            override fun onSaveProfileEdits() = viewModel.onSaveProfileEdits()
-            override fun onSaveProfileAs() = viewModel.onSaveProfileAs()
-            override fun onExportProfileEdits() = viewModel.onExportProfileEdits()
-            override fun onRevertProfileEdits() = viewModel.onRevertProfileEdits()
             override fun onOpenAdvanced() = viewModel.onOpenAdvanced()
             override fun onCloseAdvanced() = viewModel.onCloseAdvanced()
             override fun onOpenVrKo() = viewModel.onOpenVrKo()
@@ -387,20 +380,10 @@ private fun GhostlockRoute(
             override fun onOpenMergePreview() = viewModel.onOpenMergePreview()
             override fun onCloseMergePreview() = viewModel.onCloseMergePreview()
             override fun onExportMergedProfile() = viewModel.onExportMergedProfile()
-            override fun onOpenProfileDiff() = viewModel.onOpenProfileDiff()
-            override fun onCloseProfileDiff() = viewModel.onCloseProfileDiff()
-            override fun onRebaseToBundle() = viewModel.onRebaseToBundle()
             override fun onOpenBuiltinProfiles() = viewModel.onOpenBuiltinProfiles()
             override fun onCloseBuiltinProfiles() = viewModel.onCloseBuiltinProfiles()
             override fun onSelectBuiltinProfile(release: String?) =
                 viewModel.onSelectBuiltinProfile(release)
-
-            override fun onOpenProfileOverrides() = viewModel.onOpenProfileOverrides()
-            override fun onCloseProfileOverrides() = viewModel.onCloseProfileOverrides()
-            override fun onOpenAdvancedOverrides() = viewModel.onOpenAdvancedOverrides()
-            override fun onCloseAdvancedOverrides() = viewModel.onCloseAdvancedOverrides()
-            override fun onProfileOverrideChanged(path: String, value: String) =
-                viewModel.onProfileOverrideChanged(path, value)
         },
     )
 }

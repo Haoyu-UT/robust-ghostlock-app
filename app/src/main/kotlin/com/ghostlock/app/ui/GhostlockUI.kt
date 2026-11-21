@@ -52,8 +52,6 @@ import com.ghostlock.app.domain.model.CpuPair
 import com.ghostlock.app.domain.model.ExecutionFieldValue
 import com.ghostlock.app.domain.model.MeasuredKernelInfo
 import com.ghostlock.app.domain.model.MeasurementMergeRow
-import com.ghostlock.app.domain.model.ProfileDiffRow
-import com.ghostlock.app.domain.model.ProfileFieldNode
 import com.ghostlock.app.domain.model.ProfileLayers
 import com.ghostlock.app.domain.model.CrashEvidenceInfo
 import com.ghostlock.app.domain.model.RunLogEntry
@@ -70,7 +68,6 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.basic.TextFieldDefaults
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Copy
@@ -141,16 +138,8 @@ data class GhostlockUiState(
     val executionRelease: String = "",
     val executionHasProfile: Boolean = false,
     val executionFields: List<ExecutionFieldValue> = emptyList(),
-    val executionEditing: Map<String, String> = emptyMap(),
     val measuredKernels: List<MeasuredKernelInfo> = emptyList(),
     val debugKernelLogEnabled: Boolean = true,
-    /** Stored document edited by the open session; null for the builtin. */
-    val editTargetName: String? = null,
-    val profileOverrideRelease: String = "",
-    val profileOverrideRoots: List<ProfileFieldNode> = emptyList(),
-    val profileOverrideEditing: Map<String, String> = emptyMap(),
-    /** Controller-reported geometry violations, dotted paths. */
-    val profileInvalidPaths: Set<String> = emptySet(),
     /** Explicit route from the profile; null means geometry inference. */
     val profileRoute: String? = null,
     /** Declared fallback route; null/"none" means disabled. */
@@ -169,8 +158,6 @@ data class GhostlockUiState(
     val stridePicker: StridePickerUiState? = null,
     /** Measured facts that would change the active profile. */
     val mergeRows: List<MeasurementMergeRow> = emptyList(),
-    /** Diff of the editor session against the bundle. */
-    val profileDiffRows: List<ProfileDiffRow> = emptyList(),
 )
 
 
@@ -241,14 +228,9 @@ interface GhostlockActions {
     fun onStrideUse()
     fun onStrideSkip()
     fun onStridePickerDismiss()
-    fun onExecutionFieldChanged(path: String, value: String)
     fun onRouteChanged(index: Int)
     fun onFallbackChanged(index: Int)
     fun onExportProfile()
-    fun onSaveProfileEdits()
-    fun onSaveProfileAs()
-    fun onExportProfileEdits()
-    fun onRevertProfileEdits()
     fun onOpenAdvanced()
     fun onCloseAdvanced()
     fun onOpenVrKo()
@@ -265,17 +247,9 @@ interface GhostlockActions {
     fun onOpenMergePreview()
     fun onCloseMergePreview()
     fun onExportMergedProfile()
-    fun onOpenProfileDiff()
-    fun onCloseProfileDiff()
-    fun onRebaseToBundle()
     fun onOpenBuiltinProfiles()
     fun onCloseBuiltinProfiles()
     fun onSelectBuiltinProfile(release: String?)
-    fun onOpenProfileOverrides()
-    fun onCloseProfileOverrides()
-    fun onOpenAdvancedOverrides()
-    fun onCloseAdvancedOverrides()
-    fun onProfileOverrideChanged(path: String, value: String)
 }
 
 
@@ -292,9 +266,6 @@ private fun closeScreen(screen: Screen, actions: GhostlockActions) {
         Screen.LoadConfig -> actions.onCloseLoadConfig()
         Screen.Builtin -> actions.onCloseBuiltinProfiles()
         Screen.MergePreview -> actions.onCloseMergePreview()
-        Screen.ProfileDiff -> actions.onCloseProfileDiff()
-        Screen.ProfileOverride -> actions.onCloseProfileOverrides()
-        Screen.AdvancedOverride -> actions.onCloseAdvancedOverrides()
     }
 }
 
@@ -368,15 +339,6 @@ internal fun GhostlockApp(
                     }
                     entry<Screen.MergePreview>(swipeDismiss = swipeBack) {
                         MergePreviewScreen(state = state, actions = actions)
-                    }
-                    entry<Screen.ProfileDiff>(swipeDismiss = swipeBack) {
-                        ProfileDiffScreen(state = state, actions = actions)
-                    }
-                    entry<Screen.ProfileOverride>(swipeDismiss = swipeBack) {
-                        ProfileOverrideScreen(state = state, actions = actions)
-                    }
-                    entry<Screen.AdvancedOverride>(swipeDismiss = swipeBack) {
-                        AdvancedOverrideScreen(state = state, actions = actions)
                     }
                 }
                 GhostlockDialog(state = state, actions = actions)
@@ -1381,46 +1343,7 @@ private fun GhostlockOverwriteDialog(
     )
 }
 
-/* profile-ui: resolved execution view with auto-saved sparse overrides. */
-@Composable
-internal fun ExecutionEditor(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        for (field in state.executionFields) {
-            val text = state.executionEditing[field.path] ?: field.value.toString()
-            val invalid = isFieldInputInvalid(text) || field.path in state.profileInvalidPaths
-            TextField(
-                value = text,
-                onValueChange = { value -> actions.onExecutionFieldChanged(field.path, value) },
-                label = fieldLabel(field.path, field.path.substringAfterLast('.')),
-                colors = when {
-                    invalid ->
-                        TextFieldDefaults.textFieldColors(labelColor = FieldErrorHighlight)
-
-                    field.overridden ->
-                        TextFieldDefaults.textFieldColors(labelColor = OverrideHighlight)
-
-                    else -> TextFieldDefaults.textFieldColors()
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-        }
-    }
-}
-
 internal val OverrideHighlight = Color(0xFFF5A623)
-
-/** Red marks an unfilled or non-numeric field in the parameter editors. */
-internal val FieldErrorHighlight = Color(0xFFE53935)
-
-internal fun isFieldInputInvalid(text: String): Boolean = text.trim().toLongOrNull() == null
 
 @Composable
 private fun LogPanel(
