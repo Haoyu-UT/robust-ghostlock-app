@@ -362,8 +362,10 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   used to render the Shizuku hint's "enable" label. Device: the parse source list, the URL input,
   the manager picker with its leading row, and the parse-failure notice. The parse stage machine
   stays for N2b.)*
-- [ ] **N2b** — the parse flow's step state: `ParseStep` replaces `parseDialogStage` and the
-  pending-* variables (`ui-architecture-refactor-plan.md` §3.3, `ParseState`).
+- [x] **N2b** — the parse state machine. *(2026-11-21: `ParseStep` — Idle / ModePick / SourcePick /
+  Phys / Route / Plan / Lock / Overwrite — carries every pending choice; `parseDialogStage` and the
+  twelve `pending*` variables are gone, and so is `PendingConfirmation`. Cancelling a choice resets
+  the step. Device: generation → local image → the payload/boot dialog → cancel → back.)*
 - [ ] **N3** — `SupportStatus` (the support plan, re-homed) + editor state holder.
 - [ ] **N4** — delete the three editor screens (§3.7), then per-screen states/actions and the
   ViewModel split, one screen per commit.

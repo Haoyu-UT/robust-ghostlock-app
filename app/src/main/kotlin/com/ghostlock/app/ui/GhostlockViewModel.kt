@@ -141,7 +141,30 @@ private data class RouteChoice(
     val reason: String,
 )
 
-private enum class ParseDialogStage { Mode, PhysImage, Route, Plan, Lock, Source }
+/**
+ * The parse flow's step. Every pending choice travels with the step, so a
+ * cancelled or completed dialog cannot leave a partial postback behind.
+ */
+private sealed interface ParseStep {
+    data object Idle : ParseStep
+    data object ModePick : ParseStep
+    data object SourcePick : ParseStep
+    data class Phys(val image: PhysImage, val after: ParseResult.Parsed?) : ParseStep
+    data class Route(
+        val request: ParseRequest,
+        val choices: List<RouteChoice>,
+        val options: OptionSuperset?,
+    ) : ParseStep
+
+    data class Plan(
+        val parse: ParseResult.Parsed,
+        val plans: RoutePlans,
+        val decision: OptionDecision.Offer,
+    ) : ParseStep
+
+    data class Lock(val parse: ParseResult.Parsed) : ParseStep
+    data class Overwrite(val request: ParseRequest, val releases: List<String>) : ParseStep
+}
 
 class GhostlockViewModel(
     private val repository: GhostlockRepository,
@@ -175,21 +198,7 @@ class GhostlockViewModel(
     private var physUefiOffered = false
     private var physDtboOffered = false
     /** The phys prompt on screen and the parsed result waiting behind it. */
-    private var pendingPhysImage: PhysImage? = null
-    private var pendingPhysAfter: ParseResult.Parsed? = null
-    private var parseDialogStage = ParseDialogStage.Mode
-    private var pendingConfirmation: PendingConfirmation? = null
-    /** The pass that reported Ambiguous, re-run with the picked route. */
-    private var pendingRouteParse: ParseRequest? = null
-    private var pendingRouteChoices: List<RouteChoice> = emptyList()
-    /** The option superset from the ambiguous pass, when the extractor wrote one. */
-    private var pendingRouteOptions: OptionSuperset? = null
-    private var pendingLockParse: ParseResult.Parsed? = null
-    /** The page-free option offer on screen. */
-    private var pendingPlanParse: ParseResult.Parsed? = null
-    private var pendingPlanChoices: List<OptionPlan> = emptyList()
-    private var pendingPlanPageOffered = false
-    private var pendingPlanRoute = ""
+    private var parseStep: ParseStep = ParseStep.Idle
 
     /** The generated document and its stride evidence, held while the picker is up. */
     private var pendingStrideParse: ParseResult.Parsed? = null
@@ -1762,7 +1771,7 @@ class GhostlockViewModel(
 
     fun parseOffsets() {
         resetParseSession()
-        parseDialogStage = ParseDialogStage.Mode
+        parseStep = ParseStep.ModePick
         mutableState.update {
             it.copy(
                 dialog = AppDialog.ListDialog(
@@ -1784,7 +1793,7 @@ class GhostlockViewModel(
      */
     fun promptParseSource() {
         resetParseSession()
-        parseDialogStage = ParseDialogStage.Source
+        parseStep = ParseStep.SourcePick
         mutableState.update {
             it.copy(
                 dialog = AppDialog.ListDialog(
@@ -1800,13 +1809,11 @@ class GhostlockViewModel(
 
     private fun resetParseSession() {
         pendingParse = null
-        pendingLockParse = null
+        parseStep = ParseStep.Idle
         physVendorBootOffered = false
         physXblOffered = false
         physUefiOffered = false
         physDtboOffered = false
-        pendingPhysImage = null
-        pendingPhysAfter = null
     }
 
     fun promptParseUrl() {
@@ -1882,34 +1889,33 @@ class GhostlockViewModel(
             return
         }
         dismissDialog()
-        when (parseDialogStage) {
-            ParseDialogStage.Mode -> when (index) {
+        when (val step = parseStep) {
+            ParseStep.ModePick -> when (index) {
                 0 -> pickPayload()
                 1 -> pickBoot()
             }
 
-            ParseDialogStage.Source -> {
-                parseDialogStage = ParseDialogStage.Mode
+            ParseStep.SourcePick -> {
+                parseStep = ParseStep.ModePick
                 when (index) {
                     0 -> promptParseUrl()
                     1 -> parseOffsets()
                 }
             }
 
-            ParseDialogStage.PhysImage -> {
-                val image = pendingPhysImage
-                if (image == null || index > 1) {
+            is ParseStep.Phys -> {
+                if (index > 1) {
                     // no-op; keep the dialog state intact
                 } else if (index == 0) {
-                    when (image) {
+                    when (step.image) {
                         PhysImage.VENDOR_BOOT -> send(GhostlockEffect.PickDocument(DocumentRequest.VendorBootImage))
                         PhysImage.XBL -> send(GhostlockEffect.PickDocument(DocumentRequest.XblImage))
                         PhysImage.UEFI -> send(GhostlockEffect.PickDocument(DocumentRequest.UefiImage))
                         PhysImage.DTBO -> send(GhostlockEffect.PickDocument(DocumentRequest.DtboImage))
                     }
                 } else {
-                    val after = pendingPhysAfter
-                    pendingPhysImage = null
+                    val after = step.after
+                    parseStep = ParseStep.Idle
                     if (after != null) {
                         viewModelScope.launch(Dispatchers.IO) { advancePhys(after) }
                     } else {
@@ -1918,23 +1924,19 @@ class GhostlockViewModel(
                 }
             }
 
-            ParseDialogStage.Route -> {
-                val parse = pendingRouteParse
-                val choice = pendingRouteChoices.getOrNull(index)
+            is ParseStep.Route -> {
+                val choice = step.choices.getOrNull(index)
                 val route = choice?.route
                 val carrier = choice?.carrier
-                val options = pendingRouteOptions
-                pendingRouteParse = null
-                pendingRouteChoices = emptyList()
-                pendingRouteOptions = null
-                parseDialogStage = ParseDialogStage.Mode
-                if (parse != null && route != null) {
+                val options = step.options
+                parseStep = ParseStep.Idle
+                if (route != null) {
                     val carrierLabel = carrier?.takeIf { it != "native" }
                     appendLog("route chosen: $route" + (carrierLabel?.let { " ($it)" } ?: ""))
                     appendLog("pipeline order: ${options?.pipelineOrder?.joinToString(", ") ?: "legacy default"}")
                     /* Keep the sidecar re-run path; when the superset is
                      * present the route choice itself needs no second pass. */
-                    pendingParse = parse.copy(route = route)
+                    pendingParse = step.request.copy(route = route)
                     val synthetic = options?.let { parsedFromOptions(it, route, carrier) }
                     if (synthetic != null) {
                         viewModelScope.launch(Dispatchers.IO) { advancePhys(synthetic) }
@@ -1944,31 +1946,26 @@ class GhostlockViewModel(
                 }
             }
 
-            ParseDialogStage.Plan -> {
-                val parse = pendingPlanParse
-                val route = pendingPlanRoute
-                val pageOffered = pendingPlanPageOffered
-                val choices = pendingPlanChoices
-                pendingPlanParse = null
-                pendingPlanChoices = emptyList()
-                pendingPlanPageOffered = false
-                pendingPlanRoute = ""
-                parseDialogStage = ParseDialogStage.Mode
-                val options = parse?.options
-                if (parse == null || options == null) return
-                val plans = options.plansFor(route) ?: return
+            is ParseStep.Plan -> {
+                val parse = step.parse
+                val options = parse.options
+                val plans = step.plans
+                val pageOffered = step.decision.pageOffered
+                val choices = step.decision.options
+                parseStep = ParseStep.Idle
+                if (options == null) return
                 if (pageOffered && index == 0) {
                     /* Page-based: the lock-source choice still applies when a
                      * safe anchor exists. */
                     if (plans.anchorOnly != null && showLockDialog(parse)) return
-                    val cut = options.cut(route, plans.page, options.device, carrier = parse.carrier)
+                    val cut = options.cut(plans.route, plans.page, options.device, carrier = parse.carrier)
                         ?: return
                     appendLog("option: page (no page-free)")
                     viewModelScope.launch { continueParsed(parse, cut) }
                     return
                 }
                 val plan = choices.getOrNull(index - if (pageOffered) 1 else 0) ?: return
-                val cut = options.cut(route, plan, options.device, carrier = parse.carrier)
+                val cut = options.cut(plans.route, plan, options.device, carrier = parse.carrier)
                     ?: return
                 appendLog(
                     "option: " + plan.label + if (plan.conditioned) " (needs review)" else "",
@@ -1976,12 +1973,11 @@ class GhostlockViewModel(
                 viewModelScope.launch { continueParsed(parse, cut) }
             }
 
-            ParseDialogStage.Lock -> {
-                val parse = pendingLockParse
-                pendingLockParse = null
-                parseDialogStage = ParseDialogStage.Mode
-                val document = parse?.documentText
-                if (parse != null && document != null) {
+            is ParseStep.Lock -> {
+                val parse = step.parse
+                parseStep = ParseStep.Idle
+                val document = parse.documentText
+                if (document != null) {
                     if (index == 1) {
                         appendLog("lock source: anchor")
                         viewModelScope.launch { continueParsed(parse, document) }
@@ -1999,6 +1995,8 @@ class GhostlockViewModel(
                     }
                 }
             }
+
+            ParseStep.Idle, is ParseStep.Overwrite -> Unit
         }
     }
 
@@ -2051,7 +2049,7 @@ class GhostlockViewModel(
         val dialog = state.value.dialog
         val selectUri = pendingSelectUri
         pendingSelectUri = null
-        dismissDialog(clearConfirmation = false)
+        dismissDialog()
         when {
             selectUri != null -> selectExternalProfile(selectUri)
             dialog is AppDialog.Input -> parseUrl(value)
@@ -2064,29 +2062,28 @@ class GhostlockViewModel(
     }
 
     fun onDialogDismiss() {
-        if (parseDialogStage == ParseDialogStage.Route) {
-            pendingRouteParse = null
-            pendingRouteChoices = emptyList()
-            pendingRouteOptions = null
-            parseDialogStage = ParseDialogStage.Mode
-            appendLog("result: route choice cancelled")
-        }
-        if (parseDialogStage == ParseDialogStage.Plan) {
-            pendingPlanParse = null
-            pendingPlanChoices = emptyList()
-            pendingPlanPageOffered = false
-            pendingPlanRoute = ""
-            parseDialogStage = ParseDialogStage.Mode
-            appendLog("result: option choice cancelled")
-        }
-        if (parseDialogStage == ParseDialogStage.Lock) {
-            pendingLockParse = null
-            parseDialogStage = ParseDialogStage.Mode
-            appendLog("result: lock source choice cancelled")
-        }
-        if (parseDialogStage == ParseDialogStage.Source) {
-            parseDialogStage = ParseDialogStage.Mode
-            appendLog("result: profile source choice cancelled")
+        when (parseStep) {
+            is ParseStep.Route -> {
+                parseStep = ParseStep.Idle
+                appendLog("result: route choice cancelled")
+            }
+
+            is ParseStep.Plan -> {
+                parseStep = ParseStep.Idle
+                appendLog("result: option choice cancelled")
+            }
+
+            is ParseStep.Lock -> {
+                parseStep = ParseStep.Idle
+                appendLog("result: lock source choice cancelled")
+            }
+
+            ParseStep.SourcePick -> {
+                parseStep = ParseStep.Idle
+                appendLog("result: profile source choice cancelled")
+            }
+
+            else -> Unit
         }
         pendingSelectUri = null
         if (state.value.generationStep == GenerationStep.Confirm) {
@@ -2228,8 +2225,6 @@ class GhostlockViewModel(
 
     private fun launchParse() {
         val request = pendingParse ?: return
-        pendingPhysImage = null
-        pendingPhysAfter = null
         viewModelScope.launch(Dispatchers.IO) { runParse(request) }
     }
 
@@ -2371,7 +2366,7 @@ class GhostlockViewModel(
                 )
             ) {
                 is ParseResult.RequiresOverwrite -> {
-                    pendingConfirmation = PendingConfirmation.Parse(request)
+                    parseStep = ParseStep.Overwrite(request, result.releases)
                     showOverwriteDialog(result.releases)
                 }
 
@@ -2441,10 +2436,7 @@ class GhostlockViewModel(
                 }
             }
         }
-        pendingRouteParse = request
-        pendingRouteChoices = choices
-        pendingRouteOptions = options
-        parseDialogStage = ParseDialogStage.Route
+        parseStep = ParseStep.Route(request, choices, options)
         /* The row is two fields — route and carrier — and nothing else. The
          * derivation reason is technical detail for the generation log. */
         choices.forEach { choice ->
@@ -2505,8 +2497,7 @@ class GhostlockViewModel(
 
     /** One per-platform prompt: attach the recommended image or skip it. */
     private fun showPhysPrompt(image: PhysImage, after: ParseResult.Parsed?) {
-        pendingPhysImage = image
-        pendingPhysAfter = after
+        parseStep = ParseStep.Phys(image, after)
         when (image) {
             PhysImage.VENDOR_BOOT -> physVendorBootOffered = true
             PhysImage.XBL -> physXblOffered = true
@@ -2525,7 +2516,6 @@ class GhostlockViewModel(
             PhysImage.UEFI -> R.string.parse_phys_attach_uefi
             PhysImage.DTBO -> R.string.parse_phys_attach_dtbo
         }
-        parseDialogStage = ParseDialogStage.PhysImage
         mutableState.update {
             it.copy(
                 generationStep = GenerationStep.Confirm,
@@ -2594,8 +2584,7 @@ class GhostlockViewModel(
     /** The page/anchor lock-source dialog; false when there is no anchor. */
     private fun showLockDialog(result: ParseResult.Parsed): Boolean {
         if (!result.hasAnchor) return false
-        pendingLockParse = result
-        parseDialogStage = ParseDialogStage.Lock
+        parseStep = ParseStep.Lock(result)
         val options = result.options
         val route = result.route
             ?: options?.routes?.firstOrNull { it.verdict == OptionSuperset.Feasible }?.route
@@ -2640,11 +2629,7 @@ class GhostlockViewModel(
         plans: RoutePlans,
         decision: OptionDecision.Offer,
     ) {
-        pendingPlanParse = result
-        pendingPlanChoices = decision.options
-        pendingPlanPageOffered = decision.pageOffered
-        pendingPlanRoute = plans.route
-        parseDialogStage = ParseDialogStage.Plan
+        parseStep = ParseStep.Plan(result, plans, decision)
         mutableState.update {
             it.copy(
                 generationStep = GenerationStep.Confirm,
@@ -2795,7 +2780,7 @@ class GhostlockViewModel(
     }
 
     fun onOverwriteDismiss() {
-        pendingConfirmation = null
+        parseStep = ParseStep.Idle
         running = false
         appendLog("result: overwrite cancelled")
         mutableState.update {
@@ -2810,14 +2795,10 @@ class GhostlockViewModel(
     }
 
     private fun confirmPendingOperation() {
-        val confirmation = pendingConfirmation ?: return
-        pendingConfirmation = null
-        when (confirmation) {
-            is PendingConfirmation.Parse -> {
-                pendingParse = confirmation.request.copy(overwrite = true)
-                launchParse()
-            }
-        }
+        val step = parseStep as? ParseStep.Overwrite ?: return
+        parseStep = ParseStep.Idle
+        pendingParse = step.request.copy(overwrite = true)
+        launchParse()
     }
 
     private fun showOverwriteDialog(releases: List<String>) {
@@ -2840,9 +2821,8 @@ class GhostlockViewModel(
         return if (rest > 0) "$head\n… (+$rest)" else head
     }
 
-    private fun dismissDialog(clearConfirmation: Boolean = true) {
+    private fun dismissDialog() {
         managerPickerOpen = false
-        if (clearConfirmation) pendingConfirmation = null
         /* Shown is as good as read: acknowledging on the way out keeps the
          * notice to once per build however it was dismissed. */
         (state.value.dialog as? AppDialog.Notice)?.layerNotice?.let {
@@ -2909,10 +2889,6 @@ class GhostlockViewModel(
         6 -> "kernel has fixed the vulnerability"
         -1 -> "parse timed out"
         else -> "parse failed"
-    }
-
-    private sealed interface PendingConfirmation {
-        data class Parse(val request: ParseRequest) : PendingConfirmation
     }
 
     private data class PendingGeneratedProfile(val text: String, val name: String)
