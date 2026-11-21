@@ -294,12 +294,18 @@ private fun GhostlockRoute(
     onEffect: (GhostlockEffect) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val session by viewModel.session.collectAsStateWithLifecycle()
     LaunchedEffect(viewModel.effects) {
         viewModel.effects.collect(onEffect)
     }
     GhostlockApp(
         state = state,
+        session = session,
         nav = viewModel.nav,
+        homeActions = viewModel.homeActions(),
+        runSettingsActions = viewModel.runSettingsActions(),
+        advancedActions = viewModel.advancedActions(),
+        parameterActions = viewModel.parametersActions(),
         actions = object : GhostlockActions {
             override fun onRun() = viewModel.onRun()
             override fun onStatusClick() = viewModel.onStatusClick()

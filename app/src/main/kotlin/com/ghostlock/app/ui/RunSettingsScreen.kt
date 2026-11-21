@@ -14,6 +14,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ghostlock.app.R
 import com.ghostlock.app.domain.model.ShizukuStatus
+import com.ghostlock.app.ui.state.RunSettingsActions
+import com.ghostlock.app.ui.state.SessionState
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -31,8 +33,8 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 /** V1: the four run knobs that left Home, reachable from Advanced. */
 @Composable
 internal fun RunSettingsScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    actions: RunSettingsActions,
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
@@ -42,7 +44,7 @@ internal fun RunSettingsScreen(
                 title = stringResource(R.string.run_settings_title),
                 scrollBehavior = scrollBehavior,
                 navigationIcon = {
-                    IconButton(onClick = actions::onCloseRunSettings) {
+                    IconButton(onClick = actions::close) {
                         Icon(
                             imageVector = MiuixIcons.Back,
                             contentDescription = stringResource(R.string.action_back),
@@ -64,40 +66,42 @@ internal fun RunSettingsScreen(
                 ),
         ) {
             Card(modifier = Modifier.fillMaxWidth()) {
-                if (state.cpuPairLabels.isNotEmpty()) {
-                    val customPair = state.customCpuPair
+                if (state.device.cpuPairLabels.isNotEmpty()) {
+                    val customPair = state.device.customCpuPair
                     val customSummary = customPair?.let {
                         stringResource(R.string.cpu_pair_custom, "${it.primary}, ${it.consumer}")
                     }
                     OverlaySpinnerPreference(
                         title = stringResource(R.string.cpu_pair_label),
-                        items = state.cpuPairLabels.map { DropdownItem(icon = null, title = it) },
-                        selectedIndex = if (customPair == null) state.cpuPairIndex else -1,
+                        items = state.device.cpuPairLabels.map {
+                            DropdownItem(icon = null, title = it)
+                        },
+                        selectedIndex = if (customPair == null) state.device.cpuPairIndex else -1,
                         summary = customSummary,
                         showValue = customPair == null,
-                        onSelectedIndexChange = actions::onCpuPairSelected,
+                        onSelectedIndexChange = actions::cpuPairSelected,
                     )
                 }
                 SwitchPreference(
-                    checked = state.safeModeEnabled,
-                    onCheckedChange = actions::onSafeModeChanged,
+                    checked = state.runSettings.safeModeEnabled,
+                    onCheckedChange = actions::safeModeChanged,
                     title = stringResource(R.string.safe_mode_label),
                     summary = stringResource(R.string.safe_mode_summary),
                 )
                 SwitchPreference(
-                    checked = state.shizukuEnabled,
-                    onCheckedChange = actions::onShizukuChanged,
+                    checked = state.access.shizukuEnabled,
+                    onCheckedChange = actions::shizukuChanged,
                     title = stringResource(R.string.shizuku_label),
                     summary = stringResource(
                         when {
-                            !state.shizukuEnabled -> R.string.shizuku_summary
-                            state.shizukuStatus == ShizukuStatus.READY ->
+                            !state.access.shizukuEnabled -> R.string.shizuku_summary
+                            state.access.shizukuStatus == ShizukuStatus.READY ->
                                 R.string.shizuku_status_ready
 
-                            state.shizukuStatus == ShizukuStatus.PERMISSION_REQUIRED ->
+                            state.access.shizukuStatus == ShizukuStatus.PERMISSION_REQUIRED ->
                                 R.string.shizuku_status_permission_required
 
-                            state.shizukuStatus == ShizukuStatus.NOT_RUNNING ->
+                            state.access.shizukuStatus == ShizukuStatus.NOT_RUNNING ->
                                 R.string.shizuku_status_not_running
 
                             else -> R.string.shizuku_status_checking
@@ -107,12 +111,13 @@ internal fun RunSettingsScreen(
             }
             Spacer(Modifier.height(12.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
-                val tagMode = stringResource(vrKoModeLabelRes(state.vrKoTagClear))
-                val selinuxMode = stringResource(vrKoModeLabelRes(state.vrKoSelinuxBlock))
+                val tagMode = stringResource(vrKoModeLabelRes(state.runSettings.vrKoTagClear))
+                val selinuxMode =
+                    stringResource(vrKoModeLabelRes(state.runSettings.vrKoSelinuxBlock))
                 ArrowPreference(
                     title = stringResource(R.string.vr_ko_entry_label),
                     summary = stringResource(R.string.vr_ko_entry_summary, tagMode, selinuxMode),
-                    onClick = actions::onOpenVrKo,
+                    onClick = actions::openVrKo,
                 )
             }
         }

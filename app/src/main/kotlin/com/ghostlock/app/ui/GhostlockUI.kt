@@ -59,6 +59,11 @@ import com.ghostlock.app.domain.model.ShizukuStatus
 import com.ghostlock.app.domain.model.VrKoMode
 import com.ghostlock.app.ui.nav.NavController
 import com.ghostlock.app.ui.nav.Screen
+import com.ghostlock.app.ui.state.AdvancedActions
+import com.ghostlock.app.ui.state.HomeActions
+import com.ghostlock.app.ui.state.ParametersActions
+import com.ghostlock.app.ui.state.RunSettingsActions
+import com.ghostlock.app.ui.state.SessionState
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -266,8 +271,13 @@ private fun closeScreen(screen: Screen, actions: GhostlockActions) {
 @Composable
 internal fun GhostlockApp(
     state: GhostlockUiState,
+    session: SessionState,
     nav: NavController,
     actions: GhostlockActions,
+    homeActions: HomeActions,
+    runSettingsActions: RunSettingsActions,
+    advancedActions: AdvancedActions,
+    parameterActions: ParametersActions,
 ) {
     MiuixTheme(
         colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
@@ -302,16 +312,16 @@ internal fun GhostlockApp(
                     },
                 ) {
                     entry<Screen.Main>(swipeDismiss = NavSwipeDirection.None) {
-                        MainScreen(state = state, actions = actions)
+                        MainScreen(session = session, actions = homeActions)
                     }
                     entry<Screen.VrKo>(swipeDismiss = swipeBack) {
                         VrKoScreen(state = state, actions = actions)
                     }
                     entry<Screen.Advanced>(swipeDismiss = swipeBack) {
-                        AdvancedScreen(state = state, actions = actions)
+                        AdvancedScreen(state = session, actions = advancedActions)
                     }
                     entry<Screen.RunSettings>(swipeDismiss = swipeBack) {
-                        RunSettingsScreen(state = state, actions = actions)
+                        RunSettingsScreen(state = session, actions = runSettingsActions)
                     }
                     entry<Screen.Generation>(swipeDismiss = swipeBack) {
                         GenerationScreen(state = state, actions = actions)
@@ -323,7 +333,7 @@ internal fun GhostlockApp(
                         MeasurementsScreen(state = state, actions = actions)
                     }
                     entry<Screen.Parameters>(swipeDismiss = swipeBack) {
-                        ParameterScreen(state = state, actions = actions)
+                        ParameterScreen(state = session, actions = parameterActions)
                     }
                     entry<Screen.Builtin>(swipeDismiss = swipeBack) {
                         BuiltinProfileScreen(state = state, actions = actions)
@@ -344,10 +354,10 @@ internal fun GhostlockApp(
 
 @Composable
 private fun MainScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    session: SessionState,
+    actions: HomeActions,
 ) {
-    HomeScreen(state = state, actions = actions)
+    HomeScreen(state = session, actions = actions)
 }
 
 @Composable

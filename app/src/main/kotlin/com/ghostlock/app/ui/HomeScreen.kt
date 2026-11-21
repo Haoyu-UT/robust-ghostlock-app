@@ -31,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ghostlock.app.R
 import com.ghostlock.app.domain.model.ShizukuStatus
+import com.ghostlock.app.ui.state.HomeActions
+import com.ghostlock.app.ui.state.SessionState
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -48,8 +50,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  */
 @Composable
 internal fun HomeScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    actions: HomeActions,
     modifier: Modifier = Modifier,
 ) {
     val status = supportStatusOf(state)
@@ -70,12 +72,16 @@ internal fun HomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { actions.onShowDeviceInfo() }
+                    .clickable { actions.showDeviceInfo() }
                     .padding(top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = listOf(state.deviceName, state.socName, shortRelease(state.kernelRelease))
+                    text = listOf(
+                        state.device.deviceName,
+                        state.device.socName,
+                        shortRelease(state.device.kernelRelease),
+                    )
                         .filter { it.isNotBlank() }
                         .joinToString(" · "),
                     fontSize = 14.sp,
@@ -93,12 +99,12 @@ internal fun HomeScreen(
                 ArrowPreference(
                     title = stringResource(R.string.home_generate_profile),
                     summary = stringResource(R.string.home_generate_profile_summary),
-                    onClick = actions::onOpenGeneration,
+                    onClick = actions::openGeneration,
                 )
                 ArrowPreference(
                     title = stringResource(R.string.load_config_title),
                     summary = stringResource(R.string.home_load_summary),
-                    onClick = actions::onSelectProfileFile,
+                    onClick = actions::selectProfileFile,
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -109,17 +115,17 @@ internal fun HomeScreen(
                 ArrowPreference(
                     title = stringResource(R.string.home_last_run),
                     summary = lastRunSummary(state),
-                    onClick = actions::onOpenLastRunLog,
+                    onClick = actions::openLastRunLog,
                 )
                 ArrowPreference(
                     title = stringResource(R.string.run_log_export),
                     summary = stringResource(R.string.home_export_report_summary),
-                    onClick = actions::onExportRunLog,
+                    onClick = actions::exportReport,
                 )
                 ArrowPreference(
                     title = stringResource(R.string.advanced_settings),
                     summary = stringResource(R.string.advanced_settings_summary),
-                    onClick = actions::onOpenAdvanced,
+                    onClick = actions::openAdvanced,
                 )
             }
             Spacer(Modifier.height(16.dp))
@@ -127,7 +133,7 @@ internal fun HomeScreen(
         TextButton(
             text = copy.barLabel,
             onClick = { dispatch(copy.action, actions) },
-            enabled = !state.running,
+            enabled = !state.run.running,
             colors = ButtonDefaults.textButtonColorsPrimary(),
             modifier = Modifier
                 .fillMaxWidth()
@@ -152,12 +158,12 @@ private data class StatusCopy(
 )
 
 @Composable
-private fun statusCopy(state: GhostlockUiState, status: SupportStatus): StatusCopy {
+private fun statusCopy(state: SessionState, status: SupportStatus): StatusCopy {
     val source = stringResource(
-        if (state.importedProfilePresent) R.string.home_source_external
+        if (state.support.importedProfilePresent) R.string.home_source_external
         else R.string.home_source_builtin,
     )
-    val route = state.profileRoute?.takeIf { it.isNotBlank() }
+    val route = state.support.route?.takeIf { it.isNotBlank() }
     val detail = listOfNotNull(source, route).joinToString(" · ")
     return when (status) {
         SupportStatus.Ready -> StatusCopy(
@@ -250,17 +256,17 @@ private fun StatusCard(copy: StatusCopy) {
     }
 }
 
-private fun dispatch(action: BarAction, actions: GhostlockActions) {
+private fun dispatch(action: BarAction, actions: HomeActions) {
     when (action) {
-        BarAction.Run -> actions.onRun()
-        BarAction.Shizuku -> actions.onStatusClick()
-        BarAction.Generate -> actions.onOpenGeneration()
+        BarAction.Run -> actions.run()
+        BarAction.Shizuku -> actions.statusClick()
+        BarAction.Generate -> actions.openGeneration()
     }
 }
 
 @Composable
-private fun lastRunSummary(state: GhostlockUiState): String = stringResource(
-    when (state.runStatus) {
+private fun lastRunSummary(state: SessionState): String = stringResource(
+    when (state.run.status) {
         RunStatus.Idle -> R.string.home_run_none
         RunStatus.Running -> R.string.action_running
         RunStatus.Success -> R.string.home_run_done

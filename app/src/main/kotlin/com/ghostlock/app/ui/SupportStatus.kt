@@ -1,6 +1,7 @@
 package com.ghostlock.app.ui
 
 import com.ghostlock.app.domain.model.ShizukuStatus
+import com.ghostlock.app.ui.state.SessionState
 
 /**
  * The support verdict — three facts only (2026-11-21 operator decision):
@@ -15,9 +16,25 @@ sealed interface SupportStatus {
     data object Missing : SupportStatus
 }
 
-internal fun supportStatusOf(state: GhostlockUiState): SupportStatus = when {
-    !state.executionHasProfile -> SupportStatus.Missing
-    state.shizukuEnabled && state.shizukuStatus != ShizukuStatus.READY ->
-        SupportStatus.AccessPending(state.shizukuStatus)
+internal fun supportStatusOf(state: GhostlockUiState): SupportStatus = supportStatusOf(
+    hasProfile = state.executionHasProfile,
+    shizukuEnabled = state.shizukuEnabled,
+    shizukuStatus = state.shizukuStatus,
+)
+
+internal fun supportStatusOf(state: SessionState): SupportStatus = supportStatusOf(
+    hasProfile = state.support.hasProfile,
+    shizukuEnabled = state.access.shizukuEnabled,
+    shizukuStatus = state.access.shizukuStatus,
+)
+
+private fun supportStatusOf(
+    hasProfile: Boolean,
+    shizukuEnabled: Boolean,
+    shizukuStatus: ShizukuStatus,
+): SupportStatus = when {
+    !hasProfile -> SupportStatus.Missing
+    shizukuEnabled && shizukuStatus != ShizukuStatus.READY ->
+        SupportStatus.AccessPending(shizukuStatus)
     else -> SupportStatus.Ready
 }

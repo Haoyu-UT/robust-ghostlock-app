@@ -26,6 +26,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ghostlock.app.BuildConfig
 import com.ghostlock.app.R
+import com.ghostlock.app.ui.state.AdvancedActions
+import com.ghostlock.app.ui.state.ParametersActions
+import com.ghostlock.app.ui.state.SessionState
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -125,8 +128,8 @@ private fun ProfileHintBanner(
  */
 @Composable
 internal fun AdvancedScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    actions: AdvancedActions,
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
@@ -135,7 +138,7 @@ internal fun AdvancedScreen(
                 title = stringResource(R.string.advanced_settings),
                 scrollBehavior = scrollBehavior,
                 navigationIcon = {
-                    IconButton(onClick = actions::onCloseAdvanced) {
+                    IconButton(onClick = actions::close) {
                         Icon(
                             imageVector = MiuixIcons.Back,
                             contentDescription = stringResource(R.string.action_back),
@@ -160,15 +163,15 @@ internal fun AdvancedScreen(
                     ArrowPreference(
                         title = stringResource(R.string.run_settings_title),
                         summary = stringResource(R.string.run_settings_summary),
-                        onClick = actions::onOpenRunSettings,
+                        onClick = actions::openRunSettings,
                     )
                 }
             }
             item(key = "forceAttack") {
                 Card {
                     SwitchPreference(
-                        checked = state.forceAttackTestEnabled,
-                        onCheckedChange = actions::onForceAttackTestChanged,
+                        checked = state.runSettings.forceAttackTestEnabled,
+                        onCheckedChange = actions::forceAttackChanged,
                         title = stringResource(R.string.force_attack_test_label),
                         summary = stringResource(R.string.force_attack_test_summary),
                     )
@@ -181,9 +184,9 @@ internal fun AdvancedScreen(
                 Card {
                     ArrowPreference(
                         title = stringResource(R.string.manager_label),
-                        summary = state.selectedManagerPackage
+                        summary = state.access.selectedManagerPackage
                             ?: stringResource(R.string.manager_summary_auto),
-                        onClick = actions::onOpenManagerPicker,
+                        onClick = actions::openManagerPicker,
                     )
                 }
             }
@@ -192,7 +195,7 @@ internal fun AdvancedScreen(
                     ArrowPreference(
                         title = stringResource(R.string.parameters),
                         summary = stringResource(R.string.parameters_summary),
-                        onClick = actions::onOpenParameters,
+                        onClick = actions::openParameters,
                     )
                 }
             }
@@ -201,7 +204,7 @@ internal fun AdvancedScreen(
                     ArrowPreference(
                         title = stringResource(R.string.measurements_title),
                         summary = stringResource(R.string.measurements_summary),
-                        onClick = actions::onOpenMeasurements,
+                        onClick = actions::openMeasurements,
                     )
                 }
             }
@@ -212,8 +215,8 @@ internal fun AdvancedScreen(
                          * kept. This one still gates the kernel side, which the
                          * root script only writes from its exit trap. */
                         SwitchPreference(
-                            checked = state.debugKernelLogEnabled,
-                            onCheckedChange = actions::onDebugKernelLogChanged,
+                            checked = state.runSettings.debugKernelLogEnabled,
+                            onCheckedChange = actions::debugKernelLogChanged,
                             title = stringResource(R.string.debug_kernel_log),
                             summary = stringResource(R.string.debug_kernel_log_summary),
                         )
@@ -233,7 +236,7 @@ internal fun AdvancedScreen(
                     ArrowPreference(
                         title = stringResource(R.string.about),
                         summary = stringResource(R.string.about_summary),
-                        onClick = actions::onShowAbout,
+                        onClick = actions::showAbout,
                     )
                 }
             }
@@ -244,8 +247,8 @@ internal fun AdvancedScreen(
 /** Parameters screen: configuration loading and the parameter-override submenu. */
 @Composable
 internal fun ParameterScreen(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
+    state: SessionState,
+    actions: ParametersActions,
 ) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     val uriHandler = LocalUriHandler.current
@@ -255,7 +258,7 @@ internal fun ParameterScreen(
                 title = stringResource(R.string.parameters),
                 scrollBehavior = scrollBehavior,
                 navigationIcon = {
-                    IconButton(onClick = actions::onCloseParameters) {
+                    IconButton(onClick = actions::close) {
                         Icon(
                             imageVector = MiuixIcons.Back,
                             contentDescription = stringResource(R.string.action_back),
@@ -285,9 +288,9 @@ internal fun ParameterScreen(
                         )
                         Text(
                             text = when {
-                                state.importedProfilePresent ->
+                                state.support.importedProfilePresent ->
                                     stringResource(R.string.profile_kind_external)
-                                state.executionHasProfile ->
+                                state.support.hasProfile ->
                                     stringResource(R.string.profile_kind_builtin)
                                 else -> stringResource(R.string.profile_not_loaded)
                             },
@@ -296,8 +299,8 @@ internal fun ParameterScreen(
                             modifier = Modifier.padding(top = 4.dp),
                         )
                         val detail = listOfNotNull(
-                            state.executionRelease.takeIf { it.isNotBlank() },
-                            state.profileRoute?.takeIf { it.isNotBlank() },
+                            state.support.release.takeIf { it.isNotBlank() },
+                            state.support.route?.takeIf { it.isNotBlank() },
                         ).joinToString(" · ")
                         if (detail.isNotEmpty()) {
                             Text(
@@ -315,29 +318,29 @@ internal fun ParameterScreen(
                     ArrowPreference(
                         title = stringResource(R.string.load_builtin_profile),
                         summary = stringResource(R.string.load_builtin_summary),
-                        onClick = actions::onOpenBuiltinProfiles,
+                        onClick = actions::openBuiltin,
                     )
                 }
             }
             item(key = "docs") {
                 ProfileDocsCard { uriHandler.openUri(profileDocsUrl()) }
             }
-            if (state.executionHasProfile) {
+            if (state.support.hasProfile) {
                 item(key = "actions") {
                     TextButton(
                         text = stringResource(R.string.override_export),
-                        onClick = actions::onExportProfile,
+                        onClick = actions::exportProfile,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
-            if (state.importedProfilePresent) {
+            if (state.support.importedProfilePresent) {
                 item(key = "danger") {
                     Card {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { actions.onClearExternalProfile() }
+                                .clickable { actions.clearExternalProfile() }
                                 .padding(16.dp),
                             contentAlignment = Alignment.Center,
                         ) {

@@ -56,6 +56,11 @@ import com.ghostlock.app.domain.usecase.RunExploitUseCase
 import com.ghostlock.app.domain.usecase.SelectCpuPairUseCase
 import com.ghostlock.app.ui.nav.NavController
 import com.ghostlock.app.ui.nav.Screen
+import com.ghostlock.app.ui.state.AdvancedActions
+import com.ghostlock.app.ui.state.HomeActions
+import com.ghostlock.app.ui.state.ParametersActions
+import com.ghostlock.app.ui.state.RunSettingsActions
+import com.ghostlock.app.ui.state.SessionState
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -63,8 +68,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -115,6 +124,50 @@ private fun CrashEvidenceInfo?.hasKernelEvidence(): Boolean =
  */
 private fun CrashEvidenceInfo?.hasShellCapture(): Boolean =
     this?.source == "shizuku" || this?.source == "root"
+
+/** The screen-facing slices of [GhostlockUiState], field for field. */
+private fun GhostlockUiState.toSessionState(): SessionState = SessionState(
+    device = SessionState.DeviceState(
+        deviceName = deviceName,
+        kernelRelease = kernelRelease,
+        socName = socName,
+        cpuPairLabels = cpuPairLabels,
+        cpuPairIndex = cpuPairIndex,
+        customCpuPair = customCpuPair,
+    ),
+    support = SessionState.SupportState(
+        hasProfile = executionHasProfile,
+        release = executionRelease,
+        route = profileRoute,
+        fallback = profileFallback,
+        importedProfilePresent = importedProfilePresent,
+        activeBuiltinProfile = activeBuiltinProfile,
+        layers = profileLayers,
+    ),
+    access = SessionState.AccessState(
+        shizukuEnabled = shizukuEnabled,
+        shizukuStatus = shizukuStatus,
+        selectedManagerPackage = selectedManagerPackage,
+    ),
+    runSettings = SessionState.RunSettingsState(
+        safeModeEnabled = safeModeEnabled,
+        forceAttackTestEnabled = forceAttackTestEnabled,
+        vrKoTagClear = vrKoTagClear,
+        vrKoSelinuxBlock = vrKoSelinuxBlock,
+        debugKernelLogEnabled = debugKernelLogEnabled,
+    ),
+    run = SessionState.RunState(
+        running = running,
+        status = runStatus,
+        logLines = logLines,
+        sheetVisible = executionSheetVisible,
+        sheetDismissible = executionSheetDismissible,
+    ),
+    measurements = SessionState.MeasurementsState(
+        measuredKernels = measuredKernels,
+        mergeRows = mergeRows,
+    ),
+)
 
 enum class DocumentRequest {
     SelectProfile, BootImage, XblImage, PayloadImage, UefiImage, VendorBootImage, DtboImage,
@@ -181,6 +234,60 @@ class GhostlockViewModel(
     private val profileController get() = repository.profileController()
 
     val state = mutableState.asStateFlow()
+
+    /**
+     * The session holder the screens take: the same state, sliced by concern.
+     * It holds nothing of its own — every mutation still goes through this
+     * view model — so the two flows cannot disagree.
+     */
+    val session: StateFlow<SessionState> = mutableState
+        .map { it.toSessionState() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableState.value.toSessionState())
+
+    /* The four narrow action surfaces, one stable adapter each (prefer
+     * adapters over renaming the view model's methods). */
+    private val homeActionsImpl = object : HomeActions {
+        override fun run() = onRun()
+        override fun statusClick() = onStatusClick()
+        override fun showDeviceInfo() = onShowDeviceInfo()
+        override fun openLastRunLog() = onOpenLastRunLog()
+        override fun exportReport() = onExportRunLog()
+        override fun openAdvanced() = onOpenAdvanced()
+        override fun openGeneration() = onOpenGeneration()
+        override fun selectProfileFile() = onSelectProfileFile()
+        override fun openParameters() = onOpenParameters()
+    }
+
+    private val runSettingsActionsImpl = object : RunSettingsActions {
+        override fun cpuPairSelected(index: Int) = selectCpuPair(index)
+        override fun safeModeChanged(enabled: Boolean) = toggleSafeMode(enabled)
+        override fun shizukuChanged(enabled: Boolean) = toggleShizuku(enabled)
+        override fun openVrKo() = onOpenVrKo()
+        override fun close() = onCloseRunSettings()
+    }
+
+    private val advancedActionsImpl = object : AdvancedActions {
+        override fun close() = onCloseAdvanced()
+        override fun openRunSettings() = onOpenRunSettings()
+        override fun forceAttackChanged(enabled: Boolean) = toggleForceAttackTest(enabled)
+        override fun openManagerPicker() = onOpenManagerPicker()
+        override fun openParameters() = onOpenParameters()
+        override fun openMeasurements() = onOpenMeasurements()
+        override fun debugKernelLogChanged(enabled: Boolean) = onDebugKernelLogChanged(enabled)
+        override fun showAbout() = onShowAbout()
+    }
+
+    private val parametersActionsImpl = object : ParametersActions {
+        override fun close() = onCloseParameters()
+        override fun openBuiltin() = onOpenBuiltinProfiles()
+        override fun exportProfile() = onExportProfile()
+        override fun clearExternalProfile() = onClearExternalProfile()
+    }
+
+    fun homeActions(): HomeActions = homeActionsImpl
+    fun runSettingsActions(): RunSettingsActions = runSettingsActionsImpl
+    fun advancedActions(): AdvancedActions = advancedActionsImpl
+    fun parametersActions(): ParametersActions = parametersActionsImpl
 
     /** The one navigation truth: screens are pushed and popped, never flagged. */
     internal val nav = NavController()
