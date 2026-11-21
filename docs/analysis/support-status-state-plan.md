@@ -9,14 +9,22 @@ motivates it is in this repo's history review and in
 `ui-architecture-refactor-plan.md`; §11 there records the amendments (the session holder and the
 editor holder). The decisions in §5 and the gate in §6 S5 are unchanged.
 
+**Amendment (2026-11-21, operator): the in-app profile editor is deleted.** The profile is a text
+file the user edits externally; the app's job is to name the wrong field. Consequences here: H1 is
+moot, `EditorIsolationTest` is withdrawn, the editor half of §3 is deleted with the screens, and
+`FieldsInvalid(paths)` becomes `FieldsInvalid(errors)` so the wrong field can be named
+(`ui-architecture-refactor-plan.md` §3.7).
+
 ## 0. Scope rule
 
 Implement exactly the slices in §6. Anything not listed is outside this change; if something not
 listed turns out to be a real blocker, stop and raise it.
 
 **In scope (app only):** one authoritative support verdict, its state ownership and refresh
-model, the editor-session split, the run path consuming the verdict, deletion of the dead
-layer-notice machinery, the legacy-store coverage decision, the new strings, and their tests.
+model, the field-error list the verdict carries, the run path consuming the verdict, deletion of
+the dead layer-notice machinery, the legacy-store coverage decision, the new strings, and their
+tests. (The editor-session split was in scope on 2026-11-20; it is withdrawn with the editor's
+deletion — see the amendment above.)
 
 **Out of scope:** the resolver's semantics (what makes a profile resolvable), the field
 validators, the badge's visual redesign (colors/layout beyond the state mapping), the external
@@ -43,7 +51,7 @@ Measured failure modes this produces (each becomes a test in §7):
 
 | id | mode | where |
 |---|---|---|
-| H1 | **Editor-close leak.** The session's config is applied into the live state; closing the editor only ends the session (`ViewModel:1310-1319`), so the Home badge can show the session's `invalidPaths`/`layers`/`hasProfile` while the live profile is fine, until the next resume/Parameters open | `:1126-1131`, `:1310-1319` |
+| H1 | **Editor-close leak.** *(withdrawn 2026-11-21: the editor is deleted; see the amendment.)* The session's config is applied into the live state; closing the editor only ends the session (`ViewModel:1310-1319`), so the Home badge can show the session's `invalidPaths`/`layers`/`hasProfile` while the live profile is fine, until the next resume/Parameters open | `:1126-1131`, `:1310-1319` |
 | H2 | Two resolutions per refresh, merged by hand (`externalProfileUnreadable` picks one with `?:`) | `ViewModel:2125-2127` |
 | H3 | Split provenance: some fields only from the refresh load, some only from `apply*`, `activeBuiltinProfile` never refreshed; no resolution identity ties any two fields together | `:312-331`, `:2102-2137` |
 | H4 | No serialization: every action launches its own IO coroutine; last completion wins field by field (import vs toggle vs refresh) | `:303-309`, `:540-570`, `:2099` |
@@ -69,7 +77,7 @@ sealed interface SupportStatus {
     data class AccessPending(val status: ShizukuStatus)     // everything green but Shizuku
     data object CopyUnreadable                              // the copy cannot be read/parsed
     data class ProfileBlocked(val reason: String)           // readable, resolution refused (5 causes)
-    data class FieldsInvalid(val paths: Set<String>)        // field validation
+    data class FieldsInvalid(val errors: List<FieldError>)   // path + current value + rule
     data object PhysicalPairMissing                         // MTK, no bootloader-derived pair
     data object KernelUnsupported                           // release covered by no live source
     data object ProfileMissing                              // covered, but no profile (defensive)
@@ -85,7 +93,7 @@ Precedence (first match wins), preserving today's card order where it matters:
    reason is carried verbatim, e.g. `the profile's kernel_phys_* map does not name diting`).
 4. `KernelUnsupported` — the release is covered by no live source (see D2).
 5. `PhysicalPairMissing` — covered, but MTK and no `physLoad`/`physOffset`.
-6. `FieldsInvalid(paths)` — a profile resolved and `invalidPaths` is non-empty.
+6. `FieldsInvalid(errors)` — a profile resolved and the error list is non-empty.
 7. `ProfileMissing` — covered, `hasProfile == false`, no error (defensive; a test pins that the
    live paths cannot reach it, and it stays as the fail-closed landing spot).
 8. `AccessPending(status)` — the verdict is otherwise ready, Shizuku not READY.
@@ -129,17 +137,11 @@ suspend fun supportOutcome(release: String, pair: CpuPair): SupportOutcome
 private val session: StateFlow<SessionState>  // device, access, settings, run, support
 private var resolutionGeneration = 0L
 private val resolutionMutex = Mutex()
-
-// EditorStateHolder (screen-scoped) — the editor session ONLY
-val editor: StateFlow<EditorState>
 ```
 
 `SessionState.support` replaces this plan's `HomeState`; Home and Parameters both read it, so the
-single-source requirement is unchanged. The editor is a separate holder, so no editor action can
-write session state. `EditorState` owns `editTargetName`, the session's config projections
-(`editorFields`, `editorInvalidPaths`, `editorRoute`, `editorFallback`, `editorRoots`,
-`editorEditing`). `onCloseProfileOverrides()` clears `EditorState` only; the Home verdict cannot
-change because the session closed.
+single-source requirement is unchanged. There is no editor session: the editor and its state are
+deleted (2026-11-21), so the H1 writer is gone.
 
 ### 2.4 Serialization and generations
 
@@ -213,16 +215,16 @@ generation is current) and:
 | `externalProfileUnreadable` | dies → `CopyUnreadable` |
 | `executionHasProfile` | dies → `support.config != null` |
 | `importedProfilePresent` | dies → `outcome.source == External` |
-| `profileInvalidPaths` | moves into `FieldsInvalid(paths)` (live); editor paths move to `EditorState` |
+| `profileInvalidPaths` | moves into `FieldsInvalid(errors)` (live); the editor's copy is deleted with the screens |
 | `profileLayers` | moves into `support.config.layers`; no separate writer |
 | `activeBuiltinProfile` | moves into `outcome.selectionLabel`/`source` |
 | `executionRelease` | moves into `outcome.release` |
 | `profileRoute`, `profileFallback` | move into `support.config` |
 | `executionFields` | derived from `support.config.general` |
-| `executionEditing` | stays (a UI draft) |
+| `executionEditing` | deleted with the editor (2026-11-21) |
 | `customCpuPair` | derived function of `support.config` + `cpuPairs` |
 | `devicePairMissing` | dies → `PhysicalPairMissing` |
-| `editTargetName`, `profileOverrideRelease`, `profileOverrideRoots`, `profileOverrideEditing` | move to `EditorState` |
+| `editTargetName`, `profileOverrideRelease`, `profileOverrideRoots`, `profileOverrideEditing` | deleted with the editor screens (2026-11-21) |
 | `dialogLayerNotice`, `layerNoticeChecked` | deleted with the notice machinery (D3) |
 | `ProfileLayers.imported`, `importedApplied`, `overridesPresent`, `overridesApplied`, `overridesBuild`, `hasInactiveLayer`, `noticeDue` | deleted (D3; only the tests construct them today) |
 | `ProfileLayers.builtinRelease`, `bundledAuthoritative`, `builtinSelected`, `build`, `uncarriedKeys`, `externalApplied`, `externalError`, `externalReadFailure` | stay; the stale `bundledAuthoritative` doc comment is corrected |
@@ -282,9 +284,8 @@ through a pure mapping function with an equivalence test against today's predica
 `:app:testDebugUnitTest`, `:profile-core:test`, `assembleDebug`.
 
 **S2 — lifecycle.** `refreshSnapshot()` becomes `refetchSupport()` with the generation guard and
-mutex; `snapshot()` stops resolving; the editor session moves to `EditorState` behind an
-`EditorStateHolder` (the N4 pattern applied to one screen); migration moves to `initialize()`.
-Gate: S0's H1/H4/H2 groups green.
+mutex; `snapshot()` stops resolving; migration moves to `initialize()`. Gate: S0's H4/H2 groups
+green (H1 is withdrawn with the editor).
 
 **S3 — consumers and run.** Card/Button/toast/Parameters consume `SupportStatus` through their
 per-screen actions (`ui-architecture-refactor-plan.md` N4); the duplicated predicates and message
@@ -307,7 +308,7 @@ render their own status; a valid profile reaches `Ready` and a full run complete
 | `SupportStatusMappingTest` | each resolver output → status; precedence; reason propagation (R1) |
 | `SupportResolutionTest` | exactly one `load()` per `supportOutcome()`; a thrown load → `ResolutionFailed`, not "no profile" |
 | `SupportRefetchRaceTest` | a stale generation is dropped; the mutex serializes; out-of-order completions cannot overwrite (H4) |
-| `EditorIsolationTest` | the H1 leak: open the editor, set `offset.init_task = 0`, close → Home `support` is unchanged; the session's verdict stays in `EditorState` |
+| `EditorIsolationTest` | withdrawn with the editor (2026-11-21); `FieldsInvalid(errors)` is covered by `SupportStatusMappingTest`, and the report by the refactor plan's §3.7 test |
 | `RunConsumesVerdictTest` | the run refuses with the same status message and passes the same `ProfileConfig` (D7) |
 | `BlockedReasonTest` | the star document resolves to `ProfileBlocked` with the map-reason on a non-`star` identity; the five causes from the port report map from the resolver's strings |
 | `LegacyCoverageTest` | D2: a legacy-only release is not `KernelUnsupported`'s "supported"; cleanup does not change the verdict otherwise |

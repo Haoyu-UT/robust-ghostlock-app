@@ -54,7 +54,8 @@ one card's verdict; the structure is the reason the cost is that high.
   (SAF pickers), the debug intents (`second_way`, `probe_check`, `preflight_check`,
   `fallback_test`), the harness entry points (执行 tap, run store), and the visual layout.
 - The only intended behavior changes in this refactor are the ones already decided in
-  `support-status-state-plan.md` (D1–D8) and they land with N3.
+  `support-status-state-plan.md` (D1–D8), which land with N3, plus the deletion of the in-app
+  profile editor (N4, §3.7), which is a feature removal rather than a visual change.
 
 ## 2. 目标与约束 — goals and constraints
 
@@ -78,6 +79,10 @@ one card's verdict; the structure is the reason the cost is that high.
 - **No visual redesign.** The layout, the MIUIX components and the copy stay as they are. A
   separate visual/IA design discussion follows this plan; this plan is the structural prerequisite
   for it.
+- **No in-app profile editor.** The editor is deleted, not refactored (2026-11-21 operator
+  decision): the profile is a text file the user owns, and the app's job is to name the wrong
+  field, not to render dozens of offsets as text fields. `ProfileOverride`, `AdvancedOverride` and
+  `ProfileDiff` are deleted with their state; the replacement is the validation report (§3.7).
 - No change to resolver semantics, field validators, profile format, the native wire, the attack
   routes, or the run protocol.
 - No DI framework, no new UI toolkit, no Compose Navigation library swap.
@@ -111,7 +116,6 @@ flowchart TB
         E["AppEffect channel (SAF pickers)"]
     end
     subgraph Flows["flow scopes"]
-        ED["EditorStateHolder + EditorState"]
         PA["ParseFlow + ParseState"]
         RE["ReportFlow + ReportState"]
     end
@@ -119,7 +123,6 @@ flowchart TB
     HOME --> N
     PARAM["ParametersScreen"] --> S
     ADV["AdvancedScreen"] --> N
-    EDS["ProfileEditorScreen"] --> ED
     PA --> PAUI["parse dialogs host"] --> D
     RE --> REUI["report screens"] --> N
     N --> HOST["App host: NavDisplay + DialogHost + overlays"]
@@ -135,7 +138,6 @@ flowchart TB
 | run status, log lines, crash evidence | `SessionState.run` | run flow | Home, run sheet, report |
 | legacy presence | `SessionState.legacy` | initialize / cleanup | Home, Parameters |
 | measured kernels, merge rows | `SessionState.measurements` | measurement read | Measurements, Home merge row |
-| editor draft and edits | `EditorState` | editor actions only | editor screen |
 | parse wizard step | `ParseState` | parse flow only | parse dialogs |
 | report wizard step | `ReportState` | report flow only | report screens |
 | screen stack | `NavController` | push/pop only | host |
@@ -166,13 +168,12 @@ stateDiagram-v2
     Advanced --> Parameters
     Parameters --> LoadConfig
     LoadConfig --> Builtin
-    Parameters --> ProfileEditor
-    ProfileEditor --> AdvancedOverride
-    ProfileEditor --> ProfileDiff
+    Parameters --> Validation
 ```
 
 `RunLogPicker` stays a typed dialog (it is opened over the run sheet, not from a screen). The run
 sheet stays a global overlay whose visibility derives from `SessionState.run`, not a screen flag.
+The three editor screens are deleted (§3.7); `Validation` is new.
 
 ### 3.3 N2 — typed dialogs
 
@@ -193,21 +194,23 @@ Exactly `support-status-state-plan.md`, re-homed:
 - `SupportStatus`/`SupportOutcome` and `repository.supportOutcome()` land as designed (its S1).
 - The verdict lives in `SessionState.support` (→ replaces the plan's `HomeState`), written only by
   `refetchSupport()` under its generation + mutex (its S2).
-- The plan's editor-session split is this plan's `EditorStateHolder` pattern applied to one screen:
-  `EditorState` + `EditorActions`, no editor action writes session state (its S2 + N4's pattern).
+- The plan's editor-session split (its S2) is **withdrawn**: the editor is deleted, so H1 has no
+  carrier. Its `FieldsInvalid(paths)` becomes `FieldsInvalid(errors)` so the card and the
+  validation report can name the wrong field (§3.7).
 - Its consumers (S3) become the per-screen actions of N4 for the home and parameters screens.
 - Its D1–D8 decisions and S5 device gate stand unchanged.
 
 ### 3.5 N4 — screen states, actions, ViewModel split
 
-One screen per commit, in this order: About, VrKo, Measurements, MergePreview, Legacy, Advanced,
-Parameters, LoadConfig, Builtin, ProfileEditor, AdvancedOverride, ProfileDiff, Home, RunSheet.
+One screen per commit, in this order: **first delete** `ProfileOverride`, `AdvancedOverride`,
+`ProfileDiff` and their state (the editor decision, §3.7); then About, VrKo, Measurements,
+MergePreview, Legacy, Advanced, Parameters, LoadConfig, Builtin, Home, RunSheet.
 
 | change | reason |
 |---|---|
-| new `ui/home/`, `ui/parameters/`, `ui/editor/`, `ui/advanced/`, `ui/about/`, `ui/measurements/`, `ui/legacy/`, `ui/vrko/`, `ui/components/`, `ui/runsheet/` | one file set per screen |
+| new `ui/home/`, `ui/parameters/`, `ui/validation/`, `ui/advanced/`, `ui/about/`, `ui/measurements/`, `ui/legacy/`, `ui/vrko/`, `ui/components/`, `ui/runsheet/` | one file set per screen |
 | delete `GhostlockUI.kt`, `AdvancedUI.kt`, `GhostlockUiState`, `GhostlockActions` | the god objects |
-| `GhostlockViewModel` → `SessionViewModel` (session state, nav, dialogs, run) + `EditorStateHolder` + `ParseFlow` + `ReportFlow` + `RunController` | one owner per flow; holders are plain classes with a `CoroutineScope` |
+| `GhostlockViewModel` → `SessionViewModel` (session state, nav, dialogs, run) + `ParseFlow` + `ReportFlow` + `RunController` | one owner per flow; holders are plain classes with a `CoroutineScope` |
 | per-screen `XActions` interfaces (≤ 20 methods) | compiler-enforced boundary |
 | tests | `XStateMappingTest` per screen; `RunSheetStateTest`; the support plan's matrix | each screen's mapping is pinned |
 
@@ -223,6 +226,29 @@ Activity-scoped), but the effects it carries become one sealed `AppEffect`.
 | `kotlinx-coroutines-test` (test-only, `runTest` + a gated dispatcher) | the support plan's race tests need it |
 | Compose tests for the home status card only (Robolectric + `ui-test-junit4`) — **experiment in N0**; if Miuix does not compose under Robolectric, fall back to the screenshot matrix alone and record it | the card is the one place where a rendered-state table pays for itself |
 
+### 3.7 — the editor is deleted; the validation report replaces it
+
+| file | change | reason |
+|---|---|---|
+| `AdvancedUI.kt` / `GhostlockUI.kt` | delete `ProfileOverrideScreen`, `AdvancedOverrideScreen`, `ProfileDiffScreen`, their actions (`onProfileOverride*`, `onOpenProfileOverrides`, `onOpenAdvancedOverrides`, `onOpenProfileDiff`, `onRebaseToBundle`, …) and their state (`editTargetName`, `profileOverride*`, `profileDiffVisible`, `diffRows`, `executionEditing`) | the editor is a worse text editor for a file the user owns |
+| `profile-core` `ConfigError` | stays; the controller stops discarding `message` | the type already carries `fieldPath` + `message` |
+| `AndroidProfileConfigController.kt` | `ProfileConfig.invalidErrors: List<FieldError>`; `validateProfileFields` returns errors (path, current value, message), not bare paths; `invalidPaths` stays as a derived set | "which field is wrong" must survive to the UI |
+| new `ui/validation/ValidationScreen.kt`, `Screen.Validation` | one list: path, current value, rule; a copy action per row; the export action at the top | the report is the replacement surface |
+| Home status card | `FieldsInvalid(errors)` shows 配置需要修正 · N 项 and opens the report | the action replaces "fix in the editor" |
+| Parameters | the 当前配置 card offers 查看问题 and 导出配置 | export → edit → re-import is the flow |
+
+The report shows the dotted key path (the file's own key name), the current value and the rule that
+failed; the copy action yields a line that can be pasted into a text editor's search. The parser
+resolves to a map and carries no source positions, so line numbers are out of scope. The same
+error list feeds the run gate, so the card, the report and the blocked toast cannot disagree.
+
+Limit to record: the rules name what they know — required/typed keys, `cred` and `task_struct`
+offsets, geometry, the anchor trio, route/waiter shape, the physical pair. A structurally valid
+profile with a plausible wrong offset still runs and fails; that is a device run, not a validator.
+
+`MergePreview` stays: it merges measured facts into a new document, which is generation work, not
+editing.
+
 ## 4. 数据流/控制流差异
 
 ### 4.1 Navigation
@@ -232,19 +258,18 @@ Activity-scoped), but the effects it carries become one sealed `AppEffect`.
 - **New:** the action calls `nav.push(...)` / `nav.pop()`; the host renders `nav.stack`; the system
   back, swipe-back and close button all call the same `pop()`.
 - **Invariants:** `stack[0] == Home`; `pop()` at Home is a no-op and does not exit the app (the
-  Activity's default back finishes it, as today); a screen cannot be pushed twice in a row; the
-  editor's unsaved-draft prompt is a dialog raised by the editor before it pops.
+  Activity's default back finishes it, as today); a screen cannot be pushed twice in a row.
 
 ### 4.2 State ownership
 
 - **Old:** `refreshSnapshot()` and `applyExecutionConfig()`/`applyAdvancedConfig()` both write
-  `kernelSupported`/`executionHasProfile`/`profileInvalidPaths`/`profileLayers`; the editor session
-  calls the same `apply*` functions, so closing the editor leaks the session's verdict into Home
-  (support plan H1).
-- **New:** `refetchSupport()` is the only writer of `SessionState.support`; the editor writes
-  `EditorState` only; the home reads `SessionState.support` by reference.
+  `kernelSupported`/`executionHasProfile`/`profileInvalidPaths`/`profileLayers`. The editor session
+  called the same `apply*` functions (the H1 leak); the editor is deleted, but the duplicate
+  writers remain until N3/N4.
+- **New:** `refetchSupport()` is the only writer of `SessionState.support`; the home reads it by
+  reference.
 - **Invariant:** for any state object, every field has exactly one writer named in §3.1. A test
-  per fact asserts it (the `EditorIsolationTest` is the pilot).
+  per fact asserts it (`SupportRefetchRaceTest` is the pilot).
 
 ### 4.3 Dialogs
 
@@ -284,11 +309,11 @@ python3 tools/ship_golden_profiles.py --check   # untouched, but run: the bundle
 | N1 | open every screen from Home; back and swipe back through the graph | identical screens and transitions; no orphan screen |
 | N2 | trigger each dialog kind (route picker, overwrite, notice, input, stride, phys prompt, notification permission) | same text and buttons; the answer reaches the same flow |
 | N3 | the support plan's S5 (star document → `ProfileBlocked` with the reason; 759-style crafted states; a valid profile → `Ready`) | its own gate |
-| N4 | the same navigation sweep + a full chain run (Ready → run → `KernelSU ready`, store `completed`) + a blocked run | both |
-| N5 | `adb shell am kill com.ghostlock.app` on each screen; relaunch | the stack and the editor draft restore |
+| N4 | the same navigation sweep + a full chain run (Ready → run → `KernelSU ready`, store `completed`) + a blocked run + the validation report on a deliberately broken profile | both, and every error names its path |
+| N5 | `adb shell am kill com.ghostlock.app` on each screen; relaunch | the stack and the last-run state restore |
 
-**Screenshot matrix (N0, ~40 captures).** Home in 9 verdict states; Advanced, Parameters (source
-cards), LoadConfig, Builtin, Editor, AdvancedOverride, ProfileDiff, MergePreview, Legacy,
+**Screenshot matrix (N0, ~35 captures).** Home in 9 verdict states; the validation report (valid,
+invalid, blocked); Advanced, Parameters (source cards), LoadConfig, Builtin, MergePreview, Legacy,
 Measurements, About, VrKo; run sheet idle/running/success/failure; the 6 dialog kinds; the report
 wizard's 5 steps. Store under `external/port/ui-refactor-2026-11/<slice>/` in the port repository
 (before/after pairs per slice), and add a `tools/ui-matrix.sh` driver to this repo that runs the
@@ -327,7 +352,8 @@ code is touched. The full chain run at N4 is a functional regression check, not 
 - [ ] **N1** — typed navigation.
 - [ ] **N2** — typed dialogs + `ParseState`.
 - [ ] **N3** — `SupportStatus` (the support plan, re-homed) + editor state holder.
-- [ ] **N4** — per-screen states/actions and the ViewModel split, one screen per commit.
+- [ ] **N4** — delete the three editor screens (§3.7), then per-screen states/actions and the
+  ViewModel split, one screen per commit.
 - [ ] **N5** — `SavedStateHandle`, coroutines-test, home-card Compose tests.
 - [ ] delete `GhostlockUiState`, `GhostlockActions`, `GhostlockUI.kt`, `AdvancedUI.kt`.
 
@@ -345,6 +371,9 @@ code is touched. The full chain run at N4 is a functional regression check, not 
   card. *Recommend:* yes.
 - **D6 — feature freeze per slice.** No UI feature work lands inside an open slice. *Recommend:*
   yes.
+- **D7 — the editor is deleted (2026-11-21, operator).** Three screens and their state go; the
+  validation report replaces the "fix here" surface; the flow becomes export → edit → re-import.
+  *Decided.*
 
 ## 11. Relationship to `support-status-state-plan.md`
 
@@ -352,8 +381,24 @@ The support plan is **not superseded**; it is the most developed part of this pl
 
 - Its §2.3 `home: StateFlow<HomeState>` becomes `session: StateFlow<SessionState>`; the verdict is
   `session.support`, still with one writer.
-- Its editor-session split (§2.3 `EditorState`, §6 S2) lands as the `EditorStateHolder` pattern.
+- Its editor-session split (§2.3 `EditorState`, §6 S2) is **withdrawn**: the editor is deleted
+  with H1 and `EditorIsolationTest` (2026-11-21). Its §2.1 `FieldsInvalid(paths)` becomes
+  `FieldsInvalid(errors)`, and the errors render in the validation report (§3.7).
 - Its §2.7 consumer table maps to per-screen actions (N4), not to one `GhostlockViewModel`.
-- Its §6 S3–S4 land after N2; S1–S2 can start once N1 is in (the editor screen is a typed screen).
+- Its §6 S1–S4 can start once N1 is in; the editor dependency is gone.
 - Its test matrix is adopted as-is, with `SupportRefetchRaceTest` requiring `kotlinx-coroutines-test`
   (N5's dependency, pulled into N3).
+
+## 12. Visual/IA decisions recorded (2026-11-21)
+
+The full visual spec is a separate document; these decisions are settled and constrain N3 and V1:
+
+- **Generation-first Home.** 生成配置 stays a first-class card on Home; the device card collapses
+  to one identity line; settings move behind 高级选项 → 运行设置.
+- **Log export lives on Home**, as a row in the run group (上次运行 / 导出报告 / 高级选项), not a
+  button in the action band. The run sheet's result card keeps the same entry; both reach one flow.
+- **One pinned action bar** whose label follows `SupportStatus`; four visual variants
+  (success / pending / needs-action / blocked) carry the nine states.
+- **The editor is deleted** (§3.7). The validation report names the path, the current value and
+  the rule, with a copy action; the flow is export → edit → re-import.
+- **Cards group rows** (not one card per row); one accent colour; state colours only for state.
