@@ -274,7 +274,7 @@ private fun HomeMock(status: StatusMock) {
             .padding(horizontal = 16.dp),
     ) {
         Spacer(Modifier.height(12.dp))
-        Text(text = "GhostLock", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+        Text(text = "Sesame", fontSize = 30.sp, fontWeight = FontWeight.Bold)
         Text(
             text = "Redmi K50 Ultra · SM8475 · 5.10.236",
             fontSize = 14.sp,

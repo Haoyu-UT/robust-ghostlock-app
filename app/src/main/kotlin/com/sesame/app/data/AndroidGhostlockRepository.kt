@@ -1113,7 +1113,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         return try {
             /* First line of every archived run log: which app build produced it. */
             archivedLog(
-                "<k> GhostLock ${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE} " +
+                "<k> Sesame ${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE} " +
                     "build ${BuildInfo.BUILD_TIME_LABEL}",
             )
             archivedLog(

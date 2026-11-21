@@ -5,6 +5,6 @@
         <activity
             android:name=".ui.PrototypeActivity"
             android:exported="true"
-            android:label="GhostLock UI prototype" />
+            android:label="Sesame UI prototype" />
     </application>
 </manifest>
