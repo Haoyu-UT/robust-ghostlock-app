@@ -15,6 +15,28 @@ moot, `EditorIsolationTest` is withdrawn, the editor half of §3 is deleted with
 `FieldsInvalid(paths)` becomes `FieldsInvalid(errors)` so the wrong field can be named
 (`ui-architecture-refactor-plan.md` §3.7).
 
+**Model correction (2026-11-21, operator — supersedes §2.1, §4, D2, D4, D5, D6).** Verified
+against the import and verification paths, the model is smaller than this plan assumed:
+
+- **Import is transactional.** A profile that fails verification is rejected before any copy is
+  written; the previous selection is kept and the reason is shown at the import. A rejected
+  profile never becomes "the selected profile", so the Home screen has no blocked or invalid
+  state.
+- **The physical pair is required for every device**, not only MediaTek. A profile whose
+  `kernel_phys_load`/`kernel_phys_offset` do not resolve is invalid everywhere. (All 72 bundled
+  release profiles carry the keys; the rule is consistent with the shipped corpus.)
+- **Home has three facts:** a profile exists (builtin or imported), a profile exists but access is
+  not ready, or nothing exists. `SupportStatus` is therefore `Ready | AccessPending | Missing`
+  (`app/src/main/kotlin/com/ghostlock/app/ui/SupportStatus.kt`).
+- **`UserProfileStore` and its migration are removed entirely**, as if they had never existed
+  (no coverage influence, no cleanup screen, no converter).
+
+Superseded: §2.1's nine-state model and §4's card table (the card now renders three states);
+D2 (the store is deleted, not re-decided); D4 (no pair state); D5 (no blocked reason on Home);
+D6 (no resolution-failed state on Home — failures are reported at import/generation). D1, D3, D7,
+D8 stand. The validation report survives as the **import/generation rejection surface**: it lists
+the field paths and rules for a rejected profile or a failed generation, not a Home state.
+
 ## 0. Scope rule
 
 Implement exactly the slices in §6. Anything not listed is outside this change; if something not

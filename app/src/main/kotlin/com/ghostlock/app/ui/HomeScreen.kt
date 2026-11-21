@@ -138,9 +138,9 @@ internal fun HomeScreen(
     }
 }
 
-private enum class StatusKind { Success, Pending, Action, Blocked }
+private enum class StatusKind { Success, Pending, Action }
 
-private enum class BarAction { Run, Shizuku, Issues, Generate, Import, Fix, View }
+private enum class BarAction { Run, Shizuku, Generate }
 
 private data class StatusCopy(
     val kind: StatusKind,
@@ -173,72 +173,18 @@ private fun statusCopy(state: GhostlockUiState, status: SupportStatus): StatusCo
             kind = StatusKind.Pending,
             title = stringResource(R.string.shizuku_label),
             summary = shizukuLine(status.status),
-            detail = null,
+            detail = detail,
             barLabel = stringResource(R.string.home_action_shizuku),
             action = BarAction.Shizuku,
         )
 
-        is SupportStatus.FieldsInvalid -> StatusCopy(
-            kind = StatusKind.Action,
-            title = stringResource(R.string.kernel_profile_invalid),
-            summary = stringResource(R.string.home_invalid_count, status.paths.size),
-            detail = null,
-            barLabel = stringResource(R.string.home_action_issues),
-            action = BarAction.Issues,
-        )
-
-        SupportStatus.PhysicalPairMissing -> StatusCopy(
-            kind = StatusKind.Action,
-            title = stringResource(R.string.home_pair_missing_title),
-            summary = stringResource(R.string.home_pair_missing_summary),
-            detail = null,
-            barLabel = stringResource(R.string.home_action_supplement),
-            action = BarAction.Generate,
-        )
-
-        SupportStatus.ProfileMissing -> StatusCopy(
+        SupportStatus.Missing -> StatusCopy(
             kind = StatusKind.Action,
             title = stringResource(R.string.kernel_profile_required),
             summary = stringResource(R.string.kernel_profile_required_summary),
             detail = null,
             barLabel = stringResource(R.string.home_action_generate),
             action = BarAction.Generate,
-        )
-
-        SupportStatus.CopyUnreadable -> StatusCopy(
-            kind = StatusKind.Blocked,
-            title = stringResource(R.string.kernel_external_unreadable),
-            summary = stringResource(R.string.kernel_external_unreadable_summary),
-            detail = null,
-            barLabel = stringResource(R.string.home_action_import),
-            action = BarAction.Import,
-        )
-
-        is SupportStatus.ProfileBlocked -> StatusCopy(
-            kind = StatusKind.Blocked,
-            title = stringResource(R.string.kernel_profile_invalid),
-            summary = status.reason,
-            detail = null,
-            barLabel = stringResource(R.string.home_action_fix),
-            action = BarAction.Fix,
-        )
-
-        SupportStatus.KernelUnsupported -> StatusCopy(
-            kind = StatusKind.Blocked,
-            title = stringResource(R.string.kernel_unsupported),
-            summary = stringResource(R.string.kernel_unsupported_summary),
-            detail = null,
-            barLabel = stringResource(R.string.home_generate_profile),
-            action = BarAction.Generate,
-        )
-
-        is SupportStatus.ResolutionFailed -> StatusCopy(
-            kind = StatusKind.Blocked,
-            title = stringResource(R.string.home_resolution_failed_title),
-            summary = status.detail,
-            detail = null,
-            barLabel = stringResource(R.string.home_action_view),
-            action = BarAction.View,
         )
     }
 }
@@ -261,22 +207,17 @@ private fun StatusCard(copy: StatusCopy) {
             dark -> Color(0xFF3E2F1B)
             else -> Color(0xFFFFF0DB)
         }
-
-        StatusKind.Blocked -> MiuixTheme.colorScheme.errorContainer
     }
     val iconTint = when (copy.kind) {
         StatusKind.Success -> if (dynamic) MiuixTheme.colorScheme.primary else Color(0xFF36D167)
         StatusKind.Pending -> secondaryText()
         StatusKind.Action ->
             if (dynamic) MiuixTheme.colorScheme.onTertiaryContainer else Color(0xFFF5A623)
-
-        StatusKind.Blocked ->
-            if (dynamic) MiuixTheme.colorScheme.onErrorContainer else Color(0xFFF72727)
     }
     val icon = when (copy.kind) {
         StatusKind.Success -> Icons.Rounded.CheckCircleOutline
         StatusKind.Pending -> Icons.Rounded.RemoveCircleOutline
-        StatusKind.Action, StatusKind.Blocked -> Icons.Rounded.ErrorOutline
+        StatusKind.Action -> Icons.Rounded.ErrorOutline
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -313,11 +254,7 @@ private fun dispatch(action: BarAction, actions: GhostlockActions) {
     when (action) {
         BarAction.Run -> actions.onRun()
         BarAction.Shizuku -> actions.onStatusClick()
-        BarAction.Issues -> actions.onOpenParameters()
-        BarAction.Generate -> actions.onGenerateProfile()
-        BarAction.Import -> actions.onSelectProfileFile()
-        BarAction.Fix -> actions.onOpenParameters()
-        BarAction.View -> actions.onOpenParameters()
+        BarAction.Generate -> actions.onOpenGeneration()
     }
 }
 

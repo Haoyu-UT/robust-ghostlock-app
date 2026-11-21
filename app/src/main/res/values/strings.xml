@@ -487,16 +487,7 @@
     <string name="home_last_run">Last run</string>
     <string name="home_export_report_summary">Logs, crash evidence and the current profile</string>
     <string name="home_action_shizuku">Set up Shizuku</string>
-    <string name="home_action_issues">View issues</string>
     <string name="home_action_generate">Generate</string>
-    <string name="home_action_import">Import</string>
-    <string name="home_action_supplement">Add</string>
-    <string name="home_action_fix">Resolve</string>
-    <string name="home_action_view">View</string>
-    <string name="home_invalid_count">%1$d invalid fields</string>
-    <string name="home_pair_missing_title">Physical memory parameters required</string>
-    <string name="home_pair_missing_summary">Provide vendor_boot/dtbo and parse again (MediaTek)</string>
-    <string name="home_resolution_failed_title">Profile resolution failed</string>
     <string name="home_source_builtin">Builtin</string>
     <string name="home_source_external">External</string>
     <string name="home_device_info_title">Device info</string>

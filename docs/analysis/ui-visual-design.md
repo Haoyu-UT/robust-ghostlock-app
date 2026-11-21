@@ -82,21 +82,16 @@ slices being ordered as §6 below.
 |---|---|---|---|---|
 | `Ready` | success (green) | 受支持 | 配置已就绪 | 执行 |
 | `AccessPending` | pending (neutral) | 通过 Shizuku 执行 | the Shizuku status line | 配置 Shizuku |
-| `FieldsInvalid` | needs action (amber) | 配置需要修正 | N 项参数无效 | 查看问题 |
-| `PhysicalPairMissing` | needs action (amber) | 需要物理内存参数 | 请提供 vendor_boot/dtbo 并重新解析（联发科） | 去补充 |
-| `ProfileMissing` | needs action (amber) | 需要加载配置 | 加载或生成配置后可执行 | 去生成 |
-| `CopyUnreadable` | blocked (red) | 配置无法读取 | 所选文件无法读取，请重新导入 | 去导入 |
-| `ProfileBlocked` | blocked (red) | 配置需要修正 | <reason, verbatim> | 去处理 |
-| `KernelUnsupported` | blocked (red) | 不支持 | 未找到匹配 <release> 的配置 | 生成配置 |
-| `ResolutionFailed` | blocked (red) | 配置解析失败 | <detail> | 查看 |
+| `Missing` | needs action (amber) | 需要加载配置 | 加载或生成配置后可执行 | 去生成 |
 
-The titles and summaries come from `support-status-state-plan.md` §4, with one change: its
-`FieldsInvalid` summary said "请修正标记的配置项", which referred to the editor's red fields; with
-the editor deleted the count replaces it. The detail line is new and always the current source.
+Three states only, corrected 2026-11-21 (see `support-status-state-plan.md`, "Model correction"):
+import is transactional and the physical pair is required for every device, so a rejected profile
+never reaches Home. The detail line is the current source (内置 / 外部) and the declared route when
+there is one. A rejected import or a failed generation is reported where it happens, with the field
+paths — not as a Home state.
 
-Bar destinations: 执行 → run; 配置 Shizuku → the Shizuku permission flow; 查看问题 → Validation;
-去补充 / 生成配置 / 去生成 → the generation flow; 去导入 → the 加载配置 row on Home;
-去处理 / 查看 → Parameters (or Validation when the status carries errors).
+Bar destinations: 执行 → run; 配置 Shizuku → the Shizuku permission flow; 去生成 → the generation
+flow.
 
 ### 3.2 Parameters — the profile manager
 

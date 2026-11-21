@@ -372,9 +372,10 @@ code is touched. The full chain run at N4 is a functional regression check, not 
 - [x] **V1** — Home. *(2026-11-21: landed before N3 with a pure `supportStatusOf(state)` mapping —
   the stored verdict with a generation is still N3. Identity line + device dialog, the verdict
   card, the acquisition card (生成配置 / 加载配置), the run group (上次运行 / 导出报告 /
-  高级选项) and the pinned bar; settings moved to Advanced → 运行设置. 9 `SupportStatusTest` cases;
-  device check on the diting. `FieldsInvalid` opens Parameters until the validation report
-  (N4a).)*
+  高级选项) and the pinned bar; settings moved to Advanced → 运行设置. 5 `SupportStatusTest` cases;
+  device check on the diting. Corrected the same day to the three-state model —
+  `Ready | AccessPending | Missing` — after the operator established that import is transactional
+  and the physical pair is required for every device.)*
 - [x] **V3** — the generation flow. *(2026-11-21: a dedicated screen with 来源 / 解析 / 确认 /
   保存; the parse no longer opens the run log sheet; the generated document waits on the save
   step instead of opening the SAF picker itself. Route/plan/phys/overwrite choices are still
@@ -429,8 +430,8 @@ constrain N3 and V1:
   URI. One source of truth (the file), one activation path (import).
 - **Log export lives on Home**, as a row in the run group (上次运行 / 导出报告 / 高级选项), not a
   button in the action band. The run sheet's result card keeps the same entry; both reach one flow.
-- **One pinned action bar** whose label follows `SupportStatus`; four visual variants
-  (success / pending / needs-action / blocked) carry the nine states.
+- **One pinned action bar** whose label follows `SupportStatus`; three visual variants
+  (success / pending / needs-action) carry the three states (Ready / AccessPending / Missing).
 - **The editor is deleted** (§3.7). The validation report names the path, the current value and
   the rule, with a copy action; the flow is export → edit → re-import.
 - **Cards group rows** (not one card per row); one accent colour; state colours only for state.
