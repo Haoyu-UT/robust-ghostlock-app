@@ -7,6 +7,9 @@ feasible (G1), and KernelSU cannot be late-loaded (no supported kernel module fo
 new chain uses the DirtyFrag primitive without W1, a per-kernel module as the SELinux switch, and
 Magisk as the userspace root manager.
 
+The branch is rebased onto the timer-route `document` (schema v3, 2026-11-23); the profile design
+below is the surviving v3-compatible form.
+
 First device results (diting, 5.10.236): **G2a passes** — the existing dirtyfrag pipeline with the
 Magisk handoff leaves magiskd running under Enforcing and the manager reports 31.1 installed.
 **G2b passes** — the module pipeline delivers a per-kernel module into a **vendor_file** target
@@ -97,8 +100,9 @@ execution, the init shell and its socket), and the per-kernel module idea alread
 
 1. Every existing profile (61 bundled assets, user imports, snapshots) must parse and behave
    identically.
-2. `schema_version` means *phys-field shape* (`1` scalars/absent, `2` per-device maps). It is not a
-   chain version and must not be repurposed.
+2. `schema_version` is the document version, now **3** for every profile: the timer work retired
+   v1/v2 and added `routes`, `carriers` and `timer_98260` to schema 3 (`document` 2026-11-23). It
+   is not a chain version, and the module chain does not bump it.
 3. The Kotlin resolver refuses unknown top-level keys and unknown pipeline values — a new document
    read by an old app must fail closed, never be misread.
 4. The native wire document is written only for a W1 run. The new chain has no wire; the DirtyFrag
@@ -133,8 +137,8 @@ route, no kernel-memory geometry. Validate as:
 - the KDP rule widens: `kdp = 1` now accepts the strict `["dirtyfrag"]` **or** `["module"]` — both
   avoid the credential write.
 
-This is conditional validation, not a version bump. Every existing document satisfies the stricter
-branch unchanged; only new-pipeline documents get the relaxed one.
+This is conditional validation, not a new document version: every schema-3 document satisfies the
+stricter branch unchanged, and a `["module"]` document is still schema 3.
 
 **P3 — no new top-level keys in v1.** The module is addressed by `release`:
 
@@ -179,7 +183,7 @@ undocumented there) and the pipeline-scoped rules.
 | alternative | why not |
 |---|---|
 | a new top-level `implementation`/`chain` key, `pipeline` untouched | two sources of truth; the resolver already walks one ordered list |
-| `schema_version = 3` for the new chain | conflates phys-field shape with chain choice; forces a migration over 61 assets for no parsing gain |
+| a new `schema_version` (4) for the new chain | the document version is not a chain choice; schema 3 already exists and the module adds no document-format change |
 | `route { module {} }` | `route` is the carrier (futex/select/multicast), not the chain; a module chain has no carrier |
 | module path/CRC inside the profile | an artefact, not configuration; it rots, cannot be hashed usefully, and would put an executable pointer in a user-editable document |
 | handoff as a profile key | installed managers are runtime state; the kernel image only constrains which handoffs are possible, and today that is already one-to-one with the pipeline |
