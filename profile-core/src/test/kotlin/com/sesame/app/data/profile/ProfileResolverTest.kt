@@ -8,6 +8,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProfileResolverTest {
+    private val moduleRelease = "5.4.233-qgki-gbb70cde46897"
+
+    private fun moduleBlock(
+        release: String = moduleRelease,
+        overrides: Map<String, Any?> = emptyMap(),
+    ): Map<String, Any?> = valueMapOf(
+        "version" to 1L,
+        "asset" to "modules/$release.ko",
+        "asset_sha256" to "a".repeat(64),
+        "vendor_files" to listOf("/vendor/lib64/libbinderdebug.so"),
+    ) + overrides
+
     @Test
     fun `a KDP profile requires the strict dirtyfrag order`() {
         fun pipelineErrors(profile: Map<String, Any?>) =
@@ -79,12 +91,44 @@ class ProfileResolverTest {
     @Test
     fun `a bundled module profile needs no route or w1 geometry`() {
         val profile = valueMapOf(
-            "release" to "5.4.233-qgki-gbb70cde46897",
+            "release" to moduleRelease,
+            "schema_version" to 3,
+            "kernel_major" to 5,
+            "pipeline" to listOf("module"),
+            "module" to moduleBlock(),
+        )
+        assertEquals(emptyList<Any>(), ProfileResolver.validateMerged(profile, null, null))
+    }
+
+    @Test
+    fun `the module entry and the block imply each other`() {
+        fun fields(profile: Map<String, Any?>) =
+            ProfileResolver.validateMerged(profile, null, null).map { it.fieldPath }
+
+        val entryOnly = valueMapOf(
+            "release" to moduleRelease,
             "schema_version" to 3,
             "kernel_major" to 5,
             "pipeline" to listOf("module"),
         )
-        assertEquals(emptyList<Any>(), ProfileResolver.validateMerged(profile, null, null))
+        assertTrue("module" in fields(entryOnly))
+
+        val blockOnly = valueMapOf(
+            "release" to moduleRelease,
+            "schema_version" to 3,
+            "kernel_major" to 5,
+            "module" to moduleBlock(),
+        )
+        assertTrue("pipeline" in fields(blockOnly))
+
+        val nullBlock = valueMapOf(
+            "release" to moduleRelease,
+            "schema_version" to 3,
+            "kernel_major" to 5,
+            "pipeline" to listOf("module"),
+            "module" to null,
+        )
+        assertTrue("module" in fields(nullBlock))
     }
 
     @Test
@@ -94,6 +138,7 @@ class ProfileResolverTest {
             "schema_version" to 3,
             "kernel_major" to 6,
             "pipeline" to listOf("module", "ghostlock"),
+            "module" to moduleBlock(release = "test"),
         )
         val fields = ProfileResolver.validateMerged(profile, null, null)
             .map { it.fieldPath }.toSet()

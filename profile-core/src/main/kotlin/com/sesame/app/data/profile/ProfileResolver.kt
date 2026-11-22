@@ -42,6 +42,10 @@ object ProfileResolver {
          * native route, consumed by the Shizuku-delivered timer tool. It is
          * optional here; profiles without it are native-only. */
         "timer_98260",
+        /* The module chain's pair manifest: the bundled artifact, the image
+         * ABI it must match, and the ROM delivery targets. Required with (and
+         * only with) a `module` entry in `pipeline`; see ModuleBlock. */
+        "module",
     )
     /* Required for every document, whatever chain it selects. */
     private val AlwaysRequiredTopLevel = setOf("release", "schema_version", "kernel_major")
@@ -220,6 +224,21 @@ object ProfileResolver {
         if (unknownPipelines.isNotEmpty()) {
             errors += ConfigError("pipeline", "unknown pipeline ${unknownPipelines.first()}")
         }
+        /* The module entry and its block are one authored pair: the entry
+         * selects the chain, the block supplies its data. A profile carrying
+         * only one of them is incomplete, not a different meaning. */
+        val modulePresent = profile.containsKey(ModuleBlock.BLOCK_KEY)
+        val moduleValue = profile[ModuleBlock.BLOCK_KEY]
+        if ("module" in pipelineOrder && !modulePresent) {
+            errors += ConfigError(ModuleBlock.BLOCK_KEY, "the module pipeline requires the block")
+        }
+        if (modulePresent && "module" !in pipelineOrder) {
+            errors += ConfigError("pipeline", "the module block is inert without the module entry")
+        }
+        if (modulePresent && moduleValue == null) {
+            errors += ConfigError(ModuleBlock.BLOCK_KEY, "not an object")
+        }
+        errors += ModuleBlock.validate(moduleValue)
         if ((profile["kdp"] as? Number)?.toLong() == 1L &&
             (("dirtyfrag" !in pipelineOrder && "module" !in pipelineOrder) ||
                 "ghostlock" in pipelineOrder)

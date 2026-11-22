@@ -17,6 +17,14 @@ through the **crash_dump bridge**, the init stub insmods it as `vendor_modprobe`
 SELinux permissive, the socket connects and the Magisk handoff runs to `RESULT=OK`, with
 Enforcing restored. The profile section below is unchanged by the bench.
 
+**Profile decision (2026-11-23): the module chain earns one top-level `module` block that is the
+pair manifest** — the bundled artefact's name and hash and the ROM delivery targets. There is no
+`modules/index.conf`: the profile is the only place a pair is
+declared. Selection stays in `pipeline`; the block makes the entry viable and supplies its data.
+**Schema slice landed (2026-11-23):** `ModuleBlock` (validator + parser), the resolver's
+entry↔block coupling, `ProfileDocument` rendering, the profile-core tests, and the EN/ZH schema
+section 4.10. The asset/ABI preflight, the exporter skip and the delivery plumbing follow.
+
 ### The module delivery (from the reference, verified against our ROM policies)
 
 The app cannot read `vendor_file` (only `crash_dump`, `vendor_modprobe`, `vendor_init`,
@@ -107,8 +115,10 @@ execution, the init shell and its socket), and the per-kernel module idea alread
    read by an old app must fail closed, never be misread.
 4. The native wire document is written only for a W1 run. The new chain has no wire; the DirtyFrag
    stage is invoked as `--dirtyfrag <plan>` and reads no profile.
-5. A profile is a *kernel-image* document. Artefacts (the module `.ko`), installed managers, and
-   runtime choices do not belong in it.
+5. A profile is a *kernel-image* document, plus the authored pairing of an implementation that
+   cannot be derived. The module chain's artefact is referenced by name and hash — not embedded —
+   because the pair is bundle-only and hand-validated; installed managers and runtime choices still
+   do not belong in it.
 6. **No derivation.** The module pipeline is an authored choice. The extractor never emits it; a
    supported release is a curated pair — a hand-written bundled profile and a hand-compiled,
    bundled module — that was validated together. There is no extractor work in this plan.
@@ -140,16 +150,47 @@ route, no kernel-memory geometry. Validate as:
 This is conditional validation, not a new document version: every schema-3 document satisfies the
 stricter branch unchanged, and a `["module"]` document is still schema 3.
 
-**P3 — no new top-level keys in v1.** The module is addressed by `release`:
+**P3 — the `module` block is the pair manifest (2026-11-23).** One new top-level block carries
+everything the chain needs beyond its `pipeline` entry; there is no separate `modules/index.conf`.
+Selection stays in `pipeline` — the block makes the entry viable and supplies its data — and the
+two imply each other: a `module` entry without the block, or a block without the entry, is an
+error.
 
-```
-app/src/main/assets/modules/<uname -r>.ko     one per supported release
-app/src/main/assets/modules/index.conf        release → sha256, vermagic, provenance line
+```hocon
+module {
+  version = 1
+
+  # The bundled artefact this profile was validated with (relative to assets/).
+  asset = "modules/5.10.236-android12-9-00003-gfb24cf99ad97-ab14313284.ko"
+  asset_sha256 = "…"                       # 64 hex characters
+
+  # The ROM-side delivery targets, preferred first (optional; absent = the
+  # built-in libbinderdebug → stagefrighthw → stagefright_aidl_bufferpool2 list).
+  vendor_files = [
+    "/vendor/lib64/libbinderdebug.so",
+    "/vendor/lib64/libstagefrighthw.so",
+    "/vendor/lib64/libstagefright_aidl_bufferpool2.so",
+  ]
+}
 ```
 
-The app verifies the hash, checks the vermagic matches the running kernel, stages it into
-`filesDir`, and refuses the pipeline when no asset matches. Nothing about the module appears in
-the profile; a profile and an asset meet by `release`, exactly as profiles and kernels do.
+`version`, `asset` and `asset_sha256` are required; `vendor_files` is optional; unknown keys are an
+error. The validator checks the asset is a relative `modules/<name>.ko`, the hash is 64 hex
+characters, and each vendor path is absolute, under `/vendor/`, duplicate-free and shorter than the
+stub's 64-byte target field. The block and the `module` entry are present together.
+
+At resolve time the app opens `assets/<asset>` and verifies `asset_sha256`, refusing before any
+delivery on a mismatch. The image's module ABI is deliberately not a profile key: the build gate
+pins the exact Image config (G4b/G4c) and the loader enforces the ABI — a wrong magic half or CRC
+is a clean `ENOEXEC` — while the hash binds the exact artefact. The one non-clean loader outcome
+(an undersized `struct module`) is prevented at build time; the app cannot read the running
+kernel's ABI (no BTF on 5.10, no config access), so a profile copy could not be checked against it.
+`vendor_files` is resolved by the runtime probe (exists → bridge-readable → large enough), never by
+enumeration: the app cannot read `vendor_file`.
+
+Deliberately not in the block: `handoff` (implied by the pipeline, P4), `bridge_exec` (probed from
+the two known paths), `insmod`/`load_domain` (baked into the stub; it cannot consume them until it
+reserves patchable fields), and the ABI triple above.
 
 **P4 — the handoff is implied by the pipeline, not configured.** `module` ⇒ Magisk; the existing
 values keep KernelSU. If a kernel ever supports both handoffs, add an optional `handoff` key then
@@ -170,13 +211,16 @@ produce a refusal at run time.
 | reader → / profile ↓ | current app/build | new app/build |
 |---|---|---|
 | existing profiles | unchanged | unchanged (strict branch of P2) |
-| new `module` profile (bundled) | refused: unknown pipeline (fail closed) | runs the new chain |
+| new `module` profile (bundled, with the block) | refused: unknown pipeline and unknown top-level key (fail closed) | runs the new chain |
+| `module` entry without the block | refused: unknown pipeline | refused: the block is required |
+| block without the `module` entry | refused: unknown top-level key | refused: the block is inert without the entry |
 | external import declaring `module` | refused: unknown pipeline | refused: the module pipeline is bundle-only |
 
 The wire/native golden corpus must not move, and the extractor is untouched, so the
-option/route corpus cannot change either. The resolver gains a third value and the conditional
-rules; `PROFILE_SCHEMA.md`/`_ZH.md` gain a pipeline section (the `pipeline` key is currently
-undocumented there) and the pipeline-scoped rules.
+option/route corpus cannot change either. A test pins that adding or removing the block leaves
+the native document byte-identical (the block is Kotlin-side, like `timer_98260`). The resolver
+gains a third value, the block validator and the coupling rules; `PROFILE_SCHEMA.md`/`_ZH.md`
+gain the pipeline section and a section for the block.
 
 ### Alternatives rejected
 
@@ -185,32 +229,35 @@ undocumented there) and the pipeline-scoped rules.
 | a new top-level `implementation`/`chain` key, `pipeline` untouched | two sources of truth; the resolver already walks one ordered list |
 | a new `schema_version` (4) for the new chain | the document version is not a chain choice; schema 3 already exists and the module adds no document-format change |
 | `route { module {} }` | `route` is the carrier (futex/select/multicast), not the chain; a module chain has no carrier |
-| module path/CRC inside the profile | an artefact, not configuration; it rots, cannot be hashed usefully, and would put an executable pointer in a user-editable document |
+| a separate `modules/index.conf` manifest | two manifests drift; the profile is the unit of authoring, and the hash check in the block gives the same integrity. The earlier objection to an artefact in the profile is answered by the bundle-only rule, the closed key set and the hash check — the asset path is inert metadata unless a bundled profile selects the chain |
 | handoff as a profile key | installed managers are runtime state; the kernel image only constrains which handoffs are possible, and today that is already one-to-one with the pipeline |
 | make `route` optional globally | weakens validation for every W1-based profile for no benefit |
 
 ### Open profile questions
 
-- The name: `module` is proposed; `dfmodule` is clearer but longer. No compatibility cost until
-  shipped.
+- The name is settled: `module`, matching the `pipeline` value. `dfmodule` was the alternative; no
+  compatibility cost either way before shipping, and the block is bundle-only.
 - Whether `["module", "ghostlock"]` should ever be emitted (module preferred, W1 as fallback).
   Recommendation: not before the module has a measured device record; the fallback would also
   re-impose the W1 requirements under P2.
-- Hand-writing a profile for a new kernel: possible only as a new **bundled pair** (profile +
-  hand-built module, added together). The external-profile path cannot authorize a module chain.
+- Hand-writing a profile for a new kernel: possible only as a new **bundled pair** (a profile with
+  the block + the hand-built `.ko` it names, added together). The external-profile path cannot
+  authorize a module chain.
 
 ## 4. Components and changes
 
 | area | change |
 |---|---|
-| `profile-core` `ProfileResolver` | add `module` to `PipelineNames`; pipeline-scoped required groups (P2); KDP rule |
+| `profile-core` `ProfileResolver` | `module` in `PipelineNames`; pipeline-scoped required groups (P2); KDP rule; the `module` block validator (`ModuleBlock`) and the entry↔block coupling |
+| `ProfileExporter` (Gradle) | skip a module-only profile: no native wire is generated; a mixed list keeps the W1 fallback's wire |
 | `profile-core` schema docs | document `pipeline` (missing today) and the pipeline-scoped rules; EN+ZH together |
-| `PipelineResolver` | third entry + viability callback (bundled profile source, bundled module asset for the release, ROM preflight, Magisk source) |
-| `AndroidGhostlockRepository` | module pipeline path: no W1 native run, no `nativeDocument`; still `runDirtyfragStage`; preflight refusal replaces the ksud gate for this pipeline; refuses `module` unless the effective profile is the bundled one; runtime env passes the handoff + module path to the stage |
+| `PipelineResolver` | third entry + viability callback (bundled profile source, the block's asset/hash check, ROM preflight, Magisk source) |
+| `AndroidGhostlockRepository` | module pipeline path: no W1 native run, no `nativeDocument`; stages `assets/<asset>` after the hash check and passes the block's `vendor_files`; still `runDirtyfragStage`; preflight refusal replaces the ksud gate for this pipeline; refuses `module` unless the effective profile is the bundled one; runtime env passes the handoff + module path to the stage |
 | native runtime config / `ops.cpp` | the root script branches on `GHOSTLOCK_HANDOFF=magisk`: insmod → wait permissive → Magisk setup → restore Enforcing; the KSU block stays for existing pipelines. No new invocation mode and no wire change (the stage is already `--dirtyfrag <plan>`) |
 | DirtyFrag stub (`dirtyfrag_stub.bin`) | the reference prologue: the worker child forks a grandchild that writes `u:r:vendor_modprobe:s0` to `/proc/self/attr/exec` and execs `/vendor/bin/insmod <vendor target>` (the target string patched like the socket name), then serves its socket exactly as today |
 | crash_dump bridge | a small helper patched into `crash_dump64`'s page cache (the app can read it) and exec'd for the `crash_dump` transition; its read/splice modes let the app write the module into a `vendor_file` target. Restore `crash_dump64` and the target after the module loads |
-| module bundle | hand-built `.ko` per supported release (exact config, vendor clang, Image CRCs), `index.conf` manifest, hash/vermagic verification, app-side asset loader; each asset is added only together with its bundled profile |
+| module bundle | hand-built `.ko` per supported release (exact config, vendor clang, Image CRCs) under `assets/modules/`, referenced by the `module` block — no index file; the profile is the manifest. Each asset is added only together with its bundled profile |
+| bundle check | every bundled profile whose `pipeline` contains `module` must have the referenced asset and a matching `asset_sha256`; every `assets/modules/*.ko` must be referenced by exactly one bundled profile. The ABI agreement stays in the build gate record |
 | Magisk staging | extend the manager scanner to locate an installed Magisk manager and stage its binaries, as the ksud scanner does today; refuse with a clear reason when none is installed |
 | app UI | pipeline display for `module`; the module/Magisk readiness on the support card; no new profile editor fields |
 
@@ -218,8 +265,9 @@ undocumented there) and the pipeline-scoped rules.
 
 **G1 — static (host).** Validation/resolver/schema tests, including the fail-closed matrix above and
 the bundle-authority rule (an external profile declaring `module` is refused; a bundled pair with a
-missing module asset is refused); the ship script's pair check (every bundled module-pipeline
-profile has its `.ko`, and every `.ko` has its profile); the ROM preflight extension (libc++ cave,
+missing module asset is refused); the bundle check (every bundled module-pipeline profile has its
+asset and a matching hash, and every module asset is referenced by exactly one profile); the ROM
+preflight extension (libc++ cave,
 `insmod`/`vendor_modprobe`, Magisk source) on both 5.4 packages. The corpus is untouched by
 construction — the extractor does not change. The policy checks in section 2 are already done.
 

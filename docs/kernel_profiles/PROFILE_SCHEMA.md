@@ -108,6 +108,7 @@ offset { init_task = 34464384, init_cred = 34538824 }
 | geometry | object/int | Grouped by namespace: `task_struct` / `cred` / `offset` / `kernelsnitch`. Omit unused route-specific fields entirely — don't write `0` or placeholders. `null` only appears in templates and in-progress edits |
 | `execution` | object | Advisory tuning. General values come from `execution-tuning.conf`, per-route values from `execution-<route>.conf`; the resolver loads both as presets, device profiles don't `include` them. Write only differences |
 | `timer_98260` | object | Optional timer-route capability block (section 4.9); absent = a native-only profile |
+| `module` | object | The module chain's pair manifest (section 4.10); required with, and only with, a `module` entry in `pipeline` |
 
 ### Pipeline selection (`pipeline`)
 
@@ -117,8 +118,9 @@ chain names; the resolver walks it before any stage and runs the first viable en
 
 `module` is the bundled-only chain (DirtyFrag without W1, a per-kernel module as the SELinux
 switch, Magisk as the userspace manager). It is never derived: it is honoured only for a bundled
-profile that ships together with a hand-built module for the same release, and an imported profile
-declaring it is refused.
+profile that ships together with a hand-built module for the same release, declared by the
+`module` block (section 4.10), and an imported profile declaring it is refused. The entry and the
+block imply each other: one without the other is refused.
 
 The requirements are pipeline-scoped. `release`, `schema_version` and `kernel_major` are always
 required. The `route`, `task_struct`, `cred` and `offset` groups are required only when the list
@@ -426,6 +428,53 @@ The app renders the merged, validated profile as the canonical backend document
 shared geometry), a `native` block (route/fallback/pipeline/execution) and this block. The timer
 tool reads only `release` and `timer_98260` and re-checks its own invariants; the native keeps its
 binary wire in this version. 64-bit values are `"0x..."` strings in the document.
+
+### 4.10 The module chain's pair manifest (`module`)
+
+An optional top-level block for the module chain (DirtyFrag without W1, a per-kernel module as the
+SELinux switch, Magisk as the userspace manager). It is a Kotlin-side block: the native exploit
+never reads it and the native wire never carries it (the same profile with and without the block
+produces a byte-identical native document). It is the only declaration of the bundle-only pair — a
+bundled profile and the hand-built `.ko` it names, validated together. There is no separate asset
+index.
+
+The block and the `pipeline` entry imply each other: `pipeline = [ "module" ]` requires the block,
+and a block without the entry is refused as inert.
+
+```hocon
+module {
+  version = 1
+  asset = "modules/5.10.236-android12-9-00003-gfb24cf99ad97-ab14313284.ko"
+  asset_sha256 = "…"                       # 64 hex characters
+  vendor_files = [                         # optional; absent = the built-in probe list
+    "/vendor/lib64/libbinderdebug.so",
+    "/vendor/lib64/libstagefrighthw.so",
+    "/vendor/lib64/libstagefright_aidl_bufferpool2.so",
+  ]
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `version` | int | Always `1`; the block evolves without touching `schema_version` |
+| `asset` | string | The bundled artifact, relative to `assets/`: `modules/<name>.ko`; no absolute path, `..` segment or empty segment |
+| `asset_sha256` | string | 64 hex characters; the app refuses an artifact that does not hash to it |
+| `vendor_files` | list | Optional ordered `vendor_file` targets; absent = the app's built-in list. The first that exists, passes a bridge read and holds the module is used. Each is an absolute `/vendor/…` path shorter than the stub's 64-byte target field (63 bytes plus NUL); an explicitly empty list is an error |
+
+Rules: unknown keys are an error; `version`, `asset` and `asset_sha256` are required; a `module`
+entry without the block and a block without the entry are both refused.
+
+The image's module ABI (vermagic, `sizeof(struct module)`, the `module_layout` CRC) is deliberately
+not a profile key: the build gate pins the exact Image config and the loader enforces the ABI (a
+wrong magic half or CRC is a clean `ENOEXEC`), while `asset_sha256` binds the exact artifact. The
+one non-clean loader outcome — an undersized `struct module` — is prevented at authoring time by
+building from the Image's exact config; the app cannot read the running kernel's ABI (no BTF on
+5.10, no config access), so a profile-side copy could not be checked against it.
+
+The app resolves the pair before any delivery: it opens `assets/<asset>` and verifies the hash,
+then picks a `vendor_files` target by probing. The block is rendered in the canonical backend
+document (`ProfileDocument`) so a round-trip preserves it; an imported profile still cannot
+authorize the chain (bundle-only).
 
 ## 5. execution tuning (advisory)
 
