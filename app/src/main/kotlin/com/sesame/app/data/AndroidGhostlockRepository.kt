@@ -1424,6 +1424,28 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
      * plan (the app owns every IV), and run the native stage that patches
      * libc++, triggers init, runs the root script over the init shell and
      * restores the blocks. */
+    /**
+     * The root manager the exploit installs. A `handoff.magisk` marker in the
+     * app's files dir selects the Magisk late install; its first non-blank
+     * line is the staged binary directory (default `/data/local/tmp/magiskbin`).
+     * An optional `module.ko` in the same directory is the module the chain
+     * loads first (the module pipeline). Absent marker keeps the KernelSU
+     * late-load, so the existing pipelines are unchanged.
+     */
+    private fun handoffEnv(): Map<String, String> {
+        val marker = File(filesDir, "handoff.magisk")
+        if (!marker.isFile) return emptyMap()
+        val bin = runCatching {
+            marker.readLines().firstOrNull { it.isNotBlank() }?.trim()
+        }.getOrNull()?.takeIf { it.startsWith("/") } ?: "/data/local/tmp/magiskbin"
+        return buildMap {
+            put("GHOSTLOCK_HANDOFF", "magisk")
+            put("GHOSTLOCK_MAGISK_BIN", bin)
+            val module = File(filesDir, "module.ko")
+            if (module.isFile) put("GHOSTLOCK_MODULE", module.absolutePath)
+        }
+    }
+
     private suspend fun runDirtyfragStage(onLog: (String) -> Unit, debugDir: String?): Int {
         val ipsec = appContext.getSystemService(Context.IPSEC_SERVICE) as? IpSecManager
             ?: run {
@@ -1483,6 +1505,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     environment()["GHOSTLOCK_HOME"] = filesDir.absolutePath
                     environment()["TMPDIR"] = filesDir.absolutePath
                     environment()["HOME"] = filesDir.absolutePath
+                    environment().putAll(handoffEnv())
                 }
             val code = runProcess(command, onLog = onLog, captureOutput = true, timeoutSeconds = 120L)
             onLog("<b> second way: dirtyfrag exited code=$code")
@@ -1699,6 +1722,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     /* The user-authoritative vr.ko choices; the native resolves Auto. */
                     environment()["GHOSTLOCK_VRKO_TAG_CLEAR"] = vrKoTagClear.wire
                     environment()["GHOSTLOCK_VRKO_SELINUX_BLOCK"] = vrKoSelinuxBlock.wire
+                    environment().putAll(handoffEnv())
                     /* The run folder the exporter zips whole: the native writes
                      * the vr.ko diagnostic sidecar next to the log. */
                     if (!runDir.isNullOrEmpty()) {
