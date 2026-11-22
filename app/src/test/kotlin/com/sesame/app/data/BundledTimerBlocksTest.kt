@@ -54,7 +54,9 @@ class BundledTimerBlocksTest {
         }
 
         assertTrue("no bundled timer blocks parsed", blocks > 0)
-        // The two shipped timer profiles: the 5.10.236 and the 6.1.138, both way 2.
-        assertEquals("bundled way-2 timer profiles", 2, way2)
+        /* Every bundled block is the complete way-2 group: a real-only block
+         * parses but is inert (the picker never offers the timer from it), so
+         * shipping one would be a silent no-op. */
+        assertEquals("every bundled timer block must be way 2", blocks, way2)
     }
 }
