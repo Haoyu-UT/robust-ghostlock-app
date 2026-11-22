@@ -180,3 +180,14 @@ flow is untouched either way.
   kernel write.
 - **Never give the victim uid 0** (capability-only): the handoff's `ksud` and the root script
   expect uid 0, and a crafted cred would need a kernel page the page-free route does not have.
+
+## RESULT — diting regression (2026-11-23)
+
+The guard-less rig (`5.10.236`, build 833 vs the clean `document` 832) reads: **select 5/5** fresh
+boots, every run `victim spin: armed seq=1 cpu=0 flags=1` and `child uid = 0` on W2 attempt 1,
+end-to-end 7.2–8.4 s against the 8.0–8.7 s baseline. **Sigreturn A/B (same 5 boots each):
+1/5 spin vs 2/5 baseline** (Fisher p ≈ 1.0), every failure the route's own
+`rt_mutex_adjust_prio_chain+0x188` class at W1/W3, none at W2; both runs that reached W2 in the spin
+arm verified it. The spin is neutral where no guard exists; the evasion itself still needs the
+reporter's Neo7. Record:
+`external/port/oplus-secureguard-2026-11-22/device/README.md`.
