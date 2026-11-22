@@ -1,14 +1,17 @@
 # The module + Magisk implementation (5.4) — L-level plan
 
-**Status 2026-11-22: design proposal, branch-local, no code until approved.** This file lives only
-on `feat/dirtyfrag-5x` and changes nothing by itself. It is the plan for a *new implementation of
-the same goal* the GhostLock pipeline pursues — root on a locked phone — for the 5.4 qgki line,
-where the existing pipelines cannot run: no route is feasible (G1), and KernelSU cannot be
-late-loaded (no supported kernel module for a 5.4 KMI). The new chain uses the DirtyFrag primitive
-without W1, a per-kernel module as the SELinux switch, and Magisk as the userspace root manager.
+**Status 2026-11-22: implementation started (bench slice).** This file lives only on
+`feat/dirtyfrag-5x`. The new implementation of the same goal the GhostLock pipeline pursues — root
+on a locked phone — is for the 5.4 qgki line, where the existing pipelines cannot run: no route is
+feasible (G1), and KernelSU cannot be late-loaded (no supported kernel module for a 5.4 KMI). The
+new chain uses the DirtyFrag primitive without W1, a per-kernel module as the SELinux switch, and
+Magisk as the userspace root manager.
 
-The profile question is section 3; the proposed answer is additive and does not change the meaning
-of any existing key or value.
+First device results (diting, 5.10.236): **G2a passes** — the existing dirtyfrag pipeline with the
+Magisk handoff leaves magiskd running under Enforcing and the manager reports 31.1 installed.
+**G2b is blocked at the app↔stub link**: under Enforcing the app cannot connect to the init stub's
+socket, so the module must be loaded *inside the stub* (init → vendor_modprobe) before the link.
+The profile section below is unchanged by the bench.
 
 ## 1. The chain
 
@@ -170,6 +173,7 @@ undocumented there) and the pipeline-scoped rules.
 | `PipelineResolver` | third entry + viability callback (bundled profile source, bundled module asset for the release, ROM preflight, Magisk source) |
 | `AndroidGhostlockRepository` | module pipeline path: no W1 native run, no `nativeDocument`; still `runDirtyfragStage`; preflight refusal replaces the ksud gate for this pipeline; refuses `module` unless the effective profile is the bundled one; runtime env passes the handoff + module path to the stage |
 | native runtime config / `ops.cpp` | the root script branches on `GHOSTLOCK_HANDOFF=magisk`: insmod → wait permissive → Magisk setup → restore Enforcing; the KSU block stays for existing pipelines. No new invocation mode and no wire change (the stage is already `--dirtyfrag <plan>`) |
+| DirtyFrag stub (`dirtyfrag_stub.bin`) | a module-path prologue before serving its socket: read the staged module path, exec `/vendor/bin/insmod` from init, wait for permissive, then behave exactly as today. Empty path keeps the current stub for the W1 pipelines |
 | module bundle | hand-built `.ko` per supported release (exact config, vendor clang, Image CRCs), `index.conf` manifest, hash/vermagic verification, app-side asset loader; each asset is added only together with its bundled profile |
 | Magisk staging | extend the manager scanner to locate an installed Magisk manager and stage its binaries, as the ksud scanner does today; refuse with a clear reason when none is installed |
 | app UI | pipeline display for `module`; the module/Magisk readiness on the support card; no new profile editor fields |
@@ -194,6 +198,21 @@ with known-good parts.
 **G3 — 5.4 device (star/venus).** The real gate: primitive + module + Magisk on the target line.
 Pass = `su` works from an external shell and the manager sees root, Enforcing is restored,
 magiskd is gone after reboot, no bootloop, run store completed.
+
+### Results so far (2026-11-22, diting)
+
+- **G2a passed.** With `GHOSTLOCK_HANDOFF=magisk` on the unchanged `dirtyfrag` pipeline: the root
+  script patched the live policy (`MAGISK-PHASE policy rc=0 source=live` — this ROM has no
+  monolithic precompiled file), started magiskd, restored Enforcing, and the stage read
+  `RESULT=OK script=0 enforce=1`; the manager reports Magisk 31.1 installed and su requests reach
+  the daemon (rejected for uid 2000 by Magisk's default policy).
+- **G2b blocked at the app↔stub link.** Without W1 the stage patches and restores the page cache,
+  but the app cannot connect to the init stub's abstract socket while Enforcing (`no shell
+  (connect failed)`), so the module never loads. The module must be loaded *inside the stub*, in
+  init, before the app connects: init → vendor_modprobe is an allowed transition and
+  vendor_modprobe holds `module_load`. The next slice replaces the 420-byte stub with one that
+  reads the staged module path, execs `/vendor/bin/insmod`, waits for permissive, and then serves
+  its socket exactly as today (the W1 pipelines keep the current behaviour).
 
 No stage may fall back after the stub has run: a failure is restore-and-report (W1-style
 discipline).
