@@ -66,13 +66,15 @@ away from the route's `{main, consumer}` pair so a spinning core does not pertur
 **The affinity is inherited, and that matters here.** `fork()` gives the child the calling thread's
 mask, and the calling thread is the native's main thread, already pinned to `main_cpu` (the log's
 `main thread running on cpu=N` precedes the fork). Today the child sleeps in `read()` immediately,
-so this is invisible; a naive spin would put it on the **same CPU as the route's waiter**. Before
-setting `spin_ready`, the child (or the parent, by pid) must:
+so this is invisible; a naive spin would put it on the **same CPU as the route's waiter**. The
+inherited mask must therefore not be treated as the allowed set: `sched_setaffinity` replaces the
+mask, and the cgroup cpuset is the real bound. Before setting `spin_ready` the child:
 
-- `sched_setaffinity` to a CPU outside `{main, consumer}` — a little core on the supported SoCs;
-- lower its scheduling weight (`SCHED_IDLE` or nice 19) so anything else on that core wins;
-- if no such CPU is in its mask, log (`victim spin: no off-pair cpu, spinning in place`) and
-  proceed — correctness is unaffected, only isolation is lost.
+- tries `sched_setaffinity` on each CPU `0..63` outside `{main, consumer}` and keeps the first that
+  succeeds — a little core on the supported SoCs;
+- lowers its scheduling weight (`SCHED_IDLE`, nice 19) so anything else on that core wins;
+- publishes the chosen CPU (or `~0`) and a flag in the shared page, so the parent's log says whether
+  isolation was achieved; with no non-pair CPU it spins in place and correctness is unaffected.
 
 All of these are syscalls made before the transition; they are invisible to the guard.
 
