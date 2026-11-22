@@ -10,22 +10,54 @@ Magisk as the userspace root manager.
 First device results (diting, 5.10.236): **G2a passes** — the existing dirtyfrag pipeline with the
 Magisk handoff leaves magiskd running under Enforcing and the manager reports 31.1 installed.
 **G2b is blocked at the app↔stub link**: under Enforcing the app cannot connect to the init stub's
-socket, so the module must be loaded *inside the stub* (init → vendor_modprobe) before the link.
-The profile section below is unchanged by the bench.
+socket. The reference implementation (DFRoot, GPLv2 — read, not copied) shows the missing piece:
+the module is written into a **vendor_file**-labeled file through the **crash_dump bridge**, and
+the stub then execs `insmod` on that path as `vendor_modprobe`. The profile section below is
+unchanged by the bench.
+
+### The module delivery (from the reference, verified against our ROM policies)
+
+The app cannot read `vendor_file` (only `crash_dump`, `vendor_modprobe`, `vendor_init`,
+`ueventd` can), so the page-cache write for the module cannot come from the app's own process.
+DFRoot's chain:
+
+1. patch a tiny helper into `crash_dump64`'s page cache (the app can read it), then exec it — the
+   exec takes the policy's `crash_dump_exec → crash_dump` transition;
+2. the helper has two modes over a pipe: **read** 16 bytes of a target file, and **splice** 16
+   bytes of the target's page (the app computes the IV and sends the ESP packet, as it does for
+   libc++);
+3. write the module into a **vendor_file** target this way — DFRoot's candidates are
+   `/vendor/lib64/libbinderdebug.so` (present on our phones, 100 KB),
+   `libstagefrighthw.so`, `libstagefright_aidl_bufferpool2.so`;
+4. the init stub's grandchild writes `u:r:vendor_modprobe:s0` to `/proc/self/attr/exec` and execs
+   `/vendor/bin/insmod <vendor target>`; `vendor_modprobe` holds `module_load` on `vendor_file`;
+5. the module sets `selinux_state = false` (and, in the reference, calls `call_usermodehelper`
+   for its bootstrap; ours leaves the init shell to do the Magisk step).
+
+Both 5.4 policies already carry the exact rows this needs — `(allow crash_dump vendor_file (file
+(ioctl read …)))`, `(typetransition domain crash_dump_exec process crash_dump)`, `(allow init
+vendor_modprobe (process (transition)))`, `(allow vendor_modprobe vendor_file (system
+(module_load)))` — and the G3 preflight verified the first three. The diting has the same rows and
+both vendor targets. DFRoot's own support check is GKI-only (5.10+); the 5.4 qgki module is ours to
+build, which G4c covers.
+
+Cost: the stripped module is 11 KB → 691 blocks, and the reference spawns `crash_dump64` once per
+read and once per splice; that is ~1.4 k short-lived processes, to be measured. The helper and the
+vendor target are restored after the module loads (the app already keeps the original blocks for
+libc++).
 
 ## 1. The chain
 
 ```
 app          resolve pipeline "module" (section 3) → ROM preflight → primitive probe
-             └─ build the page-cache plan, start the DirtyFrag stage        (no W1, no route)
-init         libc++ sentry ctor runs the stub → abstract socket → root script (uid 0, init domain)
-             ├─ insmod the release's module      (transition to vendor_modprobe, module_load)
-             ├─ module sets selinux_state = false → permissive             (the W1 replacement)
-             ├─ Magisk late install, still in the init domain:
-             │     tmpfs MAGISKTMP, binaries staged by the app, magiskpolicy --live,
-             │     magiskd (post-fs-data → service → boot-complete)
-             ├─ restore Enforcing
-             └─ restore the patched blocks, print the verdict
+             ├─ bridge: patch a helper into crash_dump64, write the module into a vendor target
+             └─ build the libc++ page-cache plan, start the DirtyFrag stage    (no W1, no route)
+init         libc++ sentry ctor runs the stub → worker child
+             ├─ grandchild: attr/exec=u:r:vendor_modprobe:s0, insmod <vendor target>
+             ├─ module sets selinux_state = false → permissive                 (the W1 replacement)
+             ├─ the app's socket link now succeeds → root script, init domain:
+             │     Magisk late install (tmpfs, magiskpolicy --live, magiskd, boot stages)
+             └─ restore Enforcing, restore the patched blocks, print the verdict
 app          verify: getenforce, magiskd alive, su from an external shell, run store completed
 ```
 
@@ -173,7 +205,8 @@ undocumented there) and the pipeline-scoped rules.
 | `PipelineResolver` | third entry + viability callback (bundled profile source, bundled module asset for the release, ROM preflight, Magisk source) |
 | `AndroidGhostlockRepository` | module pipeline path: no W1 native run, no `nativeDocument`; still `runDirtyfragStage`; preflight refusal replaces the ksud gate for this pipeline; refuses `module` unless the effective profile is the bundled one; runtime env passes the handoff + module path to the stage |
 | native runtime config / `ops.cpp` | the root script branches on `GHOSTLOCK_HANDOFF=magisk`: insmod → wait permissive → Magisk setup → restore Enforcing; the KSU block stays for existing pipelines. No new invocation mode and no wire change (the stage is already `--dirtyfrag <plan>`) |
-| DirtyFrag stub (`dirtyfrag_stub.bin`) | a module-path prologue before serving its socket: read the staged module path, exec `/vendor/bin/insmod` from init, wait for permissive, then behave exactly as today. Empty path keeps the current stub for the W1 pipelines |
+| DirtyFrag stub (`dirtyfrag_stub.bin`) | the reference prologue: the worker child forks a grandchild that writes `u:r:vendor_modprobe:s0` to `/proc/self/attr/exec` and execs `/vendor/bin/insmod <vendor target>` (the target string patched like the socket name), then serves its socket exactly as today |
+| crash_dump bridge | a small helper patched into `crash_dump64`'s page cache (the app can read it) and exec'd for the `crash_dump` transition; its read/splice modes let the app write the module into a `vendor_file` target. Restore `crash_dump64` and the target after the module loads |
 | module bundle | hand-built `.ko` per supported release (exact config, vendor clang, Image CRCs), `index.conf` manifest, hash/vermagic verification, app-side asset loader; each asset is added only together with its bundled profile |
 | Magisk staging | extend the manager scanner to locate an installed Magisk manager and stage its binaries, as the ksud scanner does today; refuse with a clear reason when none is installed |
 | app UI | pipeline display for `module`; the module/Magisk readiness on the support card; no new profile editor fields |
@@ -206,13 +239,16 @@ magiskd is gone after reboot, no bootloop, run store completed.
   monolithic precompiled file), started magiskd, restored Enforcing, and the stage read
   `RESULT=OK script=0 enforce=1`; the manager reports Magisk 31.1 installed and su requests reach
   the daemon (rejected for uid 2000 by Magisk's default policy).
-- **G2b blocked at the app↔stub link.** Without W1 the stage patches and restores the page cache,
-  but the app cannot connect to the init stub's abstract socket while Enforcing (`no shell
-  (connect failed)`), so the module never loads. The module must be loaded *inside the stub*, in
-  init, before the app connects: init → vendor_modprobe is an allowed transition and
-  vendor_modprobe holds `module_load`. The next slice replaces the 420-byte stub with one that
-  reads the staged module path, execs `/vendor/bin/insmod`, waits for permissive, and then serves
-  its socket exactly as today (the W1 pipelines keep the current behaviour).
+- **G2b blocked at the app↔stub link — delivery corrected from the reference.** Without W1 the
+  stage patches and restores the page cache, but the app cannot connect to the init stub's socket
+  while Enforcing (`no shell (connect failed)`), and the module cannot be delivered the direct way:
+  `module_load` is granted only on `vendor_file`, which no app domain can read or write, and
+  `init_module` needs `self:module_load`, which no domain has. DFRoot's chain solves exactly this:
+  it patches a helper into `crash_dump64` (the `crash_dump` domain may read `vendor_file`), writes
+  the module into a vendor-file target through that bridge, and the init stub execs `insmod` on it
+  via `attr/exec=vendor_modprobe`. Both 5.4 policies carry every row this needs (verified above),
+  and the G3 preflight already verified the bridge. The next slice implements the bridge, the
+  stub prologue and the target restore; G4c's module build is unaffected.
 
 No stage may fall back after the stub has run: a failure is restore-and-report (W1-style
 discipline).
@@ -233,6 +269,14 @@ discipline).
   built and validated by hand (profile + `.ko`) and shipped in the bundle. The cost is per release,
   and an unsupported release fails closed. The offline build recipe is the existing one (exact
   config + vendor clang + Image CRCs), so a new pair is reproducible, not guesswork.
+- **The bridge costs one `crash_dump64` spawn per block mode.** An 11 KB module is 691 blocks
+  (read + splice each), so ~1.4 k short-lived processes; measure before adopting, and batch the
+  helper if the stage budget demands it. `crash_dump64` and the vendor target are restored after
+  the module loads; a crash mid-write leaves the system crash handler and one unused vendor
+  library patched in the page cache until reboot.
+- **Reference licensing.** DFRoot's technique is read and re-implemented here, not copied: the
+  reference is GPLv2 and this app is not. The same rule as with the other reference sources
+  applies — technique in, code out.
 - **Magisk binary sourcing and drift.** Using the user's installed manager avoids redistribution
   (Magisk is GPLv3) but couples us to its binary layout and version. Probe and pin versions; fail
   closed on an unexpected layout.
