@@ -1435,14 +1435,18 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private fun handoffEnv(): Map<String, String> {
         val marker = File(filesDir, "handoff.magisk")
         if (!marker.isFile) return emptyMap()
-        val bin = runCatching {
-            marker.readLines().firstOrNull { it.isNotBlank() }?.trim()
-        }.getOrNull()?.takeIf { it.startsWith("/") } ?: "/data/local/tmp/magiskbin"
+        val lines = runCatching { marker.readLines() }.getOrDefault(emptyList())
+            .map { it.trim() }.filter { it.isNotEmpty() }
+        val bin = lines.firstOrNull { it.startsWith("/") } ?: "/data/local/tmp/magiskbin"
+        /* The module path may be the marker's second line (the bench stages it
+         * outside the app sandbox, where the root shell can read it), else a
+         * module.ko placed in the app's files dir (the bundled pairing). */
+        val module = lines.getOrNull(1)?.takeIf { it.startsWith("/") }
+            ?: File(filesDir, "module.ko").takeIf { it.isFile }?.absolutePath
         return buildMap {
             put("GHOSTLOCK_HANDOFF", "magisk")
             put("GHOSTLOCK_MAGISK_BIN", bin)
-            val module = File(filesDir, "module.ko")
-            if (module.isFile) put("GHOSTLOCK_MODULE", module.absolutePath)
+            if (module != null) put("GHOSTLOCK_MODULE", module)
         }
     }
 
@@ -1530,7 +1534,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         return try {
             val binary = File(appContext.applicationInfo.nativeLibraryDir, binaryName)
             require(binary.isFile) { "missing native binary: ${binary.absolutePath}" }
-            if (!stageKsud(workDir, onLog)) return 1
+            /* Bench/product switch for the module pipeline: a Magisk handoff
+             * marker plus a staged module.ko is the new chain (no W1); the
+             * bundled (profile, module) pairing replaces this later. */
+            val moduleBench = BuildConfig.DEBUG && handoffEnv().containsKey("GHOSTLOCK_MODULE")
+            if (!moduleBench && !stageKsud(workDir, onLog)) return 1
             // U01-S14: a per-run KernelSU log path so a previous run's markers
             // can never satisfy the handoff probe; passed to the native process.
             val ksuLog = File(workDir, ksuLogName(System.currentTimeMillis()))
@@ -1567,6 +1575,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 val fallbackFault = BuildConfig.DEBUG && fallbackTest
                 if (fallbackFault) setFallbackTest(false)
                 val order = when {
+                    moduleBench -> {
+                        onLog("<k> pipeline order=module (staged module)")
+                        listOf("module")
+                    }
                     fallbackFault -> {
                         onLog("<k> pipeline order=dirtyfrag,ghostlock (debug fallback test)")
                         listOf("dirtyfrag", "ghostlock")
@@ -1641,6 +1653,21 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                             }
                         }
                     },
+                    module = {
+                        if (!moduleBench) {
+                            "module pipeline is bundled-only"
+                        } else {
+                            val rom = DirtyfragPlan.preflight(
+                                appContext,
+                                File("/system/lib64/libc++.so"),
+                            )
+                            if (!rom.feasible) {
+                                "ROM preflight: " + rom.reasons.joinToString("; ")
+                            } else {
+                                null
+                            }
+                        }
+                    },
                 )
                 val selected = decision.pipeline
                     ?: error(
@@ -1652,6 +1679,16 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 }
                 onLog("<k> pipeline=$selected (profile order)")
                 selected
+            }
+            /* The module chain has no W1: the module itself opens the permissive
+             * window (the root script loads it first). Run the DirtyFrag stage
+             * directly — no native W1 invocation and no wire document. */
+            if (pipeline == "module") {
+                onLog("<b> pipeline=module: no W1; starting the DirtyFrag stage")
+                resetRunState()
+                val moduleCode = runDirtyfragStage(onLog, debugDir)
+                onLog("<b> pipeline=module: stage exited code=$moduleCode")
+                return moduleCode
             }
             var profileBlob = profileController.nativeDocument(config, pipeline)
                 ?: error("profile is unavailable for $release")
