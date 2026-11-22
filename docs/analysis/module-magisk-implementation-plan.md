@@ -9,11 +9,10 @@ Magisk as the userspace root manager.
 
 First device results (diting, 5.10.236): **G2a passes** — the existing dirtyfrag pipeline with the
 Magisk handoff leaves magiskd running under Enforcing and the manager reports 31.1 installed.
-**G2b is blocked at the app↔stub link**: under Enforcing the app cannot connect to the init stub's
-socket. The reference implementation (DFRoot, GPLv2 — read, not copied) shows the missing piece:
-the module is written into a **vendor_file**-labeled file through the **crash_dump bridge**, and
-the stub then execs `insmod` on that path as `vendor_modprobe`. The profile section below is
-unchanged by the bench.
+**G2b passes** — the module pipeline delivers a per-kernel module into a **vendor_file** target
+through the **crash_dump bridge**, the init stub insmods it as `vendor_modprobe`, the module sets
+SELinux permissive, the socket connects and the Magisk handoff runs to `RESULT=OK`, with
+Enforcing restored. The profile section below is unchanged by the bench.
 
 ### The module delivery (from the reference, verified against our ROM policies)
 
@@ -239,16 +238,23 @@ magiskd is gone after reboot, no bootloop, run store completed.
   monolithic precompiled file), started magiskd, restored Enforcing, and the stage read
   `RESULT=OK script=0 enforce=1`; the manager reports Magisk 31.1 installed and su requests reach
   the daemon (rejected for uid 2000 by Magisk's default policy).
-- **G2b blocked at the app↔stub link — delivery corrected from the reference.** Without W1 the
-  stage patches and restores the page cache, but the app cannot connect to the init stub's socket
-  while Enforcing (`no shell (connect failed)`), and the module cannot be delivered the direct way:
-  `module_load` is granted only on `vendor_file`, which no app domain can read or write, and
-  `init_module` needs `self:module_load`, which no domain has. DFRoot's chain solves exactly this:
-  it patches a helper into `crash_dump64` (the `crash_dump` domain may read `vendor_file`), writes
-  the module into a vendor-file target through that bridge, and the init stub execs `insmod` on it
-  via `attr/exec=vendor_modprobe`. Both 5.4 policies carry every row this needs (verified above),
-  and the G3 preflight already verified the bridge. The next slice implements the bridge, the
-  stub prologue and the target restore; G4c's module build is unaffected.
+- **G2b passes on the diting (2026-11-22).** The module pipeline: the aux-install stage patches the
+  helper into `crash_dump64` (109 blocks); the app reads the vendor target's bytes through the
+  bridge and computes the IVs; the main stage delivers the stripped module into
+  `/vendor/lib64/libbinderdebug.so` (691 blocks), restores `crash_dump64`, patches the libc++
+  stub, and triggers init; the stub's worker writes `attr/exec=vendor_modprobe` and insmods the
+  target; the module sets `selinux_state = false`; the socket connects as `uid=0`; the Magisk
+  handoff reaches `MAGISK-SUMMARY` (policy rc=0 source=live, magiskd 31.1) and the stage reads
+  `RESULT=OK script=0 enforce=1`. The module is unloaded after the check.
+  Three build rules this pass established: the stub blob must be **linked at 0** before extraction
+  (an unlinked object leaves every `adr` as an unresolved relocation pointing at itself); one
+  **monotonic ESP sequence per stage, far from the install run's range** (the SA's replay check
+  drops a stage that restarts its sequence); and each packet's 24-byte header needs **its own
+  arena page** (a queued skb may be processed after a stack buffer was reused). The reference's
+  per-block process cadence hid the last two.
+  The vendor target's page cache is clean/reclaimable, so it reverts to the original library after
+  the load (the module was loaded from the cache before reclaim); `crash_dump64` is restored in the
+  same stage.
 
 No stage may fall back after the stub has run: a failure is restore-and-report (W1-style
 discipline).
