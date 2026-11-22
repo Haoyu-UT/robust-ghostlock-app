@@ -9,6 +9,7 @@ import com.sesame.app.domain.model.VrKoMode
 interface HomeActions {
     fun run()
     fun statusClick()
+    fun chooseRoute()
     fun showDeviceInfo()
     fun openLastRunLog()
     fun exportReport()
@@ -81,6 +82,13 @@ interface OverlayActions {
     fun onDialogConfirm(value: String)
     fun onDialogDismiss()
     fun onDialogExportLog()
+    /* The route matrix's draft, applied on 保存. */
+    fun onRouteMatrixSave(
+        backend: String,
+        syscall: String?,
+        carrier: String?,
+        dirtyFragOn: Boolean?,
+    )
     fun onStrideOptionSelected(value: Int)
     fun onStrideUse()
     fun onStrideSkip()

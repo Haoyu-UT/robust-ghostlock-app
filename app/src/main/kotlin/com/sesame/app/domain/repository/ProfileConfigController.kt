@@ -16,6 +16,25 @@ interface ProfileConfigController {
     /** Resolves the active source (external > builtin > bundled) for [release]. */
     suspend fun load(release: String, pair: CpuPair): ProfileConfig
 
+    /**
+     * Stores the picker's route choice for [release]. Returns false when the
+     * route is not in the current viable set; the stale choice is cleared and
+     * the default applies.
+     */
+    fun selectRoute(release: String, pair: CpuPair, route: String): Boolean
+
+    /**
+     * Stores the carrier choice for one native route. Returns false when the
+     * carrier is not in that branch's `carriers`; the stale choice is cleared.
+     */
+    fun selectCarrier(release: String, pair: CpuPair, route: String, carrier: String): Boolean
+
+    /**
+     * Stores the DirtyFrag on/off choice. Returns false when the profile's
+     * pipeline does not offer the choice (it must list both entries).
+     */
+    fun selectDirtyFrag(release: String, pair: CpuPair, on: Boolean): Boolean
+
     /** Renders the active document as the HOCON an export writes. */
     fun renderResolved(release: String, pair: CpuPair): String?
 

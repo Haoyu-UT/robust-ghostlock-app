@@ -265,6 +265,22 @@ data class AnchorGeometry(
     val stride: Long? = null,
 )
 
+/**
+ * A route the resolved profile can run on this device. Viability is a pure
+ * profile parse (the block is present and passes the static guards); the picker
+ * displays exactly these, with no ranking.
+ */
+data class RouteCandidate(
+    val name: String,
+    /** The Shizuku-delivered timer backend rather than a native route. */
+    val timer: Boolean = false,
+    /**
+     * The carriers this route's branch lists (`native`/`compat`), primary
+     * first. Empty for the timer and for the legacy single-carrier flag form.
+     */
+    val carriers: List<String> = emptyList(),
+)
+
 data class ProfileConfig(
     val release: String,
     val hasProfile: Boolean,
@@ -288,6 +304,28 @@ data class ProfileConfig(
     val route: String? = null,
     /** Declared fallback route ("none"/"<route>"); null means unset. */
     val fallbackTo: String? = null,
+    /**
+     * The routes this profile can run on the device, in the profile's order.
+     * A native branch plus the timer block is already a two-candidate profile.
+     */
+    val routeCandidates: List<RouteCandidate> = emptyList(),
+    /**
+     * The picker's choice — a native route name or `timer_98260`. Null when no
+     * route resolved. The default is the first candidate; a stored choice that
+     * is no longer viable is cleared at load.
+     */
+    val selectedRoute: String? = null,
+    /**
+     * The carriers the active native route lists, and the remembered choice
+     * among them. Empty/null for the legacy single-carrier form (the branch's
+     * `compat_carrier` flag decides) and for the timer selection.
+     */
+    val carrierCandidates: List<String> = emptyList(),
+    val selectedCarrier: String? = null,
+    /** True when the profile's pipeline names both DirtyFrag and GhostLock. */
+    val dirtyFragSelectable: Boolean = false,
+    /** The remembered DirtyFrag choice; false = GhostLock only for this run. */
+    val dirtyFragOn: Boolean = false,
     /** The profile's ordered pipeline preference; empty = legacy ghostlock. */
     val pipelineOrder: List<String> = emptyList(),
     /** Dotted paths whose resolved value violates the geometry rules. */

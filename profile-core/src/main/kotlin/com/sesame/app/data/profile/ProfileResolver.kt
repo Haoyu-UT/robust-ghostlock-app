@@ -9,11 +9,24 @@ import com.sesame.app.data.route.RouteKind
  * the Gradle exporter, and the fail-closed structural validation.
  */
 object ProfileResolver {
+    /**
+     * The profile document schema this build reads and writes. v3 is the only
+     * accepted version: the earlier v1/v2 documents (and the unversioned
+     * remote/main-era reports) are refused; regenerate or export the profile
+     * with this build. The options-report version and the binary wire version
+     * are separate.
+     */
+    const val ProfileSchemaVersion = 3
+
     private val KnownTopLevel = setOf(
         "release", "schema_version", "kernel_major", "recommend_shizuku",
         /* The execution chain this profile selects. The extractor measures the
          * feasible set; the author records the choice. */
         "pipeline",
+        /* The superset's display order (optional): the routes the profile
+         * carries, in the picker's order; the first viable entry is the
+         * default. Absent means the branch order. */
+        "routes",
         "route", "fallback", "kernelsnitch", "task_struct", "cred", "offset",
         "kernel_phys_load", "kernel_phys_offset", "execution",
         /* Stage 3: optional per-image waiter layout, carried by the wire. */
@@ -107,6 +120,16 @@ object ProfileResolver {
         fallbackTo: String?,
     ): List<ConfigError> {
         val errors = mutableListOf<ConfigError>()
+        /* Schema v3 is the only accepted document; older documents are refused
+         * with a whole-profile error rather than resolved field by field. */
+        val schema = (profile["schema_version"] as? Number)?.toInt()
+        if (schema != ProfileSchemaVersion) {
+            errors += ConfigError(
+                "schema_version",
+                "profile schema ${schema ?: "absent"} is not supported; " +
+                    "this build reads schema $ProfileSchemaVersion",
+            )
+        }
         for (key in profile.keys) {
             if (key !in KnownTopLevel) {
                 errors += ConfigError(key, "unknown top-level key")
@@ -122,6 +145,42 @@ object ProfileResolver {
         }
         if (fallbackTo != null && fallbackTo != "none" && fallbackTo !in RouteNames) {
             errors += ConfigError("fallback.to", "unknown fallback route")
+        }
+        /* The optional superset order: every entry must name a route the
+         * profile can carry (a native branch or the timer block). */
+        when (val rawRoutes = profile["routes"]) {
+            null -> Unit
+            is List<*> -> for (entry in rawRoutes) {
+                val name = entry as? String
+                if (name == null || (name !in RouteNames && name != Timer98260.BLOCK_KEY)) {
+                    errors += ConfigError("routes", "unknown route entry ${entry ?: "null"}")
+                }
+            }
+            else -> errors += ConfigError("routes", "not a list")
+        }
+        /* The optional carrier choice inside a route branch: a non-empty list
+         * of known carriers. Absent keeps the legacy `compat_carrier` flag. */
+        for ((prefix, name) in listOf(
+            "route" to route,
+            "fallback.route" to fallbackTo?.takeIf { it != "none" },
+        )) {
+            if (name == null) continue
+            val branch = profile.branchAt("$prefix.$name") ?: continue
+            if (!branch.containsKey("carriers")) continue
+            val raw = branch["carriers"]
+            if (raw !is List<*> || raw.isEmpty()) {
+                errors += ConfigError("$prefix.$name.carriers", "not a non-empty list")
+            } else {
+                for (entry in raw) {
+                    val carrier = (entry as? String)?.trim()?.lowercase()
+                    if (carrier !in RouteCarriers.Known) {
+                        errors += ConfigError(
+                            "$prefix.$name.carriers",
+                            "unknown carrier ${entry ?: "null"}",
+                        )
+                    }
+                }
+            }
         }
         /* A KDP image may only take the DirtyFrag second way: the credential
          * forging chain is fatal there, and the legacy ghostlock default (a
@@ -206,7 +265,9 @@ object ProfileResolver {
         )) {
             if (name != "multicast_waiter") continue
             val prefix = "$path.$name"
-            if (profile.getLongAt("$prefix.compat_carrier") != 1L) continue
+            /* The compat carrier is listed in `carriers`, or selected by the
+             * legacy flag on a profile without the list. */
+            if (RouteCarriers.Compat !in RouteCarriers.of(profile, name)) continue
             for (field in listOf(
                 "compat_waiter_off", "compat_buffer_size", "compat_futex_abi",
                 "task_offset", "lock_offset", "compact_waiter",
@@ -484,4 +545,13 @@ object ProfileResolver {
 
     private val RouteNames = RouteKind.entries.map { it.token }
     private val PipelineNames = setOf("ghostlock", "dirtyfrag")
+}
+
+/** The nested map at a dotted path, or null when any level is absent. */
+private fun Map<String, Any?>.branchAt(path: String): Map<*, *>? {
+    var node: Any? = this
+    for (part in path.split('.')) {
+        node = (node as? Map<*, *>)?.get(part)
+    }
+    return node as? Map<*, *>
 }

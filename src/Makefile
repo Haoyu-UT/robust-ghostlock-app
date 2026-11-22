@@ -112,11 +112,30 @@ GHOSTLOCK_BIN := $(NATIVE_BUILD_DIR)/ghostlock
 DFPROBE_BIN := $(NATIVE_BUILD_DIR)/libdfprobe.so
 DFPROBE_SRC := core/probe/dfprobe.c
 
-.PHONY: all ghostlock dfprobe clean product
+# --- timer route tool (CVE-2026-98260) -------------------------------------
+# A standalone static aarch64 executable delivered over Shizuku; it is never
+# loaded as a library. The source is the boundary build recorded in the root
+# repo at external/port/timer-boundary-2026-11-21/. API 24 matches that
+# evidence build; the tool uses raw syscalls and needs no newer surface.
+TIMER_API ?= 24
+TIMER_CC := $(NDK_ROOT)/toolchains/llvm/prebuilt/$(PREBUILT)/bin/aarch64-linux-android$(TIMER_API)-clang
+TIMER_SRC := timer/timer.c timer/profile_json.c
+TIMER_HDR := timer/profile_json.h timer/kbuilds.h $(wildcard timer/kbuilds/*.h)
+TIMER_BIN := $(NATIVE_BUILD_DIR)/timer
+
+.PHONY: all ghostlock dfprobe timer clean product
 
 all: ghostlock
 
 ghostlock: $(GHOSTLOCK_BIN)
+
+timer: $(TIMER_BIN)
+
+$(TIMER_BIN): $(TIMER_SRC) $(TIMER_HDR) Makefile
+	@echo "Using timer compiler: $(TIMER_CC)"
+	@mkdir -p $(dir $@)
+	$(TIMER_CC) -O2 -g -Wall -Wextra -Wno-unused-parameter -static -Itimer \
+	  -o $@ $(TIMER_SRC) -lz -pthread
 
 dfprobe: $(DFPROBE_BIN)
 
@@ -379,5 +398,5 @@ product: ghostlock
 	@echo "构建 APK: .\gradlew.bat :app:assembleDebug"
 
 clean:
-	rm -f $(GHOSTLOCK_BIN) ghostlock
+	rm -f $(GHOSTLOCK_BIN) ghostlock $(TIMER_BIN)
 	rm -rf $(BUILD_ROOT)/native $(BUILD_ROOT)/host

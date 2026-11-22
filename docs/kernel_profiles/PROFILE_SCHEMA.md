@@ -10,16 +10,21 @@ native.
 > To add support for a new kernel, follow [README.md](README.md). For
 > execution-tuning defaults, see [defaults.md](defaults.md).
 
-> **Two version names** (do not conflate them):
+> **Version names** (do not conflate them):
 > - **Profile schema version**: the HOCON profile generation, carried by the
->   `schema_version` field inside each profile (see section 2). `1` means the phys fields are
->   scalars or absent; `2` means they are per-device maps.
+>   `schema_version` field inside each profile (see section 2). It is **`3`** —
+>   the only accepted version. The earlier `1`/`2` documents and the
+>   unversioned `remote/main`-era JSON reports were retired on 2026-11-22: a
+>   document that states `1`, `2`, or no version is refused; regenerate or
+>   export it with this build (section 11).
+> - **Options-report version**: the extractor's `--options-out` document has
+>   its own `schema_version` (currently `2`); it is not a profile and is not
+>   accepted as one.
 > - **Binary wire version**: the GLK1 transport version after magic
 >   `0x0D000721`. The current writer emits wire version `2` (object sections,
 >   see section 9); it is the only version, and Kotlin/native are version-bound.
 >
-> Everything below describes the current v2 configuration. The legacy v1 JSON
-> import path is Kotlin-side only and is collected in section 11.
+> Everything below describes schema v3.
 
 ## 0. File format (HOCON)
 
@@ -37,8 +42,8 @@ parsed as **HOCON**:
   struct crosses to native (section 9);
 - the app stores and exports HOCON; `ghostlock-extract --format conf` emits a
   flattened, self-contained profile (credential/KernelSnitch constants inlined,
-  no `include` lines) that imports through the normal path (the v1 JSON import
-  path is section 11);
+  no `include` lines) that carries `schema_version = 3` and imports through the
+  normal path;
 - extractor output is a **candidate source**: it writes every field the image
   actually yields and omits the rest, never borrowing a neighbouring kernel
   family's guesses. A candidate may be incomplete; after import the app's field
@@ -78,7 +83,7 @@ selection or an explicit imported/override value).
 ```hocon
 # GhostLock kernel profile (HOCON; JSON stays valid)
 release = "6.6.77-android15-8-gca30f3b4bef6-abogki440974771-4k"
-schema_version = 1
+schema_version = 3
 kernel_major = 6
 route {
   select_stack { waiter_shift = -2 }
@@ -94,9 +99,10 @@ offset { init_task = 34464384, init_cred = 34538824 }
 | Field | Type | Meaning |
 |---|---|---|
 | `release` | string | Must match the device's `uname -r` exactly (case and suffix); template files never participate in matching |
-| `schema_version` | int | `1` or `2`: `1` when the phys fields are scalars or absent; `2` when they are per-device maps (required for maps) |
+| `schema_version` | int | Must be `3`; any other value (or an absent field) is refused. The phys fields may be a per-device map (preferred), an all-device scalar, or `null` (native default) |
 | `kernel_major` | int | `5` or `6`; used for address resolution and sanity checks, no longer selects the route |
-| `route` | object | Explicit route parent with exactly one branch; see section 3 |
+| `route` | object | Explicit route parent with one or more branches; the app's picker displays the viable ones; see section 3 |
+| `routes` | list | Legacy and ignored: the app has no route order and displays the viable routes alphabetically; see section 3 |
 | `fallback` | object | Fallback declaration (`to` plus an optional `route` branch); see section 3 |
 | geometry | object/int | Grouped by namespace: `task_struct` / `cred` / `offset` / `kernelsnitch`. Omit unused route-specific fields entirely — don't write `0` or placeholders. `null` only appears in templates and in-progress edits |
 | `execution` | object | Advisory tuning. General values come from `execution-tuning.conf`, per-route values from `execution-<route>.conf`; the resolver loads both as presets, device profiles don't `include` them. Write only differences |
@@ -105,17 +111,58 @@ offset { init_task = 34464384, init_cred = 34538824 }
 ## 3. Route mechanism
 
 The route is no longer inferred from the kernel version or from which fields
-exist: the profile declares it explicitly. `route` is a parent with **exactly
-one branch**:
+exist: the profile declares it explicitly. `route` is a parent with **one or
+more branches** — a one-branch profile is the single-route case, and multiple
+branches form the superset the app's route picker displays
+(`docs/analysis/route-superset-plan.md`):
 
 ```hocon
-route { tcp_zerocopy { compact_waiter = 1 } }
 route { select_stack { waiter_shift = -2 } }
-route { multicast_waiter { waiter_off = 96, buffer_size = 264 } }
+# or the superset:
+route {
+  select_stack { waiter_shift = -2 }
+  tcp_zerocopy { compact_waiter = 1 }
+}
+routes = ["select_stack", "tcp_zerocopy", "timer_98260"]
 ```
 
-- Each route needs only its own branch; write no other branch, and never leave
-  two branches side by side (one config, one path).
+- **Viability is a parse result.** The app validates each branch (its required
+  fields and the static guards: the waiter shape, anchor alignment, page-free
+  facts) and the optional `timer_98260` block (the complete fake group). Only
+  the viable entries are listed in the picker; a branch that fails is not a
+  candidate, and it does not invalidate the profile's other branches.
+- **No route order.** The app displays the viable routes **alphabetically**; a
+  legacy `routes` list is accepted and validated but ignored. The choice is
+  remembered per exact `uname -r` (a remembered route that is no longer viable
+  is simply cleared); with no remembered choice the alphabetically first viable
+  route is the default. The native routes need a `route.<name>` branch; the
+  timer route is the `timer_98260` block and has no branch.
+- **Carriers are a list inside the branch.** A route's selectable carriers are a
+  list key, like `pipeline`, and the block carries the union of their geometry
+  (`docs/analysis/route-choice-matrix-plan.md`):
+  ```hocon
+  route {
+    select_stack {
+      carriers = [ "native", "compat" ]
+      waiter_shift = 1
+      waiter_home = 488
+      select_dst_depth = 496
+      compat_futex_abi = 1
+    }
+  }
+  ```
+  A branch without `carriers` keeps the legacy rule: `compat_carrier = 1`
+  selects the AArch32 carrier, its absence the native one. The app renders one
+  carrier box when the list has more than one entry, remembers the choice per
+  release and route, and injects the wire's `compat_carrier` from it; the
+  native wire schema is unchanged.
+- **DirtyFrag is a run choice, not a document key.** The profile's ordered
+  `pipeline` list is the capability; the home shows an on/off box only when
+  the list names both `dirtyfrag` and `ghostlock`, and "off" trims the order to
+  GhostLock for that run.
+- **The runtime document is still one route.** The app renders the chosen
+  branch into the native wire (and the timer block into the timer document);
+  the native's `fallback` stays as the primary route's own internal fallback.
 - `fallback` declares a fallback: `"to"` is `"none"` or a route name. When you
   declare a target, also provide the `"route"` branch holding the fields the
   fallback needs:
@@ -140,6 +187,13 @@ route { multicast_waiter { waiter_off = 96, buffer_size = 264 } }
 | `route.tcp_zerocopy.compact_waiter` / `route.multicast_waiter.compact_waiter` | required | | required |
 | `route.select_stack.waiter_shift` | | required (0 is valid) | |
 | `route.multicast_waiter.waiter_off` (>0), `route.multicast_waiter.buffer_size`, `route.multicast_waiter.task_offset`, `route.multicast_waiter.lock_offset`, `offset.empty_zero_page`, `cred.ref_count` (>0) | | | required |
+
+A branch that lists `carriers` requires each listed carrier's fields: the
+native entry needs `waiter_shift` (select) and the compat entry needs
+`waiter_home` + `select_dst_depth` (select) or `compat_waiter_off` +
+`compat_buffer_size` + `compat_futex_abi` (multicast). `compact_waiter` stays
+required for tcp and multicast. A legacy branch without `carriers` is checked
+as before.
 
 Credential-template bounds (general): `cred.usage_offset + 4 ≤ cred.copy_size`;
 `cred.caps_offset + cred.caps_count × 8 ≤ cred.copy_size`; `cred.ref_count ≤ 4`;
@@ -295,7 +349,7 @@ leak, no reclaim sockets, no page-acceptance gate, no `[spray]` lines, `base=0`.
 states its value source (`w1_value_source=scratch` for W1/W1p, `init_cred` for W2, `target-8` for
 leaf writes). The page-based credential copy/fill and the fops sentinel remain on the page path; a
 profile without either anchor behaves exactly as before. Both keys are optional and do not change
-`schema_version` (`1`, or `2` for a per-device-maps profile); a missing key means the page path.
+`schema_version` (always `3`); a missing key means the page path.
 
 ### 4.9 The timer route's capability block (`timer_98260`)
 
@@ -304,6 +358,11 @@ Kotlin-side sibling of the native route, not a `route` branch: the native exploi
 timer tool, and the native wire never carries this block (the same profile with and without it
 produces a byte-identical native document). A profile without the block is native-only and the
 timer route is unavailable.
+
+A profile generated on the device may carry the block too: the parse path runs the timer analyzer
+against the same image and merges the emitted block only when the app's parser accepts it
+(`docs/analysis/timer-block-generation-plan.md`). A real-only block is legal and leaves the timer
+route unavailable (a way-2 run needs the fake group).
 
 ```hocon
 timer_98260 {
@@ -449,8 +508,8 @@ and there is no legacy decode.
 - Native has exactly one decode path: `profile/entry.cpp` hands the stdin (or
   file) bytes to `profile/binary.cpp::parse`; it detects no format other than
   the magic and has no JSON fallback.
-- Internal storage and "export config" are HOCON (human-readable). The legacy
-  v1 `offsets.json` is converted to v2 only on the Kotlin side; see section 11.
+- Internal storage and "export config" are HOCON, schema v3 (human-readable).
+  An older document is refused, never converted (section 11).
 - Runtime route and capability decisions (`TargetProfile::route()`,
   `TargetProfile::supports()`, `route_capability`) are all based on the decoded
   route.
@@ -479,39 +538,20 @@ and there is no legacy decode.
 5. When renaming or regrouping fields, update `FieldLabels.kt` +
    `values*/strings.xml` and, when relevant, `docs/kernel_profiles/defaults*.md`.
 
-## 11. Legacy v1 JSON import (compatibility)
+## 11. Earlier schema versions (retired 2026-11-22)
 
-This section collects everything about the **v1 JSON** compatibility layer;
-sections 0–10 describe the current v2 configuration only. Native reads v2
-exclusively (section 9); the v1 path is Kotlin-side and self-contained.
+Schema **v3 is the only accepted profile format**. The following are gone, not
+converted:
 
-- **v1 = the old JSON format**: the `offsets.json` of the remote/main era — the
-  extractor report (`symbols` / `struct_fields`, four top-level scalars, and
-  metadata such as `kimage_text_base` / `btf_size` / `kallsyms`).
-  `ghostlock-extract --format json` still emits this shape for external tools.
-- `LegacyProfileConverter` normalizes a v1 document to v2 on load, idempotently:
+- **v1 / v2 profiles** (`schema_version = 1` or `2`): refused on import and on
+  load with a `schema_version` error. The app writes every document as v3.
+- **Unversioned `remote/main`-era JSON reports** (`symbols` / `struct_fields`
+  flat offsets): no longer converted. `ghostlock-extract --format json` still
+  emits that report shape for external tools, but it is not a profile.
+- The legacy converter, the automatic schema upgrade of imported copies, and
+  the v0→v1→v2 migration tests are removed with it.
 
-  | v1 content | Conversion result |
-  |---|---|
-  | `symbols` object (`off_*` keys) | `offset.*` namespace |
-  | `struct_fields` object (`task_*` keys) | `task_struct.*` namespace; a few fields (`rt_mutex_waiter`, `cred_uid`, `seccomp_*`, …) stay in place and take no part in validation/comparison |
-  | top-level `pselect_waiter_shift` | `route.select_stack.waiter_shift` (as `fallback.route.select_stack.waiter_shift` for a tcp profile) |
-  | top-level `compact_waiter` | `route.tcp_zerocopy.compact_waiter` |
-  | top-level `mm_struct_sz` | `kernelsnitch.mm_struct_sz` |
-  | `kimage_text_base` / `btf_size` / `kallsyms` | dropped |
-  | no `route` field | inferred from 6.x geometry: `compact_waiter` → tcp, otherwise select |
-  | no cred template | seeds the bundled 6.x constants (`credential-6x.conf` / `kernelsnitch-6x.conf`); 5.x credential fields stay author-supplied |
+To move an older profile forward, regenerate it from its image with this build
+(`ghostlock-extract --format conf`) or export it from an app build that still
+reads it; the result carries `schema_version = 3`.
 
-- Old flat keys (`kernelsnitch_collisions` / `mm_struct_sz` / `task_*` /
-  `cred_*` / `off_*` / `mcast_*`) are folded into the matching namespaces when
-  importing an old `offsets.json`, parsing extractor output, or reading
-  advanced overrides.
-- The same route inference applies to an old config with no `route`:
-  `kernel_major == 5 && mcast.waiter_off > 0` → `multicast_waiter`; otherwise
-  `compact_waiter != 0` → `tcp_zerocopy`; otherwise `select_stack`. A v1
-  document can never select the 5.x branch (`multicast_waiter` is retained only
-  as a guarded inference).
-- Old JSON caches are **not migrated and are discarded at startup**; internal
-  storage, snapshots, and exports are always HOCON.
-- Native has no v1 parser: the native `legacy/` JSON decoder was removed; a v1
-  document is converted to v2 on the Kotlin side before transport.

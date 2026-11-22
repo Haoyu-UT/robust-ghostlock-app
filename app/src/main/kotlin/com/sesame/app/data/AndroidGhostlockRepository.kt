@@ -28,6 +28,7 @@ import com.sesame.app.domain.model.MeasurementMergeRow
 import com.sesame.app.domain.model.OffsetCandidate
 import com.sesame.app.data.ota.OtaPayloadExtractor
 import com.sesame.app.data.profile.PerDevicePhys
+import com.sesame.app.data.profile.Timer98260
 import com.sesame.app.domain.model.OffsetImportResult
 import com.sesame.app.domain.model.ParseResult
 import com.sesame.app.domain.model.PreflightFailure
@@ -45,6 +46,7 @@ import com.sesame.app.domain.model.VrKoMode
 import com.sesame.app.domain.repository.GhostlockRepository
 import com.sesame.app.domain.repository.ProfileConfigController
 import com.sesame.app.shizuku.ShizukuExploitRunner
+import com.sesame.app.shizuku.TimerVerdict
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
@@ -71,6 +73,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         const val EditSessionPreferences = "ghostlock_edit_session"
         const val ExtractBinaryName = "libextract.so"
         const val NativeBinaryName = "libghostlock.so"
+        /* The timer route's generation-side analyzer (the vendored timer-extract). */
+        const val TimerExtractBinaryName = "libtimerextract.so"
+        const val TimerExtractTimeoutSeconds = 180L
 
         /* Measured database and the root phase's /proc/slabinfo capture. */
         const val MeasuredDbFileName = "measured_profiles.conf"
@@ -82,6 +87,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
          * short enough that a denied/ignored dialog still falls through. */
         const val CRASH_SHIZUKU_TIMEOUT_MS = 20_000L
         val AnsiEscape = Regex("\u001B\\[[0-9;]*m")
+        /** The generated document's release line, for the timer analyzer's template rule. */
+        val ReleasePattern = Regex("(?m)^release\\s*=\\s*\"([^\"]+)\"")
         const val PrefForceAttackTest = "force_attack_test"
         /* Second way: W1-only run followed by the DirtyFrag page-cache stage. */
         const val PrefSecondWay = "second_way"
@@ -94,6 +101,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         const val PrefDebugKernelLogEnabled = "debug_kernel_log_enabled"
         /** Root-manager choice (package name); absent means Auto. */
         const val PrefManagerPackage = "manager_package"
+
+        /** The boot a timer attempt last ran on; a same-boot retry is refused. */
+        const val PrefTimerAttemptBoot = "timer_attempt_boot_id"
 
         /* U01-S14: per-run KernelSU log name; the resolved path travels to
          * the native process via GHOSTLOCK_KSU_LOG. */
@@ -387,6 +397,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override fun crashShellStatus(): ShizukuStatus = shizukuRunner.crashAccessStatus()
 
+    override fun shizukuShellStatus(): ShizukuStatus = shizukuRunner.status()
+
     override suspend fun generateBugreport(): ImportedEvidence? {
         if (shizukuRunner.crashAccessStatus() == ShizukuStatus.PERMISSION_REQUIRED) {
             withContext(Dispatchers.Main) { shizukuRunner.requestPermission() }
@@ -559,6 +571,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 }
             }
             val captured = mutableListOf<String>()
+            /* The optional timer block derived for this image (see
+             * docs/analysis/timer-block-generation-plan.md). */
+            var timerBlock: String? = null
             /* One generation log per extractor pass: the stderr decision lines,
              * the verdict JSON and a meta summary land in the app's crash-safe
              * run store and are exportable from the log screen. Exit 7 is a
@@ -580,6 +595,21 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     timeoutSeconds = 1800,
                 )
                 tee("<k> extract exit code=$exit")
+                /* The timer block is an optional overlay from a separate
+                 * analyzer on the same image; its absence or failure leaves a
+                 * native-only profile and never fails generation. */
+                if (exit == 0 && parsedFile.isFile) {
+                    val release = ReleasePattern.find(parsedFile.readText())
+                        ?.groupValues?.get(1)
+                    if (release != null) {
+                        timerBlock = deriveTimerBlock(
+                            effectiveInput,
+                            release,
+                            tee,
+                            writeSidecar,
+                        )
+                    }
+                }
                 val reportText = feasibleFile.takeIf { it.isFile }?.readText()
                 val report = reportText?.let(FeasibleReport::parse)
                 if (reportText != null) {
@@ -613,6 +643,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             }
             if (code != 0 || !parsedFile.isFile) return ParseResult.Failed(code)
             val document = parsedFile.readText()
+            val generated = timerBlock?.let { block ->
+                document.trimEnd() + "\n\n" + block.trimEnd() + "\n"
+            } ?: document
             val fresh = parseEntries(document) ?: return ParseResult.Failed(code, "invalid extractor output")
             /* The document is returned, never stored: the app keeps no profile
              * documents (measured-db-plan §1). The caller probes it in memory,
@@ -633,11 +666,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 documentName = name,
                 route = report?.chosen ?: route,
                 anchor = anchorLine(captured),
-                hasAnchor = document.contains("lock_anchor_image"),
+                hasAnchor = generated.contains("lock_anchor_image"),
                 physSource = physSourceFromLines(captured),
                 physLoadPresent = resolved.any { it.getLongAt("kernel_phys_load") != null },
                 physOffsetPresent = resolved.any { it.getLongAt("kernel_phys_offset") != null },
-                documentText = document,
+                documentText = generated,
                 options = options,
             )
         } catch (error: CancellationException) {
@@ -651,6 +684,77 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             tempBootFile?.delete()
             tempXblFile?.delete()
         }
+    }
+
+    /**
+     * Derives the image's `timer_98260` block (the timer route's per-image
+     * constants) with the vendored timer analyzer. The block is optional
+     * metadata: any failure logs and returns null, leaving a native-only
+     * profile. It is validated here with the same parser the timer route's
+     * loader uses, so a malformed block can never reach the document.
+     */
+    private suspend fun deriveTimerBlock(
+        input: String,
+        release: String,
+        onLog: (String) -> Unit,
+        writeSidecar: (String, ByteArray) -> Boolean,
+    ): String? {
+        val binary = File(appContext.applicationInfo.nativeLibraryDir, TimerExtractBinaryName)
+        if (!binary.isFile) {
+            onLog("timer: no analyzer binary; the profile stays native-only")
+            return null
+        }
+        val out = File(filesDir, "timer-block.tmp")
+        out.delete()
+        val args = buildList {
+            add(input)
+            add("--emit-timer-conf")
+            add(out.absolutePath)
+            add("--endgame")
+            add("real,fake")
+            timerLayoutTemplate(release)?.let { template ->
+                add("--layout-template")
+                add(template)
+            }
+        }
+        onLog("timer: deriving the block from the image")
+        val exit = runCatching {
+            runProcess(
+                ProcessBuilder(listOf(binary.absolutePath) + args)
+                    .directory(filesDir)
+                    .redirectErrorStream(true)
+                    .apply {
+                        environment()["TMPDIR"] = filesDir.absolutePath
+                        environment()["HOME"] = filesDir.absolutePath
+                    },
+                onLog = onLog,
+                timeoutSeconds = TimerExtractTimeoutSeconds,
+            )
+        }.getOrElse { error ->
+            onLog("timer: analyzer error (${error.message}); the profile stays native-only")
+            out.delete()
+            return null
+        }
+        val text = out.takeIf { it.isFile }?.readText()?.trim()
+        out.delete()
+        if (exit != 0 || text.isNullOrEmpty()) {
+            onLog("timer: analyzer exited $exit; the profile stays native-only")
+            return null
+        }
+        val value = runCatching {
+            HoconSupport.parseValue(text).asValueMap()?.get(Timer98260.BLOCK_KEY)
+        }.getOrNull()
+        val (config, errors) = Timer98260.parse(value)
+        if (config == null || errors.isNotEmpty()) {
+            onLog(
+                "timer: derived block rejected " +
+                    "(${errors.firstOrNull()?.fieldPath ?: "unparsable"}); native-only profile",
+            )
+            return null
+        }
+        writeSidecar("timer-block.conf", text.toByteArray(StandardCharsets.UTF_8))
+        onLog("timer: block derived (endgames=${config.endgameLabel})")
+        return text
     }
 
     override suspend fun probeStride(
@@ -914,6 +1018,87 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         withDebugAttackLog("direct", onLog, measure = true) { archivedLog, debugDir, runDir, writeSidecar ->
             runExploitBinary(config, pair, "libghostlock.so", archivedLog, debugDir, runDir, writeSidecar)
         }
+
+    override fun timerProfileDocument(): String? =
+        profileController.renderTimerDocument(deviceRelease(), currentPairOrZero())
+
+    override suspend fun runTimerProbe(onLog: (String) -> Unit): Int = withContext(Dispatchers.IO) {
+        withDebugAttackLog("timer-probe", onLog) { archivedLog, _, _, writeSidecar ->
+            val release = deviceRelease()
+            val pair = cpuPairs.getOrNull(selectedCpuPair) ?: run {
+                archivedLog("<s> error: no CPU pair selected")
+                return@withDebugAttackLog 1
+            }
+            val document = profileController.renderTimerDocument(release, pair) ?: run {
+                archivedLog("<s> error: no timer_98260 profile for $release")
+                return@withDebugAttackLog 1
+            }
+            writeSidecar("timer-profile.json", document.toByteArray(StandardCharsets.UTF_8))
+            archivedLog(
+                "<s> timer document ${document.length}B sha256=${sha256Of(document)}",
+            )
+            shizukuRunner.runTimer(document, "probe", selectedManagerPackage(), archivedLog)
+        }
+    }
+
+    override fun timerRunAllowed(): Boolean = TimerBootContract.allowsRun(
+        preferences.getString(PrefTimerAttemptBoot, null),
+        currentBootId(),
+    )
+
+    override suspend fun runTimerRoute(onLog: (String) -> Unit): Int = withContext(Dispatchers.IO) {
+        val bootId = currentBootId()
+        val lastAttempt = preferences.getString(PrefTimerAttemptBoot, null)
+        if (!TimerBootContract.allowsRun(lastAttempt, bootId)) {
+            onLog("<s> error: a timer attempt already ran on this boot; reboot before retrying")
+            return@withContext TimerBootContract.Refused
+        }
+        /* Arm the boot at the start, not at the verdict: if the app or the
+         * UserService dies after the tool launched but before the service
+         * reports, the same-boot retry must still be refused — the tool may
+         * already be parked (a hit holds the fake cred page, a miss the
+         * failed plants). A run that never reached the tool clears it below. */
+        runCatching { preferences.edit { putString(PrefTimerAttemptBoot, bootId) } }
+        val code = withDebugAttackLog("timer", onLog) { archivedLog, _, _, writeSidecar ->
+            val release = deviceRelease()
+            val pair = cpuPairs.getOrNull(selectedCpuPair) ?: run {
+                archivedLog("<s> error: no CPU pair selected")
+                return@withDebugAttackLog TimerVerdict.NotStarted
+            }
+            val document = profileController.renderTimerDocument(release, pair) ?: run {
+                archivedLog("<s> error: no way-2 timer_98260 profile for $release")
+                return@withDebugAttackLog TimerVerdict.NotStarted
+            }
+            writeSidecar("timer-profile.json", document.toByteArray(StandardCharsets.UTF_8))
+            /* The run log carries both: the exact runtime document the tool
+             * consumed, and the resolved profile source (the superset context
+             * — every route block, the `routes` order and the provenance). */
+            runCatching { profileController.renderResolvedForDebug(release, pair) }
+                .getOrNull()
+                ?.let { writeSidecar("profile.conf", it.toByteArray(StandardCharsets.UTF_8)) }
+            writeSidecar(
+                "profile.meta",
+                buildString {
+                    appendLine("source=profile.conf")
+                    appendLine("runtime=timer-profile.json")
+                    appendLine("release=$release")
+                    appendLine("selected_route=${Timer98260.BLOCK_KEY}")
+                    appendLine("cpu_pair=${pair.primary},${pair.consumer}")
+                    appendLine("timer_sha256=${sha256Of(document)}")
+                }.toByteArray(StandardCharsets.UTF_8),
+            )
+            archivedLog(
+                "<s> timer document ${document.length}B sha256=${sha256Of(document)} mode=fake",
+            )
+            shizukuRunner.runTimer(document, "fake", selectedManagerPackage(), archivedLog)
+        }
+        if (code == TimerVerdict.NotStarted) {
+            /* Shizuku was not ready / the tool never launched: the boot is
+             * clean again (no parked process to hold a page or zombies). */
+            runCatching { preferences.edit { remove(PrefTimerAttemptBoot) } }
+        }
+        code
+    }
 
     override suspend fun probeDirtyfrag(): String = withContext(Dispatchers.IO) {
         val release = System.getProperty("os.version", "").orEmpty()
@@ -1376,8 +1561,16 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     }
                     else -> config.pipelineOrder
                 }
+                /* The DirtyFrag box: off trims the profile's ordered pipeline
+                 * to GhostLock for this run; the profile keeps the capability. */
+                val effectiveOrder = if (config.dirtyFragSelectable && !config.dirtyFragOn) {
+                    onLog("<k> pipeline: dirtyfrag off (GhostLock only)")
+                    order.filter { it != "dirtyfrag" }.ifEmpty { listOf("ghostlock") }
+                } else {
+                    order
+                }
                 val decision = PipelineResolver.resolve(
-                    order,
+                    effectiveOrder,
                     ghostlock = { null },
                     dirtyfrag = {
                         if (fallbackFault) {
@@ -1733,7 +1926,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
      * Fields a parsed profile still lacks that only an xbl_config FDT or uefi
      * memory map can fill. Used to prompt for the optional sidecars.
      */
-    /** Resolve a schema-v2 per-device pair for the running device, if present. */
+    /** Resolve a schema-v3 per-device pair for the running device, if present. */
     private fun resolvedForDevice(entry: ValueMap, candidates: List<String>): ValueMap =
         runCatching { PerDevicePhys.resolveFor(entry, candidates).document }.getOrDefault(entry)
 
@@ -2068,3 +2261,13 @@ internal fun releaseSupportedByProfileSources(
     bundledReleases: Set<String>,
     importedSelected: Boolean,
 ): Boolean = release in bundledReleases || importedSelected
+
+/**
+ * The timer analyzer's no-BTF layout template for a release, or null when no
+ * template applies. Only the 5.10 series has one (the labelled `5.10`
+ * template); 6.x images carry BTF and supply their own facts. Releases spell
+ * the series `5.10.<patch>-…` — the dash follows the patch level, not the
+ * minor, so `startsWith("5.10-")` matches nothing.
+ */
+internal fun timerLayoutTemplate(release: String): String? =
+    if (release.startsWith("5.10.")) "5.10" else null

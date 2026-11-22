@@ -201,7 +201,7 @@ class Timer98260Test {
     fun `the native document is byte-identical with and without the block`() {
         val base = valueMapOf(
             "release" to "6.1.138-test",
-            "schema_version" to 2L,
+            "schema_version" to 3L,
             "kernel_major" to 6L,
             "route" to valueMapOf("select_stack" to valueMapOf("waiter_shift" to -2L)),
             "offset" to valueMapOf("init_task" to 123L),
@@ -219,7 +219,7 @@ class Timer98260Test {
     fun `the canonical document carries the block with hex strings and numbers`() {
         val merged = valueMapOf(
             "release" to "5.10.236-test",
-            "schema_version" to 2L,
+            "schema_version" to 3L,
             "kernel_major" to 5L,
             "route" to valueMapOf("select_stack" to valueMapOf("waiter_shift" to -2L)),
             "timer_98260" to fakeBlock(),

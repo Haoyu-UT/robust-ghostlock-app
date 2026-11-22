@@ -835,6 +835,42 @@ def candidates(store):
     return found, exempt
 
 
+def feasible_route_names(options):
+    return sorted(
+        route.get("route")
+        for route in options.get("routes", [])
+        if route.get("verdict") == "feasible"
+    )
+
+
+def asset_route_names(path):
+    """The route branch names inside the asset's `route { ... }` parent."""
+    names = []
+    in_route = False
+    depth = 0
+    for raw in open(path, encoding="utf-8", errors="replace"):
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if not in_route:
+            if line.strip() == "route {":
+                in_route = True
+                depth = 0
+            continue
+        stripped = line.strip()
+        if stripped.endswith("{"):
+            if depth == 0:
+                names.append(stripped[:-1].strip())
+            depth += 1
+            continue
+        if stripped == "}":
+            if depth == 0:
+                in_route = False
+            else:
+                depth -= 1
+    return sorted(names)
+
+
 def validate(entry):
     options = read_options(entry["directory"])
     devices = entry_devices(entry["meta"], entry["directory"])
@@ -846,6 +882,7 @@ def validate(entry):
         devices=devices,
         primary=devices[0],
         route=choose_route(options),
+        routes=feasible_route_names(options),
         maps=phys_map_lines(options),
         stride=mm_struct_stride(entry["directory"], entry["meta"]),
     )
@@ -884,7 +921,6 @@ def render(extract, entry, out_path):
     command += sidecar_args(entry["directory"], entry["primary"])
     command += [
         "--format", "conf",
-        "--route", entry["route"],
         "--anchor",
         "--device", entry["primary"],
         "--pipeline-order", ",".join(entry["choice_pipeline_order"]),
@@ -909,10 +945,10 @@ def asset_text(entry, rendered):
     block = timer_block(entry["options"])
     if block is not None:
         text = text.rstrip("\n") + "\n\n" + TIMER_COMMENT + render_timer_block(block) + "\n"
-    route_label = entry["route"]
+    route_label = ", ".join(entry["routes"])
     header = (
         "# SHIPPED GOLDEN -- test-kernels golden (QEMU tier); generated, do not edit.\n"
-        f"# store: {entry['release']}; route: {route_label}; "
+        f"# store: {entry['release']}; routes: {route_label}; "
         f"devices: {', '.join(entry['devices'])}\n"
         "# maintained by external/ghostlock-app/tools/ship_golden_profiles.py\n"
     )
@@ -924,6 +960,7 @@ def main():
     parser.add_argument("--check", action="store_true", help="report only, exit 1 on a missing or mismatched golden")
     parser.add_argument("--apply", action="store_true", help="render and index the missing goldens")
     parser.add_argument("--refresh", action="store_true", help="rewrite existing SHIPPED GOLDEN assets whose pipeline line or measured mm_struct_sz is missing/infeasible")
+    parser.add_argument("--refresh-all", action="store_true", help="re-render every shipped golden from the store as the route superset")
     parser.add_argument("--sync-facts", action="store_true", help="insert missing derived facts (layout/route/offset blocks) into existing assets; report value differences as manual")
     parser.add_argument("--store", default=DEFAULT_STORE)
     parser.add_argument("--assets", default=DEFAULT_ASSETS)
@@ -933,10 +970,10 @@ def main():
         help="limit to releases matching any given substring (debugging)",
     )
     args = parser.parse_args()
-    if args.check and (args.apply or args.refresh or args.sync_facts):
-        parser.error("--check is mutually exclusive with --apply/--refresh/--sync-facts")
-    if args.sync_facts and (args.apply or args.refresh):
-        parser.error("--sync-facts is mutually exclusive with --apply/--refresh")
+    if args.check and (args.apply or args.refresh or args.refresh_all or args.sync_facts):
+        parser.error("--check is mutually exclusive with --apply/--refresh/--refresh-all/--sync-facts")
+    if args.sync_facts and (args.apply or args.refresh or args.refresh_all):
+        parser.error("--sync-facts is mutually exclusive with --apply/--refresh/--refresh-all")
 
     found, exempt = candidates(args.store)
     index = index_releases(args.assets)
@@ -944,6 +981,48 @@ def main():
         os.path.basename(path)[:-5]
         for path in glob.glob(os.path.join(args.assets, "*.conf"))
     }
+
+    if args.refresh_all:
+        if not os.path.isfile(args.extract):
+            parser.error(f"extractor not found: {args.extract} (build tools/extract_rs)")
+        refreshed, failed = [], []
+        for entry in found:
+            release = entry["release"]
+            if args.only and not any(needle in release for needle in args.only):
+                continue
+            asset_path = os.path.join(args.assets, release + ".conf")
+            if not os.path.isfile(asset_path):
+                continue
+            try:
+                validate(entry)
+                entry["choice_pipeline_order"] = choose_pipeline_order(
+                    entry["options"], entry["meta"]
+                )
+            except NotShippable:
+                continue
+            except PipelineChoiceRequired as error:
+                failed.append((release, str(error)))
+                continue
+            with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as handle:
+                temp_path = handle.name
+            try:
+                render(args.extract, entry, temp_path)
+                rendered = open(temp_path, encoding="utf-8").read()
+            except Exception as error:  # noqa: BLE001 - report each entry, keep going
+                failed.append((release, str(error)))
+                continue
+            finally:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            with open(asset_path, "w", encoding="utf-8") as handle:
+                handle.write(asset_text(entry, rendered))
+            refreshed.append(release)
+        for release in refreshed:
+            print(f"refreshed {release}")
+        for release, error in failed:
+            print(f"FAILED  {release}: {error}", file=sys.stderr)
+        print(f"refreshed {len(refreshed)}, failed {len(failed)}")
+        return 1 if failed else 0
 
     bundled = 0
     missing = []
@@ -998,6 +1077,13 @@ def main():
                     f"asset pipeline {chosen} != derived order {expected}"
                 ]
                 missing.append(entry)
+                continue
+            asset_routes = asset_route_names(asset_path)
+            if asset_routes != entry["routes"]:
+                entry["reasons"] = [
+                    f"asset routes {asset_routes} != derived {entry['routes']}"
+                ]
+                mismatched_entries.append(entry)
                 continue
             if release not in index:
                 entry["reasons"] = ["asset present but not in index.conf"]
