@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.core.content.edit
 import com.sesame.app.BuildConfig
 import com.sesame.app.data.profile.CpuPairView
+import com.sesame.app.data.profile.ModuleBlock
 import com.sesame.app.data.profile.PerDevicePhys
 import com.sesame.app.data.profile.ProfileDocument
 import com.sesame.app.data.profile.ProfileMerger
@@ -105,6 +106,14 @@ internal class AndroidProfileConfigController(
             ?: routeNameOf(full)
         val pipelineOrder = ProfileResolver.pipelineOrder(full)
         val needsW1 = ProfileResolver.requiresW1(pipelineOrder)
+        /* The module chain's pair manifest, when the list selects it. A
+         * malformed block is already in invalidPaths; the runtime then has no
+         * spec and refuses the chain. */
+        val module = if ("module" in pipelineOrder) {
+            ModuleBlock.parse(full[ModuleBlock.BLOCK_KEY]).first
+        } else {
+            null
+        }
         /* The carrier choice belongs to the active native route; the timer
          * selection has none. DirtyFrag is a choice only when the pipeline
          * lists both entries (off then leaves GhostLock runnable). */
@@ -157,6 +166,7 @@ internal class AndroidProfileConfigController(
             dirtyFragSelectable = dirtyFragSelectable,
             dirtyFragOn = dirtyFragOn,
             pipelineOrder = pipelineOrder,
+            module = module,
             invalidPaths = invalidPaths,
         )
     }

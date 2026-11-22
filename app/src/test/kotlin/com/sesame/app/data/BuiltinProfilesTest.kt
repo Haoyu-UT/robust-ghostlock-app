@@ -71,6 +71,7 @@ class BuiltinProfilesTest {
         try {
             val entries = builtinEntries()
             assertTrue("index.conf lists no builtin profiles", entries.isNotEmpty())
+            val moduleAssets = mutableSetOf<String>()
             for (entry in entries) {
                 val controller = controllerFor(entry.file)
                 val config = controller.load(entry.release, pair)
@@ -80,6 +81,13 @@ class BuiltinProfilesTest {
                     emptySet<String>(),
                     config.invalidPaths,
                 )
+                /* A module-only profile has no route and no native document:
+                 * its pair is the asset + hash in the block. */
+                if (isModuleOnly(config)) {
+                    assertModulePair(entry, config)
+                    config.module?.asset?.let { moduleAssets += it }
+                    continue
+                }
                 val route = config.route
                 assertNotNull("${entry.release}: route unresolved", route)
 
@@ -107,9 +115,52 @@ class BuiltinProfilesTest {
                 assertEquals(entry.release, profile!!.release)
                 assertEquals(route, profile.route.token)
             }
+            /* The bundle check, app-side: a module asset is referenced by a
+             * bundled module profile, and no module asset is unreferenced. */
+            val onDisk = context.assets.list("modules").orEmpty()
+                .map { "modules/$it" }
+                .toSet()
+            assertEquals("bundled module assets must be referenced exactly once",
+                onDisk, moduleAssets)
         } finally {
             root.deleteRecursively()
         }
+    }
+
+    private fun isModuleOnly(config: com.sesame.app.domain.model.ProfileConfig): Boolean =
+        "module" in config.pipelineOrder &&
+            !com.sesame.app.data.profile.ProfileResolver.requiresW1(config.pipelineOrder)
+
+    /** The bundled module asset exists and hashes to the block's value. */
+    private fun assertModulePair(
+        entry: Entry,
+        config: com.sesame.app.domain.model.ProfileConfig,
+    ) {
+        val document = HoconSupport.parseValue(
+            AssetConfigLoader(context).load("kernel_profiles/${entry.file}"),
+        ).asValueMap() ?: error("${entry.release}: unreadable profile")
+        val block = document["module"].asValueMap()
+            ?: error("${entry.release}: module block missing")
+        val asset = block["asset"] as? String
+            ?: error("${entry.release}: module asset missing")
+        val expected = block["asset_sha256"] as? String
+            ?: error("${entry.release}: module hash missing")
+        assertEquals(
+            "${entry.release}: resolved module spec",
+            asset,
+            config.module?.asset,
+        )
+        assertEquals(
+            "${entry.release}: resolved module hash",
+            expected,
+            config.module?.assetSha256,
+        )
+        val actual = context.assets.open(asset).use { input ->
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(input.readBytes())
+                .joinToString("") { "%02x".format(it) }
+        }
+        assertEquals("${entry.release}: bundled module hash", expected, actual)
     }
 
     private fun leafPaths(nodes: List<com.sesame.app.domain.model.ProfileFieldNode>): List<String> =
@@ -124,6 +175,9 @@ class BuiltinProfilesTest {
             for (entry in builtinEntries()) {
                 val controller = controllerFor(entry.file)
                 val config = controller.load(entry.release, pair)
+                /* The editor's geometry tree is a W1-chain view; a module-only
+                 * profile carries no route geometry. */
+                if (isModuleOnly(config)) continue
                 val paths = leafPaths(config.roots)
                 assertTrue("${entry.release}: kernel_phys_load missing", "kernel_phys_load" in paths)
                 for (field in listOf(

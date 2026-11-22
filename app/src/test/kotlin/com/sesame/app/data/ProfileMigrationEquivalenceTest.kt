@@ -49,6 +49,15 @@ class ProfileMigrationEquivalenceTest {
             val external = FakeExternalProfileStore()
             val imported = controller("imported", device, external)
             val baselineModel = baseline.load(entry.release, pair)
+            /* A module-only profile has no native document to compare: the
+             * external path cannot authorize the module chain either. */
+            if ("module" in baselineModel.pipelineOrder &&
+                !com.sesame.app.data.profile.ProfileResolver.requiresW1(
+                    baselineModel.pipelineOrder,
+                )
+            ) {
+                continue
+            }
 
             assertMatchesBundle(
                 entry.release, entry.release, nativeText,

@@ -23,7 +23,15 @@ pair manifest** — the bundled artefact's name and hash and the ROM delivery ta
 declared. Selection stays in `pipeline`; the block makes the entry viable and supplies its data.
 **Schema slice landed (2026-11-23):** `ModuleBlock` (validator + parser), the resolver's
 entry↔block coupling, `ProfileDocument` rendering, the profile-core tests, and the EN/ZH schema
-section 4.10. The asset/ABI preflight, the exporter skip and the delivery plumbing follow.
+section 4.10. The exporter skips a module-only profile (no native wire).
+
+**The 5.4 pairs and the run path (2026-11-23):** the switch modules for star and venus are built
+from each Image's exact config (`tools/dirtyfrag_module/build.sh`, vendor clang, the Image's own
+CRCs) and load in their Images under QEMU (`finit_module rc=0`, `DFSWITCH … enforcing=0`). Both
+ship as `assets/modules/<release>.ko` with a bundled module profile: the app stages the block's
+`asset` after the hash check, uses its `vendor_files`, and stages an installed Magisk manager
+(`MagiskStage`) for the handoff. The diting bench path is unchanged. The 5.4 DirtyFrag delivery
+itself is still device-ungated (no 5.4 unit).
 
 ### The module delivery (from the reference, verified against our ROM policies)
 
@@ -249,17 +257,17 @@ gain the pipeline section and a section for the block.
 | area | change |
 |---|---|
 | `profile-core` `ProfileResolver` | `module` in `PipelineNames`; pipeline-scoped required groups (P2); KDP rule; the `module` block validator (`ModuleBlock`) and the entry↔block coupling |
-| `ProfileExporter` (Gradle) | skip a module-only profile: no native wire is generated; a mixed list keeps the W1 fallback's wire |
+| `ProfileExporter` (Gradle) | skip a module-only profile: no native wire is generated; a mixed list keeps the W1 fallback's wire — implemented |
 | `profile-core` schema docs | document `pipeline` (missing today) and the pipeline-scoped rules; EN+ZH together |
-| `PipelineResolver` | third entry + viability callback (bundled profile source, the block's asset/hash check, ROM preflight, Magisk source) |
-| `AndroidGhostlockRepository` | module pipeline path: no W1 native run, no `nativeDocument`; stages `assets/<asset>` after the hash check and passes the block's `vendor_files`; still `runDirtyfragStage`; preflight refusal replaces the ksud gate for this pipeline; refuses `module` unless the effective profile is the bundled one; runtime env passes the handoff + module path to the stage |
+| `PipelineResolver` | third entry + viability callback (bundled profile source, the block's asset/hash check, ROM preflight, Magisk source) — implemented |
+| `AndroidGhostlockRepository` | module pipeline path: no W1 native run, no `nativeDocument`; stages `assets/<asset>` after the hash check (`BundledModule`) and passes the block's `vendor_files`; still `runDirtyfragStage`; preflight refusal replaces the ksud gate for this pipeline; refuses `module` unless the effective profile is the bundled one (`bundledAuthoritative`); runtime env passes the handoff + module path to the stage — implemented, diting bench unchanged |
 | native runtime config / `ops.cpp` | the root script branches on `GHOSTLOCK_HANDOFF=magisk`: insmod → wait permissive → Magisk setup → restore Enforcing; the KSU block stays for existing pipelines. No new invocation mode and no wire change (the stage is already `--dirtyfrag <plan>`) |
 | DirtyFrag stub (`dirtyfrag_stub.bin`) | the reference prologue: the worker child forks a grandchild that writes `u:r:vendor_modprobe:s0` to `/proc/self/attr/exec` and execs `/vendor/bin/insmod <vendor target>` (the target string patched like the socket name), then serves its socket exactly as today |
 | crash_dump bridge | a small helper patched into `crash_dump64`'s page cache (the app can read it) and exec'd for the `crash_dump` transition; its read/splice modes let the app write the module into a `vendor_file` target. Restore `crash_dump64` and the target after the module loads |
-| module bundle | hand-built `.ko` per supported release (exact config, vendor clang, Image CRCs) under `assets/modules/`, referenced by the `module` block — no index file; the profile is the manifest. Each asset is added only together with its bundled profile |
-| bundle check | every bundled profile whose `pipeline` contains `module` must have the referenced asset and a matching `asset_sha256`; every `assets/modules/*.ko` must be referenced by exactly one bundled profile. The ABI agreement stays in the build gate record |
-| Magisk staging | extend the manager scanner to locate an installed Magisk manager and stage its binaries, as the ksud scanner does today; refuse with a clear reason when none is installed |
-| app UI | pipeline display for `module`; the module/Magisk readiness on the support card; no new profile editor fields |
+| module bundle | two shipped pairs: star `5.4.233-qgki-gbb70cde46897` and venus `5.4.274-qgki-g76ac0b265f44`, `.ko` under `assets/modules/`, referenced by their `module` block — no index file; the profile is the manifest. Source and the reproducible recipe: `tools/dirtyfrag_module/` |
+| bundle check | every bundled profile whose `pipeline` contains `module` must have the referenced asset and a matching `asset_sha256`; every `assets/modules/*.ko` must be referenced. Implemented app-side in `BuiltinProfilesTest`; the ABI agreement stays in the build gate record |
+| Magisk staging | `MagiskStage` locates an installed official/alpha Magisk manager, stages its binaries (the 32-bit half from the APK) into the app's files dir for the root script, and refuses with a clear reason when none is installed — implemented |
+| app UI | pipeline display for `module`; the module/Magisk readiness on the support card; no new profile editor fields — pending |
 
 ## 5. Gates
 

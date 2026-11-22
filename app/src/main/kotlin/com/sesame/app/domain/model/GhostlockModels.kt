@@ -1,6 +1,7 @@
 package com.sesame.app.domain.model
 
 import com.sesame.app.data.OptionSuperset
+import com.sesame.app.data.profile.ModuleConfig
 import java.util.Locale
 
 data class CpuPair(val primary: Int, val consumer: Int) {
@@ -328,6 +329,8 @@ data class ProfileConfig(
     val dirtyFragOn: Boolean = false,
     /** The profile's ordered pipeline preference; empty = legacy ghostlock. */
     val pipelineOrder: List<String> = emptyList(),
+    /** The module chain's pair manifest, when the pipeline selects `module`. */
+    val module: ModuleConfig? = null,
     /** Dotted paths whose resolved value violates the geometry rules. */
     val invalidPaths: Set<String> = emptySet(),
 ) {
