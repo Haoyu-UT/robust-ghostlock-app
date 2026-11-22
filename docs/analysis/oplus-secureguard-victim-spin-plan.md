@@ -63,6 +63,20 @@ write(cmd_pipe, 'C'); read uid            read(cmd_pipe) -> 'C'; write(uid_pipe,
 The child must not block in any syscall between `spin_ready = 1` and `spin_go = 1`. Pin the child
 away from the route's `{main, consumer}` pair so a spinning core does not perturb the timing.
 
+**The affinity is inherited, and that matters here.** `fork()` gives the child the calling thread's
+mask, and the calling thread is the native's main thread, already pinned to `main_cpu` (the log's
+`main thread running on cpu=N` precedes the fork). Today the child sleeps in `read()` immediately,
+so this is invisible; a naive spin would put it on the **same CPU as the route's waiter**. Before
+setting `spin_ready`, the child (or the parent, by pid) must:
+
+- `sched_setaffinity` to a CPU outside `{main, consumer}` — a little core on the supported SoCs;
+- lower its scheduling weight (`SCHED_IDLE` or nice 19) so anything else on that core wins;
+- if no such CPU is in its mask, log (`victim spin: no off-pair cpu, spinning in place`) and
+  proceed — correctness is unaffected, only isolation is lost.
+
+All of these are syscalls made before the transition; they are invisible to the guard.
+
+
 Notes:
 
 - The marker is a fixed 4-byte value so the parent can tell "the child ran as root" from a stale
@@ -107,7 +121,28 @@ device-specific branch. Log the chosen path.
 - W3 and the handoff need no change: every syscall after the transition enters with `uid == 0`,
   so the root check short-circuits. (The exec hook is handled by slice 3.)
 
+## Deployment: universal or runtime-gated
+
+The spin is a workaround for one vendor check, and every other rig's current protocol is measured.
+Two shapes:
+
+1. **Universal** — one victim protocol on every device. One path to test and maintain; it would
+   also cover any other ROM carrying the same check (the OnePlus 13s, 6.6.66, is the obvious
+   candidate — its `vendor_boot` should be checked for `oplus_secure_guard.ko`, and if present its
+   rule compared). Requires the regression series to prove neutrality.
+2. **Runtime-gated** — spin only when the check can act: `oplus_secure_guard` in `/proc/modules`
+   **and** `ro.boot.verifiedbootstate` not `orange` (the module itself returns early when
+   unlocked). Every other device keeps today's code, so no measured rate can move. The cost is a
+   second path, exercised almost only by the reporter.
+
+Decision: implement the check as a decision, run the diting (select and sigreturn) and duchamp
+series with the spin forced on, and drop the gate only if both reproduce their baselines.
+
+The DirtyFrag pipeline (`--w1-only`) does not run the W2 victim, so the OnePlus 13s's DirtyFrag
+flow is untouched either way.
+
 ## Gates
+
 
 - `make -C src ghostlock` zero warnings, `make -C src lint-tidy`, `make -C src native-host-tests`.
 - `tools/cmp_disasm.py` (attack-path change), read by hand for the known control failure.
@@ -125,9 +160,9 @@ device-specific branch. Log the chosen path.
   acts on a report it receives independently is unmeasured. The first device run answers it.
 - **A kevent may already have been sent** for the pre-fix run's incident; the reporter's next run
   starts from a fresh boot.
-- **The spin's timing**: a spinning core on an 8-CPU device is harmless, but the route is
-  timing-sensitive; pin the victim away from `{main, consumer}` and keep the spin short (the
-  route's W2 call is ~1 s).
+- **The spin's timing**: with the child pinned off-pair (slice 1) the route keeps its CPUs and its
+  cluster; the residual is a runqueue entry on a little core for one route call. The regression
+  series, not this argument, decides whether that is neutral on each rig.
 - **The panic is not fully attributed.** The walk's bad `waiter->lock` is the `+0x188` family; the
   stale target (writing into a freed `task_struct`) is a plausible amplifier. Removing the retries
   removes the amplifier either way; the route's own per-call rate on this device is still
