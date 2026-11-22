@@ -14,6 +14,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sesame.app.R
 import com.sesame.app.RunStatusService
+import com.sesame.app.data.BundledModule
+import com.sesame.app.data.MagiskStage
 import com.sesame.app.data.MeasuredProfileStore
 import com.sesame.app.data.OptionDecision
 import com.sesame.app.data.OptionPlan
@@ -522,6 +524,7 @@ class GhostlockViewModel(
     private fun applyExecutionConfig(config: ProfileConfig) {
         /* The run consumes exactly this resolution (D7); nothing re-loads later. */
         resolvedProfile = config
+        val (moduleAssetVerified, magiskManager) = moduleFacts(config)
         mutableState.update { state ->
             state.copy(
                 session = state.session.copy(
@@ -540,11 +543,25 @@ class GhostlockViewModel(
                         dirtyFragSelectable = config.dirtyFragSelectable,
                         dirtyFragOn = config.dirtyFragOn,
                         pipelineOrder = config.pipelineOrder,
+                        module = config.module,
+                        moduleAssetVerified = moduleAssetVerified,
+                        magiskManager = magiskManager,
                     ),
                     device = state.session.device.copy(customCpuPair = customCpuPairOf(config)),
                 ),
             )
         }
+    }
+
+    /**
+     * The module chain's delivery facts: whether the bundled `.ko` matches its
+     * declared hash, and which installed Magisk manager the root script can
+     * stage. Both are cheap enough to re-read on every resolution, and the
+     * chain refuses to start when either is absent.
+     */
+    private fun moduleFacts(config: ProfileConfig?): Pair<Boolean, String?> {
+        val module = config?.module ?: return false to null
+        return BundledModule.verify(application, module) to MagiskStage.installed(application)
     }
 
     /** Recomputes the facts the home merge would change; cheap, runs on IO. */
@@ -2259,6 +2276,7 @@ class GhostlockViewModel(
                 ?: return@withContext null
             runCatching { profileController.load(snapshot.kernelRelease, pair) }.getOrNull()
         }
+        val moduleState = withContext(Dispatchers.IO) { moduleFacts(loaded) }
         kernelSnapshot = snapshot
         loaded?.let { resolvedProfile = it }
         mutableState.update {
@@ -2296,6 +2314,9 @@ class GhostlockViewModel(
                         dirtyFragSelectable = loaded?.dirtyFragSelectable ?: false,
                         dirtyFragOn = loaded?.dirtyFragOn ?: false,
                         pipelineOrder = loaded?.pipelineOrder.orEmpty(),
+                        module = loaded?.module,
+                        moduleAssetVerified = moduleState.first,
+                        magiskManager = moduleState.second,
                     ),
                 ),
                 report = it.report.copy(

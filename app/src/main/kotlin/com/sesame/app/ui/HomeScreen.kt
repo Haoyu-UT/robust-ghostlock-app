@@ -156,7 +156,7 @@ internal fun HomeScreen(
         TextButton(
             text = copy.barLabel,
             onClick = { dispatch(copy.action, actions) },
-            enabled = !state.run.running,
+            enabled = copy.barEnabled && !state.run.running,
             colors = ButtonDefaults.textButtonColorsPrimary(),
             modifier = Modifier
                 .fillMaxWidth()
@@ -178,6 +178,8 @@ private data class StatusCopy(
     val detail: String?,
     val barLabel: String,
     val action: BarAction,
+    /** False when the prerequisite is missing, so the run never starts doomed. */
+    val barEnabled: Boolean = true,
 )
 
 @Composable
@@ -186,15 +188,49 @@ private fun statusCopy(state: SessionState, status: SupportStatus): StatusCopy {
         if (state.support.importedProfilePresent) R.string.home_source_external
         else R.string.home_source_builtin,
     )
+    val module = state.support.module
+    /* The module chain has no route to pick: the same detail line names the
+     * chain, then the Magisk manager the root script will stage. A chain
+     * whose profile is not the bundled one, whose asset fails its hash, or
+     * whose manager is not installed cannot run at all, and the card says
+     * which link is missing instead of offering a doomed tap. */
     val routeName = state.support.selectedRoute ?: state.support.route?.takeIf { it.isNotBlank() }
-    val route = routeName?.let { name ->
-        if (state.support.routeCandidates.firstOrNull { it.name == name }?.timer == true) {
-            stringResource(R.string.route_choice_timer_label, name)
-        } else {
-            name
-        }
+    val route = when {
+        module != null -> stringResource(R.string.module_chain_label)
+        routeName == null -> null
+        state.support.routeCandidates.firstOrNull { it.name == routeName }?.timer == true ->
+            stringResource(R.string.route_choice_timer_label, routeName)
+
+        else -> routeName
     }
-    val detail = listOfNotNull(source, route).joinToString(" · ")
+    val magisk = module?.let {
+        stringResource(
+            if (state.support.magiskManager != null) {
+                R.string.module_magisk_installed
+            } else {
+                R.string.module_magisk_missing
+            },
+        )
+    }
+    val detail = listOfNotNull(source, route, magisk).joinToString(" · ")
+    val moduleBlocker = if (status == SupportStatus.Ready) moduleBlockerOf(state) else null
+    if (moduleBlocker != null) {
+        return StatusCopy(
+            kind = StatusKind.Action,
+            title = stringResource(R.string.module_blocked_title),
+            summary = stringResource(
+                when (moduleBlocker) {
+                    ModuleBlocker.NotBundled -> R.string.module_blocked_not_bundled
+                    ModuleBlocker.AssetMissing -> R.string.module_blocked_asset
+                    ModuleBlocker.MagiskMissing -> R.string.module_blocked_magisk
+                },
+            ),
+            detail = detail,
+            barLabel = stringResource(R.string.action_run),
+            action = BarAction.Run,
+            barEnabled = false,
+        )
+    }
     return when (status) {
         SupportStatus.Ready -> StatusCopy(
             kind = StatusKind.Success,

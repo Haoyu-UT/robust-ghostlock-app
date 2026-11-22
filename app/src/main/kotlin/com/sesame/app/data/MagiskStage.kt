@@ -32,12 +32,19 @@ object MagiskStage {
 
     data class Staged(val packageName: String, val dir: File)
 
+    /** The installed manager whose binaries [stage] would copy, or null. */
+    fun installed(context: Context): String? = managerInfo(context)?.packageName
+
+    private fun managerInfo(context: Context): android.content.pm.PackageInfo? {
+        val pm = context.packageManager
+        return PACKAGES.asSequence()
+            .mapNotNull { runCatching { pm.getPackageInfo(it, 0) }.getOrNull() }
+            .firstOrNull()
+    }
+
     /** The manager package whose binaries were staged, or null when none is usable. */
     fun stage(context: Context, dest: File): Staged? {
-        val pm = context.packageManager
-        val info = PACKAGES.asSequence()
-            .mapNotNull { runCatching { pm.getPackageInfo(it, 0) }.getOrNull() }
-            .firstOrNull() ?: return null
+        val info = managerInfo(context) ?: return null
         val app = info.applicationInfo ?: return null
         val apk = File(app.sourceDir)
         dest.deleteRecursively()

@@ -12,14 +12,15 @@ import java.security.MessageDigest
  * the pipeline resolver then refuses the chain before any delivery.
  */
 object BundledModule {
+    /** True when the asset opens and its bytes match the block's hash. */
+    fun verify(context: Context, spec: ModuleConfig): Boolean {
+        val bytes = readAsset(context, spec.asset) ?: return false
+        return sha256(bytes).equals(spec.assetSha256, ignoreCase = true)
+    }
+
     fun stage(context: Context, spec: ModuleConfig, destDir: File): File? {
-        val bytes = runCatching {
-            context.assets.open(spec.asset).use { it.readBytes() }
-        }.getOrNull() ?: return null
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString("") { "%02x".format(it) }
-        if (!digest.equals(spec.assetSha256, ignoreCase = true)) return null
+        val bytes = readAsset(context, spec.asset) ?: return null
+        if (!sha256(bytes).equals(spec.assetSha256, ignoreCase = true)) return null
         if (!destDir.isDirectory && !destDir.mkdirs()) return null
         val out = File(destDir, File(spec.asset).name)
         return runCatching {
@@ -27,4 +28,12 @@ object BundledModule {
             out
         }.getOrNull()
     }
+
+    private fun readAsset(context: Context, asset: String): ByteArray? = runCatching {
+        context.assets.open(asset).use { it.readBytes() }
+    }.getOrNull()
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it) }
 }
