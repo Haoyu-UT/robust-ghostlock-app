@@ -359,6 +359,26 @@ class ProfileLayerPolicyTest {
         assertFalse(controller.importedProfileExists())
     }
 
+    @Test
+    fun `an older schema is refused, not upgraded`() = runBlocking {
+        val text = document(bundledRelease, routeWaitMs = 4242)
+        val variants = listOf(
+            text.replace("schema_version = 3", "schema_version = 2"),
+            text.replace("schema_version = 3", "schema_version = 1"),
+            text.replace(Regex("(?m)^schema_version = 3\n"), ""),
+        )
+        for (old in variants) {
+            val uri = external.add("content://profiles/old-schema.conf", old)
+            val result = controller.selectExternalProfile(uri, bundledRelease, pair)
+            assertTrue(
+                result.toString(),
+                result is ProfileImportResult.Rejected &&
+                    result.errors.any { it.contains("schema") },
+            )
+            assertFalse(controller.importedProfileExists())
+        }
+    }
+
     private fun generalValue(config: ProfileConfig, path: String): Long? =
         config.general.firstOrNull { it.path == path }?.value
 
@@ -370,9 +390,17 @@ class ProfileLayerPolicyTest {
     private fun document(release: String, routeWaitMs: Long): String {
         val text = AssetConfigLoader(context).load("kernel_profiles/$bundledRelease.conf")
         check(text.isNotBlank()) { "the bundled profile is missing from the assets" }
-        return text
-            .replace("release = \"$bundledRelease\"", "release = \"$release\"")
-            .replace("route_wait_ms = null", "route_wait_ms = $routeWaitMs")
+        val relabelled = text.replace("release = \"$bundledRelease\"", "release = \"$release\"")
+        val replaced = relabelled.replace("route_wait_ms = null", "route_wait_ms = $routeWaitMs")
+        /* A refreshed superset omits the execution block (the app fills the
+         * tuning presets); insert the override when no null placeholder
+         * exists. */
+        return if (replaced != relabelled) {
+            replaced
+        } else {
+            relabelled +
+                "\nexecution {\n  race {\n    route_wait_ms = $routeWaitMs\n  }\n}\n"
+        }
     }
 
     @Test
@@ -418,7 +446,7 @@ class ProfileLayerPolicyTest {
         include "credential-6_1.conf"
         include "kernelsnitch-6x.conf"
         release = "$release"
-        schema_version = 2
+        schema_version = 3
         kernel_major = 6
         kernel_phys_load = 2684354560
         kernel_phys_offset = 2147483648

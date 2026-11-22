@@ -5,6 +5,7 @@ import com.sesame.app.domain.model.CpuPair
 import com.sesame.app.domain.model.MeasuredKernelInfo
 import com.sesame.app.domain.model.MeasurementMergeRow
 import com.sesame.app.domain.model.ProfileLayers
+import com.sesame.app.domain.model.RouteCandidate
 import com.sesame.app.domain.model.ShizukuStatus
 import com.sesame.app.domain.model.VrKoMode
 import com.sesame.app.ui.GhostlockLogLine
@@ -48,6 +49,18 @@ data class SessionState(
         val importedProfilePresent: Boolean = false,
         val activeBuiltinProfile: String? = null,
         val layers: ProfileLayers? = null,
+        /** The viable routes, in the profile's order; the picker's only source. */
+        val routeCandidates: List<RouteCandidate> = emptyList(),
+        /** The remembered picker choice (a native route or the timer). */
+        val selectedRoute: String? = null,
+        /** The active native route's carriers, and the remembered choice. */
+        val carrierCandidates: List<String> = emptyList(),
+        val selectedCarrier: String? = null,
+        /** DirtyFrag is a choice when the profile's pipeline lists both entries. */
+        val dirtyFragSelectable: Boolean = false,
+        val dirtyFragOn: Boolean = false,
+        /** The profile's ordered pipeline (the DirtyFrag list's capability source). */
+        val pipelineOrder: List<String> = emptyList(),
     )
 
     /** Privileged-access facts: the Shizuku switch and the chosen root manager. */

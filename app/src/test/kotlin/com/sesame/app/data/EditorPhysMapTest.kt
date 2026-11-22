@@ -68,7 +68,7 @@ class EditorPhysMapTest {
         )
 
         val document = entry(controller.renderResolved(release, CpuPair(4, 5)) ?: error("no render"))
-        assertEquals(2, (document["schema_version"] as Number).toInt())
+        assertEquals(3, (document["schema_version"] as Number).toInt())
         assertTrue(document["kernel_phys_load"] is Map<*, *>)
         assertNull(document["kernel_phys_offset"])
         val diting = PerDevicePhys.resolveFor(document, listOf("diting")).document

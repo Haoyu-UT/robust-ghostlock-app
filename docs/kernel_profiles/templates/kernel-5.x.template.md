@@ -9,7 +9,7 @@ Template file: [kernel-5.x.template.conf](kernel-5.x.template.conf). It lists ev
 <tr><th>Parent</th><th>Child</th><th>Default</th><th>Purpose</th><th>Impact</th><th>Rationale</th></tr>
 </thead>
 <tbody>
-<tr><th rowspan="6">Identity and route selection</th><td><code>schema_version</code></td><td><code>1</code></td><td>Profile schema version; always 1. Gates future format changes.</td><td rowspan="6">An incorrect value can change target selection, structure bounds, or race timing, causing failure, deadlock, memory corruption, a black screen, or reboot.</td><td rowspan="6">This preserves the verified 5.x baseline but is not a stable ABI; revalidate it against the same target image.</td></tr>
+<tr><th rowspan="6">Identity and route selection</th><td><code>schema_version</code></td><td><code>3</code></td><td>Profile schema version; always 3. Gates future format changes.</td><td rowspan="6">An incorrect value can change target selection, structure bounds, or race timing, causing failure, deadlock, memory corruption, a black screen, or reboot.</td><td rowspan="6">This preserves the verified 5.x baseline but is not a stable ABI; revalidate it against the same target image.</td></tr>
 <tr><td><code>release</code></td><td></td><td>Kernel version string exactly as <code>uname -r</code> reports it; used for both the file name and matching.</td></tr>
 <tr><td><code>kernel_major</code></td><td><code>5</code></td><td>Kernel major version (5 or 6); drives address resolution and sanity checks.</td></tr>
 <tr><td><code>kernel_phys_load</code></td><td></td><td>Kernel physical load address (0 falls back to the SoC formula).</td></tr>

@@ -29,6 +29,52 @@ class ProfileResolverTest {
     }
 
     @Test
+    fun `the optional routes order is validated`() {
+        fun routeErrors(profile: Map<String, Any?>) =
+            ProfileResolver.validateMerged(profile, "select_stack", "none")
+                .filter { it.fieldPath == "routes" }
+
+        assertTrue(routeErrors(valueMapOf("routes" to listOf("select_stack", "timer_98260"))).isEmpty())
+        assertTrue(routeErrors(valueMapOf("routes" to listOf("select_stack", "bogus"))).isNotEmpty())
+        assertTrue(routeErrors(valueMapOf("routes" to "select_stack")).isNotEmpty())
+        assertTrue(routeErrors(valueMapOf()).isEmpty())
+    }
+
+    @Test
+    fun `the carriers list is validated and the legacy flag still resolves`() {
+        fun carrierErrors(profile: Map<String, Any?>) =
+            ProfileResolver.validateMerged(profile, "select_stack", "none")
+                .filter { it.fieldPath == "route.select_stack.carriers" }
+
+        fun branch(carriers: Any?): Map<String, Any?> = valueMapOf(
+            "route" to valueMapOf("select_stack" to valueMapOf("carriers" to carriers)),
+        )
+
+        assertTrue(carrierErrors(branch(listOf("native", "compat"))).isEmpty())
+        assertTrue(carrierErrors(branch(listOf("native", "bogus"))).isNotEmpty())
+        assertTrue(carrierErrors(branch(emptyList<String>())).isNotEmpty())
+        assertTrue(carrierErrors(branch("native")).isNotEmpty())
+        assertTrue(carrierErrors(valueMapOf()).isEmpty())
+
+        assertEquals(
+            listOf("native", "compat"),
+            RouteCarriers.of(branch(listOf("native", "compat")), "select_stack"),
+        )
+        assertEquals(
+            listOf("compat"),
+            RouteCarriers.of(
+                valueMapOf(
+                    "route" to valueMapOf(
+                        "select_stack" to valueMapOf("compat_carrier" to 1),
+                    ),
+                ),
+                "select_stack",
+            ),
+        )
+        assertEquals(emptyList<String>(), RouteCarriers.of(valueMapOf(), "select_stack"))
+    }
+
+    @Test
     fun `nativeValue folds selected cpus into the recommended slots`() {
         val profile = valueMapOf(
             "execution" to valueMapOf("selected_cpus" to valueMapOf("main" to 3)),
@@ -368,9 +414,25 @@ class ProfileResolverTest {
         assertTrue(ProfileResolver.validateMerged(release66, "select_stack", "none").isEmpty())
     }
 
+    @Test
+    fun `an older schema is refused`() {
+        for (version in listOf(1L, 2L)) {
+            val profile = validProfile().also { it["schema_version"] = version }
+            assertTrue(
+                ProfileResolver.validateMerged(profile, "select_stack", "none")
+                    .any { it.fieldPath == "schema_version" },
+            )
+        }
+        val unversioned = validProfile().also { it.remove("schema_version") }
+        assertTrue(
+            ProfileResolver.validateMerged(unversioned, "select_stack", "none")
+                .any { it.fieldPath == "schema_version" },
+        )
+    }
+
     private fun validProfile(): MutableMap<String, Any?> = valueMapOf(
         "release" to "test",
-        "schema_version" to 1,
+        "schema_version" to 3,
         "kernel_major" to 6,
         "route" to valueMapOf("select_stack" to valueMapOf("waiter_shift" to 0)),
         "task_struct" to valueMapOf(

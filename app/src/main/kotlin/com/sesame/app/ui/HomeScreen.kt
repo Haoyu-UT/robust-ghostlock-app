@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sesame.app.R
+import com.sesame.app.data.profile.RouteCarriers
 import com.sesame.app.domain.model.ShizukuStatus
 import com.sesame.app.ui.state.HomeActions
 import com.sesame.app.ui.state.SessionState
@@ -95,6 +96,24 @@ internal fun HomeScreen(
             }
             Spacer(Modifier.height(12.dp))
             StatusCard(copy)
+            /* One route entry: the sheet inside holds the backend banners
+             * (GhostLock with syscall / carrier / DirtyFrag, and the timer). */
+            val showRouteEntry = state.support.routeCandidates.size > 1 ||
+                state.support.carrierCandidates.size > 1 ||
+                state.support.dirtyFragSelectable
+            if (showRouteEntry) {
+                Spacer(Modifier.height(12.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    insideMargin = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    ArrowPreference(
+                        title = stringResource(R.string.route_choice_title),
+                        summary = routeMatrixSummary(state),
+                        onClick = actions::chooseRoute,
+                    )
+                }
+            }
             Spacer(Modifier.height(12.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -167,7 +186,14 @@ private fun statusCopy(state: SessionState, status: SupportStatus): StatusCopy {
         if (state.support.importedProfilePresent) R.string.home_source_external
         else R.string.home_source_builtin,
     )
-    val route = state.support.route?.takeIf { it.isNotBlank() }
+    val routeName = state.support.selectedRoute ?: state.support.route?.takeIf { it.isNotBlank() }
+    val route = routeName?.let { name ->
+        if (state.support.routeCandidates.firstOrNull { it.name == name }?.timer == true) {
+            stringResource(R.string.route_choice_timer_label, name)
+        } else {
+            name
+        }
+    }
     val detail = listOfNotNull(source, route).joinToString(" · ")
     return when (status) {
         SupportStatus.Ready -> StatusCopy(
@@ -269,8 +295,32 @@ private fun dispatch(action: BarAction, actions: HomeActions) {
 }
 
 @Composable
-private fun lastRunSummary(state: SessionState): String = stringResource(
-    when (state.run.status) {
+private fun routeMatrixSummary(state: SessionState): String {
+    val selected = state.support.selectedRoute
+    val timer = selected != null &&
+        state.support.routeCandidates.firstOrNull { it.name == selected }?.timer == true
+    if (timer) return stringResource(R.string.route_choice_timer_label, selected)
+    val syscall = selected ?: state.support.route.orEmpty()
+    val carrier = state.support.selectedCarrier
+    return buildString {
+        append(stringResource(R.string.route_matrix_ghostlock))
+        if (syscall.isNotEmpty()) append(" · ").append(syscall)
+        if (carrier != null) {
+            append(" · ").append(
+                stringResource(
+                    if (carrier == RouteCarriers.Compat) {
+                        R.string.carrier_choice_compat_label
+                    } else {
+                        R.string.carrier_choice_native_label
+                    },
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun lastRunSummary(state: SessionState): String = stringResource(    when (state.run.status) {
         RunStatus.Idle -> R.string.home_run_none
         RunStatus.Running -> R.string.action_running
         RunStatus.Success -> R.string.home_run_done

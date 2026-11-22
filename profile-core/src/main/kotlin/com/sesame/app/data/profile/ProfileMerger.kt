@@ -48,7 +48,7 @@ object ProfileMerger {
             if (builtin == null) defaults else deepMergeValues(defaults, builtin),
             imported,
         )
-        resolved["schema_version"] = 1
+        resolved["schema_version"] = ProfileResolver.ProfileSchemaVersion.toLong()
         resolved["release"] = deviceRelease
         applySelectedCpus(resolved, pair)
         fillRouteExecutionDefaults(resolved, routePresets)

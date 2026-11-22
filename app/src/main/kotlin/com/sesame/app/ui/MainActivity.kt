@@ -107,6 +107,17 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG && intent?.hasExtra("fallback_test") == true) {
             viewModel.setFallbackTest(intent.getBooleanExtra("fallback_test", false))
         }
+        /* Debug-only: `am start --ez timer_test true` delivers the timer tool
+         * over Shizuku and runs its safe `probe` mode (no root, no reboot). */
+        if (BuildConfig.DEBUG && intent?.hasExtra("timer_test") == true) {
+            viewModel.runTimerProbeCheck()
+        }
+        /* Debug-only: `am start --ez timer_run true` runs the timer way-2
+         * route. It can panic/reboot; one attempt per boot (see the boot
+         * contract), and the parked tool is the cleanup's job. */
+        if (BuildConfig.DEBUG && intent?.hasExtra("timer_run") == true) {
+            viewModel.runTimerRouteCheck()
+        }
         setContent {
             GhostlockRoute(viewModel, ::handleEffect)
         }

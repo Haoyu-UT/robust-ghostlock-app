@@ -173,6 +173,39 @@ interface GhostlockRepository {
     /** The active profile with every measured fact applied, ready to export. */
     fun mergedProfileDocument(): String?
 
+    /**
+     * The canonical backend document for the timer tool (CVE-2026-98260), or
+     * null when the resolved profile carries no `timer_98260` block. That null
+     * is the timer entry's applicability fact.
+     */
+    fun timerProfileDocument(): String?
+
+    /**
+     * Delivers the timer tool over Shizuku and runs its safe `probe` mode
+     * (release/document validation, no root, no reboot risk). Returns the
+     * tool's exit code.
+     */
+    suspend fun runTimerProbe(onLog: (String) -> Unit): Int
+
+    /**
+     * Runs the timer route's way-2 tool (`fake`) over Shizuku. Refuses a
+     * same-boot retry after any attempt that reached the tool (see
+     * `TimerBootContract`). Returns the tool verdict, or -2 when the run never
+     * started.
+     */
+    suspend fun runTimerRoute(onLog: (String) -> Unit): Int
+
+    /** False when a timer attempt already ran on this boot; a reboot is required. */
+    fun timerRunAllowed(): Boolean
+
+    /**
+     * The live Shizuku status, independent of the native run's toggle. The
+     * timer route gates on it because Shizuku is its only delivery path: the
+     * snapshot reports `NOT_REQUIRED` while the toggle is off, which must not
+     * read as "no Shizuku needed" for the timer.
+     */
+    fun shizukuShellStatus(): ShizukuStatus
+
     /** Single authority for loading, editing and exporting profile config. */
     fun profileController(): ProfileConfigController
 
