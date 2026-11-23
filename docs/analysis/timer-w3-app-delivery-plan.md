@@ -310,3 +310,24 @@ home-vs-Advanced placement and the consent wording are the operator's call, and 
 dialog dispatch maps every plain `Confirm` to "enable Shizuku", so a timer consent needs its own
 typed dialog rather than reusing that path. *(History: S3 did land with a typed `TimerConsent`;
 the operator removed it on 2026-11-22 together with the ask fix above.)*
+
+## 9. Device runs — POCO 6.1.138 and OnePlus 6.6.66 (2026-11-23)
+
+The standalone tool (`build/native/timer`, md5 `d49e871e…`) with each rig's golden `timer_98260`
+block rendered via `make-doc.py` and passed as `--profile`; one attempt per fresh boot, detached
+(the success path parks), a reboot after each:
+
+- **POCO X6 Pro (`duchamp`, 6.1.138): 1/1 full chain.** `[wake] child spinning on cpu=3`, `cred
+  writes landed`, `[child] woke uid=0`, `setuid(0)=0`, worker → ReSukiSU 4.2.0-rc3
+  `/data/local/tmp/ksud`, `[ksu] late-load rc=0`, `KSU_LOADED`, parked.
+- **OnePlus 13s (`CPH2723`, 6.6.66): 1/2.** Attempt 1 was a plant miss (`child woke uid=2000`,
+  `setuid(0)=-1`, the fake-page uid plant `free_seen=0`); attempt 2 completed the chain (`woke
+  uid=0`, KernelSU-Next 3.4.2 `/data/adb/ksu/bin/ksud`, `late-load rc=0`, `KSU_LOADED`, parked).
+
+Both probes were clean (tracefs dir/trigger/raw, slab and config matched). The 6.6.66 block was
+checked against the device's own Image BTF (`task_struct.cred 0x820`, `real_cred 0x818`, task
+4800, cred 184, uid 8, security 128, caps 48), so attempt 1 was a timing miss, not a wrong fact.
+`--profile` supplies the per-kernel kbuild; the compiled `kbuilds/` headers are only the
+profile-less fallback. The 6.6.66 block is on the 859 line only, not in the 835 asset — an
+app-level 6.6.66 timer run needs that line (or a generated profile). Both rigs are guard-less:
+regression only; the evasion is still the Neo7's to show.
