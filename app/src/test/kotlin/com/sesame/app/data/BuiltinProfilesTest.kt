@@ -2,7 +2,6 @@ package com.sesame.app.data
 
 import android.app.Application
 import androidx.core.content.edit
-import com.sesame.app.domain.model.CpuPair
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -24,7 +23,6 @@ import java.nio.file.Files
 @Config(sdk = [35])
 class BuiltinProfilesTest {
     private val context: Application = RuntimeEnvironment.getApplication()
-    private val pair = CpuPair(primary = 0, consumer = 1)
 
     private data class Entry(val release: String, val file: String)
 
@@ -74,7 +72,7 @@ class BuiltinProfilesTest {
             val moduleAssets = mutableSetOf<String>()
             for (entry in entries) {
                 val controller = controllerFor(entry.file)
-                val config = controller.load(entry.release, pair)
+                val config = controller.load(entry.release)
                 assertTrue("${entry.release}: profile did not resolve", config.hasProfile)
                 assertEquals(
                     "${entry.release}: invalid fields ${config.invalidPaths}",
@@ -174,7 +172,7 @@ class BuiltinProfilesTest {
         try {
             for (entry in builtinEntries()) {
                 val controller = controllerFor(entry.file)
-                val config = controller.load(entry.release, pair)
+                val config = controller.load(entry.release)
                 /* The editor's geometry tree is a W1-chain view; a module-only
                  * profile carries no route geometry. */
                 if (isModuleOnly(config)) continue

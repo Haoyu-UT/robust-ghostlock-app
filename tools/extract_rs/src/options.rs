@@ -664,7 +664,7 @@ fn render_cut(
         ),
         format!("# cut from the option superset: route={route} plan={label}"),
     ];
-    for key in ["release", "kernel_major", "recommend_shizuku"] {
+    for key in ["release", "kernel_major"] {
         if let Some(value) = value(key) {
             lines.push(format!("{key} = {value}"));
         }
@@ -807,7 +807,7 @@ pub fn render_superset(
         ),
         "# The app's route picker reads this document; a run still cuts one route.".to_string(),
     ];
-    for key in ["release", "kernel_major", "recommend_shizuku"] {
+    for key in ["release", "kernel_major"] {
         if let Some(value) = value(key) {
             lines.push(format!("{key} = {value}"));
         }
@@ -1077,7 +1077,7 @@ mod tests {
                 },
             ],
             profile: parse_conf_blocks(
-                "release = \"6.1.138-x\"\nkernel_major = 6\nrecommend_shizuku = 0\n\
+                "release = \"6.1.138-x\"\nkernel_major = 6\n\
                  fallback { to = \"none\" }\nselinux { enforcing = 0, initialized = 2 }\n\
                  waiter_layout {\ncompact = 1\n}\n\
                  task_struct { prio = 1 }\ncred { copy_size = 128 }\noffset { init_task = 1 }\n",

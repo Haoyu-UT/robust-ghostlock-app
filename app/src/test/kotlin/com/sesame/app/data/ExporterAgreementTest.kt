@@ -2,7 +2,6 @@ package com.sesame.app.data
 
 import android.app.Application
 import androidx.core.content.edit
-import com.sesame.app.domain.model.CpuPair
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -25,7 +24,6 @@ import java.nio.file.Files
 @Config(sdk = [35])
 class ExporterAgreementTest {
     private val context: Application = RuntimeEnvironment.getApplication()
-    private val pair = CpuPair(primary = 0, consumer = 1)
 
     private fun isModuleOnly(file: String): Boolean {
         val document = HoconSupport.parseValue(
@@ -75,7 +73,7 @@ class ExporterAgreementTest {
                 deviceCodename = null,
             )
             for (release in expected) {
-                val appBytes = controller.nativeDocument(controller.load(release, pair))
+                val appBytes = controller.nativeDocument(controller.load(release))
                 assertNotNull("$release: app has no native document", appBytes)
                 assertArrayEquals(
                     "$release: exporter differs from the app",

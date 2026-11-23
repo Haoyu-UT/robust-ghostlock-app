@@ -69,7 +69,6 @@ object ProfileExporter {
                 builtin = resolved,
                 imported = null,
                 tuningExecution = tuningExecution,
-                pair = CpuPairView(0, 1),
                 routePresets = routePresets,
             )
             /* The app's default route: the viable branches alphabetically, the
@@ -93,7 +92,16 @@ object ProfileExporter {
                 release = actualRelease,
                 route = RouteKind.fromToken(route)?.token,
                 fallbackTo = RouteKind.fromToken(fallbackTo)?.token,
-            ) { path -> ProfileResolver.nativeValue(merged, route, fallbackTo, path) }.toBinary()
+            ) { path ->
+                when (path) {
+                    /* The native chooses the CPU pair at run time; the wire's
+                     * required slots carry the neutral fallback, exactly as the
+                     * app's transport boundary does. */
+                    "execution.recommended_cpus.main" -> 0L
+                    "execution.recommended_cpus.consumer" -> 1L
+                    else -> ProfileResolver.nativeValue(merged, route, fallbackTo, path)
+                }
+            }.toBinary()
             File(staging, "$actualRelease.bin").writeBytes(bytes)
             count++
             println("exportKernelProfiles: $actualRelease (${bytes.size} bytes)")

@@ -2,7 +2,6 @@ package com.sesame.app.ui.state
 
 import androidx.compose.runtime.Stable
 import com.sesame.app.data.profile.ModuleConfig
-import com.sesame.app.domain.model.CpuPair
 import com.sesame.app.domain.model.MeasuredKernelInfo
 import com.sesame.app.domain.model.MeasurementMergeRow
 import com.sesame.app.domain.model.ProfileLayers
@@ -28,16 +27,12 @@ data class SessionState(
     val run: RunState = RunState(),
     val measurements: MeasurementsState = MeasurementsState(),
 ) {
-    /** The device identity line and the CPU-pair picker's facts. */
+    /** The device identity line. */
     @Stable
     data class DeviceState(
         val deviceName: String = "",
         val kernelRelease: String = "",
         val socName: String = "",
-        val cpuPairLabels: List<String> = emptyList(),
-        val cpuPairIndex: Int = 0,
-        /** CPU pair from the resolved profile when it differs from the device pick. */
-        val customCpuPair: CpuPair? = null,
     )
 
     /** The resolved profile: what it is, which route it takes, and its layers. */

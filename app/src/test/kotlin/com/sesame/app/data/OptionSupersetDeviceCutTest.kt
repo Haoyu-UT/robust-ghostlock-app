@@ -33,7 +33,6 @@ class OptionSupersetDeviceCutTest {
               "release": "5.10.198-android12-9-00085-g226a9632f13d-ab11136126",
               "schema_version": "1",
               "kernel_major": "5",
-              "recommend_shizuku": "0",
               "kernel_phys_load": "2818572288",
               "kernel_phys_offset": "null"
             }

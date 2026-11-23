@@ -215,7 +215,6 @@
     <string name="kernel_profile_invalid_summary">Correct the marked fields</string>
     <string name="kernel_external_unreadable_summary">Re-import the profile in Parameters</string>
     <string name="imported_profile_not_applicable_summary">The imported profile does not apply to this kernel; re-import or clear it in Parameters</string>
-    <string name="cpu_pair_custom">Custom (%1$s)</string>
     <string name="cpu_pair_label">CPU cores</string>
     <string name="safe_mode_label">Safe mode</string>
     <string name="safe_mode_summary">Disable all modules</string>
@@ -242,14 +241,10 @@
     <string name="vr_ko_mode_off">Off</string>
     <string name="shizuku_label">Run via Shizuku</string>
     <string name="shizuku_summary">Skip Seccomp bypass</string>
-    <string name="shizuku_recommended_hint">This kernel recommends running via Shizuku</string>
     <string name="shizuku_status_not_running">Start Shizuku, then return here</string>
     <string name="shizuku_status_permission_required">Grant Shizuku access when asked</string>
     <string name="shizuku_status_ready">Shizuku ready</string>
     <string name="shizuku_status_checking">Checking Shizuku status</string>
-    <string name="w3_shizuku_hint_title">Enable Shizuku?</string>
-    <string name="w3_shizuku_hint_message">The last run failed at the W3 seccomp bypass stage. Running via Shizuku (shell uid, no seccomp) skips it.</string>
-    <string name="w3_shizuku_hint_enable">Enable</string>
     <string name="run_interrupted_title">Previous run interrupted</string>
     <string name="run_interrupted_message">The last attack stopped mid-way (the device may have panicked and rebooted). Check the device and try again — or export the log and report it.</string>
     <string name="dialog_dismiss">Dismiss</string>
@@ -391,8 +386,6 @@
     <string name="field_execution_routes_tcp_zerocopy_arm_sequence">arm_sequence</string>
     <string name="field_execution_routes_tcp_zerocopy_attempts">attempts</string>
     <string name="field_execution_routes_tcp_zerocopy_post_receive_hold_iterations">post_receive_hold_iterations</string>
-    <string name="field_execution_selected_cpus_consumer">consumer</string>
-    <string name="field_execution_selected_cpus_main">main</string>
     <string name="field_execution_stages_w1_attempts">w1_attempts</string>
     <string name="field_execution_stages_w1_scratch_repair_attempts">w1_scratch_repair_attempts</string>
     <string name="field_execution_stages_w1_settle_us">w1_settle_us</string>
@@ -453,8 +446,6 @@
     <string name="preflight_anchor_boot">This app was installed or updated after this boot, so the anchor slots already used cannot be confirmed. Reboot the phone, then run.</string>
     <string name="preflight_anchor_spent">This boot\'s anchor slot budget is spent; continuing could corrupt kernel data. Reboot the phone, then run.</string>
     <string name="preflight_anchor_grid">The anchor state file does not match this profile\'s slot grid. Reboot the phone, then run.</string>
-    <string name="preflight_cpu_title">CPU pair unavailable</string>
-    <string name="preflight_cpu_message">The selected CPU pair is currently unavailable (the system may have paused one of its cores). Choose another pair, or reboot and try again.</string>
     <!-- Run-status notification: the foreground service keeps the attack out of
          the cached (freezable) state while the KernelSU manager is in front. -->
     <string name="run_notif_channel_name">Run status</string>

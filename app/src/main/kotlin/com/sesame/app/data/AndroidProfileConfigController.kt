@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import android.os.Build
 import androidx.core.content.edit
 import com.sesame.app.BuildConfig
-import com.sesame.app.data.profile.CpuPairView
 import com.sesame.app.data.profile.ModuleBlock
 import com.sesame.app.data.profile.PerDevicePhys
 import com.sesame.app.data.profile.ProfileDocument
@@ -15,7 +14,6 @@ import com.sesame.app.data.profile.RouteCarriers
 import com.sesame.app.data.profile.Timer98260
 import com.sesame.app.data.route.RouteKind
 import com.sesame.app.domain.model.AnchorGeometry
-import com.sesame.app.domain.model.CpuPair
 import com.sesame.app.domain.model.ExecutionFieldValue
 import com.sesame.app.domain.model.ProfileConfig
 import com.sesame.app.domain.model.ProfileImportResult
@@ -76,15 +74,14 @@ internal class AndroidProfileConfigController(
     private val deviceCandidates: List<String> =
         DeviceIdentity.candidates(deviceCodename, deviceAliases)
 
-    override suspend fun load(release: String, pair: CpuPair): ProfileConfig {
+    override suspend fun load(release: String): ProfileConfig {
         migrateLegacyExternalSelection(release)
-        val resolution = resolve(release, pair)
+        val resolution = resolve(release)
         val full = resolution.profile
         if (full == null) {
             return ProfileConfig(
                 release = release,
                 hasProfile = false,
-                pair = pair,
                 layers = resolution.layers,
             )
         }
@@ -148,7 +145,6 @@ internal class AndroidProfileConfigController(
         return ProfileConfig(
             release = release,
             hasProfile = true,
-            pair = pair,
             physLoad = full.getLongAt("kernel_phys_load"),
             physOffset = full.getLongAt("kernel_phys_offset"),
             anchor = anchor,
@@ -171,8 +167,8 @@ internal class AndroidProfileConfigController(
         )
     }
 
-    override fun selectRoute(release: String, pair: CpuPair, route: String): Boolean {
-        val full = resolve(release, pair).profile ?: return false
+    override fun selectRoute(release: String, route: String): Boolean {
+        val full = resolve(release).profile ?: return false
         val viable = viableRoutes(full, fallbackTargetOf(full)).map { it.name }
         return if (route in viable) {
             preferences.edit {
@@ -192,11 +188,10 @@ internal class AndroidProfileConfigController(
 
     override fun selectCarrier(
         release: String,
-        pair: CpuPair,
         route: String,
         carrier: String,
     ): Boolean {
-        val full = resolve(release, pair).profile ?: return false
+        val full = resolve(release).profile ?: return false
         val carriers = RouteCarriers.of(full, route)
         return if (carrier in carriers) {
             preferences.edit { putString(carrierChoiceKey(release, route), carrier) }
@@ -207,8 +202,8 @@ internal class AndroidProfileConfigController(
         }
     }
 
-    override fun selectDirtyFrag(release: String, pair: CpuPair, on: Boolean): Boolean {
-        val full = resolve(release, pair).profile ?: return false
+    override fun selectDirtyFrag(release: String, on: Boolean): Boolean {
+        val full = resolve(release).profile ?: return false
         if (!dirtyFragSelectable(full)) {
             preferences.edit { remove(dirtyFragChoiceKey(release)) }
             return false
@@ -616,8 +611,8 @@ internal class AndroidProfileConfigController(
      * caller adds the lineage header and the user picks the destination; this
      * class never writes a profile into app data.
      */
-    override fun renderResolved(release: String, pair: CpuPair): String? =
-        renderMerged(release, pair, emptyMap())
+    override fun renderResolved(release: String): String? =
+        renderMerged(release, emptyMap())
 
     /**
      * [extraValues] are facts applied to the resolved document — the measured
@@ -626,7 +621,6 @@ internal class AndroidProfileConfigController(
      */
     fun renderMerged(
         release: String,
-        pair: CpuPair,
         extraValues: Map<String, Long>,
     ): String? {
         /* Keep the selected document's schema-v3 physical maps for the export:
@@ -635,7 +629,7 @@ internal class AndroidProfileConfigController(
          * into the running device's entry. */
         val selection = currentSelection(release)
         val source = selection?.let { runCatching { loadSource(release, it).document }.getOrNull() }
-        val resolved = resolve(release, pair).profile ?: return null
+        val resolved = resolve(release).profile ?: return null
         val view = resolved.copyValue().asValueMap() ?: return null
         for ((path, value) in extraValues) view.setValueAt(path, value)
         val route = routeNameOf(view)
@@ -646,8 +640,6 @@ internal class AndroidProfileConfigController(
         if (invalid.isNotEmpty()) return null
         view["schema_version"] = ProfileResolver.ProfileSchemaVersion
         view["release"] = release
-        /* The CPU choice follows the device pair, it must not be frozen here. */
-        view["execution"].asValueMap()?.remove("selected_cpus")
         fillRouteExecutionDefaults(view)
         if (source != null) injectPhysMaps(view, source)
         return HoconSupport.render(view)
@@ -660,8 +652,8 @@ internal class AndroidProfileConfigController(
      * applicability fact. The measured database is not merged: every timer
      * constant is profile data, and the tool re-checks its own invariants.
      */
-    fun renderTimerDocument(release: String, pair: CpuPair): String? {
-        val resolved = resolve(release, pair).profile ?: return null
+    fun renderTimerDocument(release: String): String? {
+        val resolved = resolve(release).profile ?: return null
         val block = resolved[Timer98260.BLOCK_KEY] ?: return null
         /* Way 2 is the product gate: the block must carry the complete fake
          * group. A real-only block is a lab document, not an app entry. */
@@ -712,31 +704,31 @@ internal class AndroidProfileConfigController(
     }
 
     /** Renders the resolved profile verbatim (no trimming) for debug dumps. */
-    override fun renderResolvedForDebug(release: String, pair: CpuPair): String? {
-        val resolved = resolve(release, pair).profile ?: return null
+    override fun renderResolvedForDebug(release: String): String? {
+        val resolved = resolve(release).profile ?: return null
         val view = resolved.copyValue().asValueMap() ?: return null
         return HoconSupport.render(view)
     }
 
     /** Numeric leaves of the resolved profile, the measured merge's comparison. */
-    fun resolvedNumbers(release: String, pair: CpuPair): Map<String, Long>? {
-        val resolved = resolve(release, pair).profile ?: return null
+    fun resolvedNumbers(release: String): Map<String, Long>? {
+        val resolved = resolve(release).profile ?: return null
         return numericLeaves(resolved)
     }
 
     /** Values of [release]'s active profile that differ from the bundle. */
-    override fun diffAgainstBundle(release: String, pair: CpuPair): List<ProfileDiffRow> {
-        val current = resolve(release, pair).profile ?: return emptyList()
+    override fun diffAgainstBundle(release: String): List<ProfileDiffRow> {
+        val current = resolve(release).profile ?: return emptyList()
         val bundled = resolveFor(
-            release, pair, ProfileSelection.Bundled(release),
+            release, ProfileSelection.Bundled(release),
         ).profile ?: return emptyList()
         return numericDiff(current, bundled)
     }
 
     /** Moves the session's base to the bundled document. */
-    override suspend fun rebaseToBundle(release: String, pair: CpuPair): ProfileConfig {
+    override suspend fun rebaseToBundle(release: String): ProfileConfig {
         if (forcedSelection != null) forcedSelection = ProfileSelection.Bundled(release)
-        return load(release, pair)
+        return load(release)
     }
 
     /** The selection a resolution of [release] would use right now. */
@@ -756,10 +748,10 @@ internal class AndroidProfileConfigController(
      * output before it is exported). Nothing is stored: the probe needs the
      * document, not a saved copy.
      */
-    fun nativeDocumentFor(text: String, release: String, pair: CpuPair): ByteArray? {
+    fun nativeDocumentFor(text: String, release: String): ByteArray? {
         val entry = ProfileDocumentParser.entryForRelease(text, release, ::loadBundledInclude)
             ?: return null
-        val merged = runCatching { merge(release, pair, entry) }.getOrNull() ?: return null
+        val merged = runCatching { merge(release, entry) }.getOrNull() ?: return null
         val route = routeNameOf(merged)
         val fallbackTo = fallbackTargetOf(merged)
         val needsW1 = ProfileResolver.requiresW1(ProfileResolver.pipelineOrder(merged))
@@ -824,7 +816,6 @@ internal class AndroidProfileConfigController(
     override suspend fun selectExternalProfile(
         uri: String,
         deviceRelease: String,
-        pair: CpuPair,
     ): ProfileImportResult {
         val text = externalProfiles.read(uri)
             ?: return ProfileImportResult.Rejected(listOf("the file cannot be read"))
@@ -839,7 +830,7 @@ internal class AndroidProfileConfigController(
         clearLegacyExternalPreferences()
         preferences.edit { remove(PrefBuiltinRelease) }
         forcedSelection = null
-        val config = runCatching { load(deviceRelease, pair) }.getOrNull()
+        val config = runCatching { load(deviceRelease) }.getOrNull()
         val errors = importErrors(config)
         if (errors.isNotEmpty() || config == null) {
             /* Restore the previous selection; a rejected import changes nothing. */
@@ -874,17 +865,16 @@ internal class AndroidProfileConfigController(
         return errors
     }
 
-    override suspend fun clearExternalProfile(deviceRelease: String, pair: CpuPair): ProfileConfig {
+    override suspend fun clearExternalProfile(deviceRelease: String): ProfileConfig {
         externalProfiles.clearImportedProfile()
         clearLegacyExternalPreferences()
         forcedSelection = null
-        return load(deviceRelease, pair)
+        return load(deviceRelease)
     }
 
     override suspend fun selectBuiltin(
         release: String?,
         deviceRelease: String,
-        pair: CpuPair,
     ): ProfileConfig {
         externalProfiles.clearImportedProfile()
         clearLegacyExternalPreferences()
@@ -893,15 +883,15 @@ internal class AndroidProfileConfigController(
             else putString(PrefBuiltinRelease, release)
         }
         forcedSelection = null
-        return load(deviceRelease, pair)
+        return load(deviceRelease)
     }
 
     /**
-     * Resolved on demand: the result depends on the selection and the CPU pair,
-     * so a cached document would go stale.
+     * Resolved on demand: the result depends on the selection, so a cached
+     * document would go stale.
      */
     override fun nativeDocument(config: ProfileConfig, pipeline: String?): ByteArray? = synchronized(lock) {
-        val resolved = resolve(config.release, config.pair).profile
+        val resolved = resolve(config.release).profile
             ?: return@synchronized null
         /* The wire carries the picker's selected route, not the document's
          * first branch: the superset's default is alphabetical and the
@@ -935,6 +925,12 @@ internal class AndroidProfileConfigController(
         val fallbackTo = fallbackTargetOf(profile)
         val value: (String) -> Long? = { path ->
             when {
+                /* The native chooses the CPU pair at run time (cpu_select picks
+                 * the two highest-frequency CPUs that accept a verified pin).
+                 * The wire's required slots carry the neutral fallback, which
+                 * is also what the native keeps when fewer than two CPUs pin. */
+                path == "execution.recommended_cpus.main" -> 0L
+                path == "execution.recommended_cpus.consumer" -> 1L
                 /* Only the compat bit needs injecting: the native carrier is
                  * the wire's default (an absent/0 flag), so a carriers profile
                  * with the native choice writes exactly what the document
@@ -980,25 +976,23 @@ internal class AndroidProfileConfigController(
     private fun storedExternalSelection(): ProfileSelection.External? =
         if (externalProfiles.importedProfileExists()) ProfileSelection.External else null
 
-    private fun resolve(release: String, pair: CpuPair): Resolution =
-        resolveFor(release, pair, forcedSelection ?: liveSelection(release))
+    private fun resolve(release: String): Resolution =
+        resolveFor(release, forcedSelection ?: liveSelection(release))
 
     private fun resolveFor(
         release: String,
-        pair: CpuPair,
         selection: ProfileSelection?,
     ): Resolution {
         val source = loadSource(release, selection)
         val document = source.document
             ?: return Resolution(null, layersFor(selection, source.error, source.readFailure), selection)
-        val merged = runCatching { merge(release, pair, document) }
+        val merged = runCatching { merge(release, document) }
         val layers = layersFor(selection, source.error ?: merged.exceptionOrNull()?.message)
         return Resolution(merged.getOrNull(), layers, selection)
     }
 
     private fun merge(
         release: String,
-        pair: CpuPair,
         document: ValueMap,
     ): ValueMap {
         /* A controller without any device identity (test/exporter callers) is
@@ -1019,7 +1013,6 @@ internal class AndroidProfileConfigController(
             builtin = resolvedDocument,
             imported = null,
             tuningExecution = tuningExecution,
-            pair = CpuPairView(pair.primary, pair.consumer),
             routePresets = routePresets,
         )
     }

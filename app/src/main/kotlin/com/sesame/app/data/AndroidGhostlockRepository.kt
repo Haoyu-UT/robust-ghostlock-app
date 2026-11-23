@@ -16,7 +16,6 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.sesame.app.BuildConfig
 import com.sesame.app.BuildInfo
-import com.sesame.app.domain.model.CpuPair
 import com.sesame.app.domain.model.CrashEvidenceInfo
 import com.sesame.app.domain.model.DebugSettings
 import com.sesame.app.domain.model.ImportedEvidence
@@ -132,7 +131,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private val filesDir: File = appContext.filesDir
     private val preferences get() =
         appContext.getSharedPreferences("ghostlock_prefs", Context.MODE_PRIVATE)
-    private val builtinProfiles = BuiltinProfileCatalog(appContext)
     /** Ground-truth facts; written only from a completed run's root phase. */
     private val measuredProfiles = MeasuredProfileStore(File(filesDir, MeasuredDbFileName))
     private val externalProfileStore = AndroidExternalProfileStore(appContext)
@@ -141,22 +139,14 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         externalProfileStore,
         preferences,
     )
-    private val cpuPairs = mutableListOf<CpuPair>()
-    private val cpuPairLabels = mutableListOf<String>()
-    private var selectedCpuPair = 0
     private var safeModeEnabled = false
     private var forceAttackTest = false
     private var vrKoTagClear = VrKoMode.AUTO
     private var vrKoSelinuxBlock = VrKoMode.AUTO
     private var shizukuEnabled = false
-    /** True once the user flipped the toggle; only then does it override the
-     * profile suggestion (PROFILE-SUGGEST-01). */
-    private var shizukuPreferenceSet = false
     private val shizukuRunner = ShizukuExploitRunner(appContext)
 
     init {
-        buildCpuPairs()
-        restoreCpuPair()
         restoreShizukuPreference()
         restoreForceAttackTest()
         restoreVrKoTagClear()
@@ -174,36 +164,22 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         /* One-time move of the pre-import-copy selection before the support
          * decision reads the copy. */
         profileController.migrateLegacyExternalSelection(release)
-        /* PROFILE-SUGGEST-01: recommend_shizuku is a suggestion. It seeds the
-         * toggle until the user makes an explicit choice, which then overrides
-         * it in both directions. */
-        val recommendShizuku = release in builtinProfiles.recommendShizuku
-        val shizukuActive = if (shizukuPreferenceSet) shizukuEnabled else recommendShizuku
+        /* Shizuku is opt-in only: the toggle is the user's, never seeded from a
+         * profile or inferred from a kernel property. */
+        val shizukuActive = shizukuEnabled
         val socName = resolveSocName()
         return KernelSnapshot(
             deviceName = resolveDeviceName(),
             kernelRelease = release,
             socName = socName,
-            cpuPairs = cpuPairs.toList(),
-            cpuPairLabels = cpuPairLabels.toList(),
-            selectedCpuPair = selectedCpuPair,
             safeModeEnabled = safeModeEnabled,
             forceAttackTest = forceAttackTest,
             vrKoTagClear = vrKoTagClear,
             vrKoSelinuxBlock = vrKoSelinuxBlock,
-            recommendShizuku = recommendShizuku,
             shizukuEnabled = shizukuActive,
             shizukuStatus = if (shizukuActive) shizukuRunner.status()
             else com.sesame.app.domain.model.ShizukuStatus.NOT_REQUIRED,
         )
-    }
-
-    override fun selectCpuPair(index: Int) {
-        if (index !in cpuPairs.indices) return
-        selectedCpuPair = index
-        appContext.getSharedPreferences("ghostlock_prefs", Context.MODE_PRIVATE).edit {
-                putString("cpu_pair", cpuPairs[index].toString())
-            }
     }
 
     override fun setSafeModeEnabled(enabled: Boolean) {
@@ -227,11 +203,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override fun setShizukuEnabled(enabled: Boolean) {
         shizukuEnabled = enabled
-        shizukuPreferenceSet = true
         appContext.getSharedPreferences("ghostlock_prefs", Context.MODE_PRIVATE)
             .edit {
                 putBoolean("shizuku_enabled", enabled)
-                putBoolean("shizuku_explicit", true)
             }
         if (enabled) shizukuRunner.requestPermission()
     }
@@ -739,12 +713,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     override suspend fun probeStride(
         release: String,
         documentText: String,
-        pair: CpuPair,
         onLog: (String) -> Unit,
     ): StrideProbe? {
         /* The probe frame is the generated document, built in memory; nothing
          * is selected or stored (measured-db-plan §1). */
-        val blob = profileController.nativeDocumentFor(documentText, release, pair)
+        val blob = profileController.nativeDocumentFor(documentText, release)
             ?: return null
         val binary = File(appContext.applicationInfo.nativeLibraryDir, NativeBinaryName)
         if (!binary.isFile) return null
@@ -931,20 +904,15 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     @Volatile
     private var preflightManager: Pair<Long, ManagerScanner.Candidate>? = null
 
-    override suspend fun preflight(pair: CpuPair, useShizuku: Boolean): PreflightResult =
+    override suspend fun preflight(useShizuku: Boolean): PreflightResult =
         withContext(Dispatchers.IO) {
-            /* The anchor state file lives under GHOSTLOCK_HOME, and the CPU pin
-             * runs in the native's process: for the Shizuku path that home is
-             * /data/local/tmp/ghostlock-app and the process is the shell's, so
-             * neither judgement is ours to make here. Both are deferred to the
-             * service (or to the class-2 pattern). */
+            /* The anchor state file lives under GHOSTLOCK_HOME: for the Shizuku
+             * path that home is /data/local/tmp/ghostlock-app and the process is
+             * the shell's, so the judgement is not ours to make here. It is
+             * deferred to the service (or to the class-2 pattern). The CPU pair
+             * is the native's own verified choice, so it has no app-side gate. */
             if (!useShizuku) {
-                anchorFailure(pair)?.let { return@withContext PreflightResult.Blocked(it) }
-                if (!CpuPairProbe.usable(pair)) {
-                    return@withContext PreflightResult.Blocked(
-                        PreflightFailure.CPU_PAIR_UNAVAILABLE,
-                    )
-                }
+                anchorFailure()?.let { return@withContext PreflightResult.Blocked(it) }
             }
             /* A scan that throws is not proof of "no manager": fail open and
              * let stageKsud report it (the class-2 pattern covers that). */
@@ -964,8 +932,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
      * failure, or null when a slot can be handed out (or there is no anchor to
      * check here).
      */
-    private suspend fun anchorFailure(pair: CpuPair): PreflightFailure? {
-        val config = runCatching { profileController.load(deviceRelease(), pair) }.getOrNull()
+    private suspend fun anchorFailure(): PreflightFailure? {
+        val config = runCatching { profileController.load(deviceRelease()) }.getOrNull()
             ?: return null
         val anchor = config.anchor ?: return null
         val bytes = anchor.bytes ?: AnchorSlotState.DefaultBytes
@@ -991,24 +959,19 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override suspend fun runExploit(
         config: ProfileConfig,
-        pair: CpuPair,
         onLog: (String) -> Unit,
     ): Int =
         withDebugAttackLog("direct", onLog, measure = true) { archivedLog, debugDir, runDir, writeSidecar ->
-            runExploitBinary(config, pair, "libghostlock.so", archivedLog, debugDir, runDir, writeSidecar)
+            runExploitBinary(config, "libghostlock.so", archivedLog, debugDir, runDir, writeSidecar)
         }
 
     override fun timerProfileDocument(): String? =
-        profileController.renderTimerDocument(deviceRelease(), currentPairOrZero())
+        profileController.renderTimerDocument(deviceRelease())
 
     override suspend fun runTimerProbe(onLog: (String) -> Unit): Int = withContext(Dispatchers.IO) {
         withDebugAttackLog("timer-probe", onLog) { archivedLog, _, _, writeSidecar ->
             val release = deviceRelease()
-            val pair = cpuPairs.getOrNull(selectedCpuPair) ?: run {
-                archivedLog("<s> error: no CPU pair selected")
-                return@withDebugAttackLog 1
-            }
-            val document = profileController.renderTimerDocument(release, pair) ?: run {
+            val document = profileController.renderTimerDocument(release) ?: run {
                 archivedLog("<s> error: no timer_98260 profile for $release")
                 return@withDebugAttackLog 1
             }
@@ -1040,11 +1003,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         runCatching { preferences.edit { putString(PrefTimerAttemptBoot, bootId) } }
         val code = withDebugAttackLog("timer", onLog) { archivedLog, _, _, writeSidecar ->
             val release = deviceRelease()
-            val pair = cpuPairs.getOrNull(selectedCpuPair) ?: run {
-                archivedLog("<s> error: no CPU pair selected")
-                return@withDebugAttackLog TimerVerdict.NotStarted
-            }
-            val document = profileController.renderTimerDocument(release, pair) ?: run {
+            val document = profileController.renderTimerDocument(release) ?: run {
                 archivedLog("<s> error: no way-2 timer_98260 profile for $release")
                 return@withDebugAttackLog TimerVerdict.NotStarted
             }
@@ -1052,7 +1011,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             /* The run log carries both: the exact runtime document the tool
              * consumed, and the resolved profile source (the superset context
              * — every route block, the `routes` order and the provenance). */
-            runCatching { profileController.renderResolvedForDebug(release, pair) }
+            runCatching { profileController.renderResolvedForDebug(release) }
                 .getOrNull()
                 ?.let { writeSidecar("profile.conf", it.toByteArray(StandardCharsets.UTF_8)) }
             writeSidecar(
@@ -1062,7 +1021,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     appendLine("runtime=timer-profile.json")
                     appendLine("release=$release")
                     appendLine("selected_route=${Timer98260.BLOCK_KEY}")
-                    appendLine("cpu_pair=${pair.primary},${pair.consumer}")
                     appendLine("timer_sha256=${sha256Of(document)}")
                 }.toByteArray(StandardCharsets.UTF_8),
             )
@@ -1106,7 +1064,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override suspend fun runExploitWithShizuku(
         config: ProfileConfig,
-        pair: CpuPair,
         onLog: (String) -> Unit,
     ): Int {
         /* The Shizuku service runs as uid 2000 and cannot write the app's run
@@ -1161,11 +1118,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                         profileBlob
                     }
                     logProfileDigest(archivedLog, runtimeBlob)
-                    dumpRuntimeProfile(archivedLog, writeSidecar, release, pair, runtimeBlob)
+                    dumpRuntimeProfile(archivedLog, writeSidecar, release, runtimeBlob)
                     archivedLog("<b> starting UserService")
                     resetRunState()
                     shizukuRunner.run(
-                        pair, safeModeEnabled, forceAttackTest, profileBlob, debugDir,
+                        safeModeEnabled, forceAttackTest, profileBlob, debugDir,
                         selectedManagerPackage(), archivedLog,
                     ) { step, status ->
                         if (status == "disabled") clearRunState() else applyRunStatus(step, status)
@@ -1380,10 +1337,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         log: (String) -> Unit,
         writeSidecar: (String, ByteArray) -> Boolean,
         release: String,
-        pair: CpuPair,
         blob: ByteArray?,
     ) {
-        val conf = runCatching { profileController.renderResolvedForDebug(release, pair) }.getOrNull()
+        val conf = runCatching { profileController.renderResolvedForDebug(release) }.getOrNull()
         val confWritten = conf?.let {
             writeSidecar("profile.conf", it.toByteArray(StandardCharsets.UTF_8))
         } ?: false
@@ -1624,7 +1580,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     private suspend fun runExploitBinary(
         config: ProfileConfig,
-        pair: CpuPair,
         binaryName: String,
         onLog: (String) -> Unit,
         debugDir: String?,
@@ -1814,7 +1769,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 profileBlob = NativeProfileDocument.patchSafeMode(profileBlob) ?: profileBlob
             }
             logProfileDigest(onLog, profileBlob)
-            dumpRuntimeProfile(onLog, writeSidecar, release, pair, profileBlob)
+            dumpRuntimeProfile(onLog, writeSidecar, release, profileBlob)
             val ksuOffset = AtomicLong()
             val nativeOffset = AtomicLong()
             val processRef = AtomicReference<Process?>(null)
@@ -1940,10 +1895,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     override suspend fun selectExternalProfile(uri: String): ProfileImportResult =
         withContext(Dispatchers.IO) {
             val release = deviceRelease()
-            val pair = cpuPairs.getOrNull(selectedCpuPair)
-                ?: return@withContext ProfileImportResult.Rejected(listOf("no CPU pair selected"))
             runCatching {
-                profileController.selectExternalProfile(uri, release, pair)
+                profileController.selectExternalProfile(uri, release)
             }.getOrElse {
                 ProfileImportResult.Rejected(
                     listOf(it.message ?: "the profile could not be imported"),
@@ -1952,13 +1905,12 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         }
 
     override suspend fun clearExternalProfile(): ProfileConfig = withContext(Dispatchers.IO) {
-        profileController.clearExternalProfile(deviceRelease(), currentPairOrZero())
+        profileController.clearExternalProfile(deviceRelease())
     }
 
     override fun liveProfileDocument(): String? {
         val release = deviceRelease()
-        val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return null
-        return profileController.renderResolved(release, pair)
+        return profileController.renderResolved(release)
     }
 
     override suspend fun writeProfileDocument(uri: String, text: String): Boolean =
@@ -1986,8 +1938,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     override suspend fun beginEditSession(): ProfileConfig? = withContext(Dispatchers.IO) {
         endEditSession()
         val release = deviceRelease()
-        val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return@withContext null
-        val live = runCatching { profileController.load(release, pair) }.getOrNull()
+        val live = runCatching { profileController.load(release) }.getOrNull()
         if (live?.hasProfile != true) return@withContext null
         val session = AndroidProfileConfigController(
             context = appContext,
@@ -1998,7 +1949,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         editSession = session
         editSessionTargetName = profileController.currentSelectionLabel(release)
         editSessionTargetRelease = release
-        runCatching { session.load(release, pair) }.getOrNull()
+        runCatching { session.load(release) }.getOrNull()
     }
 
     override fun editSessionController(): ProfileConfigController? = editSession
@@ -2010,22 +1961,19 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     override fun editSessionDocument(): String? {
         val session = editSession ?: return null
         val release = editSessionTargetRelease ?: return null
-        val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return null
-        return session.renderResolved(release, pair)
+        return session.renderResolved(release)
     }
 
     override fun editSessionDiff(): List<ProfileDiffRow> {
         val session = editSession ?: return emptyList()
         val release = editSessionTargetRelease ?: return emptyList()
-        val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return emptyList()
-        return session.diffAgainstBundle(release, pair)
+        return session.diffAgainstBundle(release)
     }
 
     override suspend fun rebaseEditSession(): ProfileConfig? = withContext(Dispatchers.IO) {
         val session = editSession ?: return@withContext null
         val release = editSessionTargetRelease ?: return@withContext null
-        val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return@withContext null
-        val config = runCatching { session.rebaseToBundle(release, pair) }.getOrNull()
+        val config = runCatching { session.rebaseToBundle(release) }.getOrNull()
         if (config != null) editSessionTargetName = session.currentSelectionLabel(release)
         config
     }
@@ -2041,8 +1989,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     override suspend fun measurementMergeDiff(): List<MeasurementMergeRow> =
         withContext(Dispatchers.IO) {
             val release = deviceRelease()
-            val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return@withContext emptyList()
-            val numbers = profileController.resolvedNumbers(release, pair)
+            val numbers = profileController.resolvedNumbers(release)
                 ?: return@withContext emptyList()
             /* Only profile-addressable facts: the DirtyFrag probe fact is a
              * runtime decision, and merging it would poison the document. */
@@ -2060,19 +2007,15 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override fun mergedProfileDocument(): String? {
         val release = deviceRelease()
-        val pair = cpuPairs.getOrNull(selectedCpuPair) ?: return null
         val facts = measuredProfiles.kernel(release)?.profileFacts().orEmpty()
         if (facts.isEmpty()) return null
         return profileController.renderMerged(
             release,
-            pair,
             facts.associate { it.key to it.value },
         )
     }
 
     private fun deviceRelease(): String = System.getProperty("os.version", "").orEmpty()
-
-    private fun currentPairOrZero(): CpuPair = cpuPairs.getOrNull(selectedCpuPair) ?: CpuPair(0, 0)
 
     override fun close() {
         shizukuRunner.close()
@@ -2123,32 +2066,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private fun freshReleases(entries: List<*>): List<String> =
         entries.mapNotNull { (it.asValueMap()?.get("release") as? String) }.distinct()
 
-    private fun buildCpuPairs() {
-        cpuPairs.clear()
-        cpuPairLabels.clear()
-        val online = parseCpuList(readSysFile("/sys/devices/system/cpu/online"))
-        online.groupBy { readMaxFreq(it) }.filterKeys { it > 0 }.toSortedMap(compareByDescending { it }).forEach { (freq, cluster) ->
-                cluster.sorted().chunked(2).filter { it.size == 2 }.forEach { pair ->
-                    cpuPairs += CpuPair(pair[0], pair[1])
-                    cpuPairLabels += "${pair[0]},${pair[1]} · ${formatFreq(freq)}"
-                }
-            }
-        if (CpuPair(0, 1) !in cpuPairs) {
-            cpuPairs += CpuPair(0, 1)
-            val freq = readMaxFreq(0)
-            cpuPairLabels += "0,1" + if (freq > 0) " · ${formatFreq(freq)}" else ""
-        }
-    }
-
-    private fun restoreCpuPair() {
-        val saved = appContext.getSharedPreferences("ghostlock_prefs", Context.MODE_PRIVATE).getString("cpu_pair", null) ?: return
-        val pair = saved.split(',').mapNotNull { it.trim().toIntOrNull() }
-        if (pair.size == 2) cpuPairs.indexOf(CpuPair(pair[0], pair[1])).takeIf { it >= 0 }?.let { selectedCpuPair = it }
-    }
-
     private fun restoreShizukuPreference() {
         val prefs = appContext.getSharedPreferences("ghostlock_prefs", Context.MODE_PRIVATE)
-        shizukuPreferenceSet = prefs.getBoolean("shizuku_explicit", false)
         shizukuEnabled = prefs.getBoolean("shizuku_enabled", false)
     }
 
@@ -2174,20 +2093,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             is String -> VrKoMode.fromWire(raw)
             else -> VrKoMode.AUTO
         }
-
-    private fun parseCpuList(value: String): List<Int> = value.split(',').flatMap { part ->
-        val range = part.trim().split('-').mapNotNull { it.toIntOrNull() }
-        when (range.size) {
-            1 -> range
-            2 -> (range[0]..range[1]).toList()
-            else -> emptyList()
-        }
-    }
-
-    private fun readMaxFreq(cpu: Int): Long = readSysFile("/sys/devices/system/cpu/cpu$cpu/cpufreq/cpuinfo_max_freq").toLongOrNull() ?: -1L
-
-    private fun formatFreq(khz: Long): String =
-        if (khz >= 1_000_000L) "%.2f GHz".format(Locale.ROOT, khz / 1_000_000.0) else "%.0f MHz".format(Locale.ROOT, khz / 1000.0)
 
     private fun readSysFile(path: String): String = File(path).takeIf { it.isFile }?.useLines { it.firstOrNull()?.trim().orEmpty() } ?: ""
 

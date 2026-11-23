@@ -256,7 +256,10 @@ MISSING = object()
 # `kernel_phys_*` is the extractor's render-time output with the device sidecars
 # (the asset's per-device map); the store's scalar can lag that derivation, so it
 # is not a fact the asset is compared on.
-FACT_SKIP = {"schema_version", "kernel_phys_load", "kernel_phys_offset"}
+# `recommend_shizuku` is retired from the authored schema (2026-11-23): old
+# store supersets still carry it, but no shipped asset does, and the check must
+# not ask for it back.
+FACT_SKIP = {"schema_version", "kernel_phys_load", "kernel_phys_offset", "recommend_shizuku"}
 WAITER_LAYOUT_ORDER = ("compact", "pi_tree", "task", "lock", "wake_state")
 
 

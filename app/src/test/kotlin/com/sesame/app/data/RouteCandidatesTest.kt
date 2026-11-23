@@ -4,7 +4,6 @@ import android.app.Application
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.sesame.app.data.route.SelectConfig
-import com.sesame.app.domain.model.CpuPair
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,7 +25,6 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class RouteCandidatesTest {
     private val context: Application = RuntimeEnvironment.getApplication()
-    private val pair = CpuPair(primary = 0, consumer = 1)
     private val release = "6.1.138-android14-11-g44bda9e8f6e9-ab13792638"
     private val file = "$release.conf"
 
@@ -63,7 +61,7 @@ class RouteCandidatesTest {
     @Test
     fun `the select route lists both carriers and the choice drives the wire`() = runBlocking {
         val controller = controller("route-carriers-a")
-        val initial = controller.load(release, pair)
+        val initial = controller.load(release)
         /* The compat alternative is feasible for select on this image; the
          * multicast route has only its compat carrier. */
         assertEquals(
@@ -74,9 +72,9 @@ class RouteCandidatesTest {
             listOf("compat"),
             initial.routeCandidates.first { it.name == "multicast_waiter" }.carriers,
         )
-        assertTrue(controller.selectRoute(release, pair, "select_stack"))
+        assertTrue(controller.selectRoute(release, "select_stack"))
 
-        val native = controller.load(release, pair)
+        val native = controller.load(release)
         assertEquals(listOf("native", "compat"), native.carrierCandidates)
         assertEquals("native", native.selectedCarrier)
         val nativeLayout = NativeProfileDocument.fromBinary(
@@ -84,8 +82,8 @@ class RouteCandidatesTest {
         )!!.routeConfig as SelectConfig
         assertEquals(null, nativeLayout.compatCarrier)
 
-        assertTrue(controller.selectCarrier(release, pair, "select_stack", "compat"))
-        val compat = controller.load(release, pair)
+        assertTrue(controller.selectCarrier(release, "select_stack", "compat"))
+        val compat = controller.load(release)
         assertEquals("compat", compat.selectedCarrier)
         val compatLayout = NativeProfileDocument.fromBinary(
             checkNotNull(controller.nativeDocument(compat)),
@@ -95,31 +93,31 @@ class RouteCandidatesTest {
         assertEquals(496u, compatLayout.selectDstDepth)
 
         /* A stale/unknown carrier is refused and the choice falls back. */
-        assertFalse(controller.selectCarrier(release, pair, "select_stack", "bogus"))
-        assertEquals("native", controller.load(release, pair).selectedCarrier)
+        assertFalse(controller.selectCarrier(release, "select_stack", "bogus"))
+        assertEquals("native", controller.load(release).selectedCarrier)
     }
 
     @Test
     fun `dirtyfrag is offered only with both pipeline entries and self-heals`() = runBlocking {
         val ditingRelease = "5.10.236-android12-9-00003-gfb24cf99ad97-ab14313284"
         val controller = controllerFor("$ditingRelease.conf", "diting", "route-carriers-df")
-        val config = controller.load(ditingRelease, pair)
+        val config = controller.load(ditingRelease)
         assertTrue(config.dirtyFragSelectable)
         assertTrue(config.dirtyFragOn)
-        assertTrue(controller.selectDirtyFrag(ditingRelease, pair, false))
-        val off = controller.load(ditingRelease, pair)
+        assertTrue(controller.selectDirtyFrag(ditingRelease, false))
+        val off = controller.load(ditingRelease)
         assertTrue(off.dirtyFragSelectable)
         assertFalse(off.dirtyFragOn)
 
         /* This image's profile names GhostLock only: no choice to offer. */
         val duChamp = controller("route-carriers-df2")
-        assertFalse(duChamp.load(release, pair).dirtyFragSelectable)
-        assertFalse(duChamp.selectDirtyFrag(release, pair, false))
+        assertFalse(duChamp.load(release).dirtyFragSelectable)
+        assertFalse(duChamp.selectDirtyFrag(release, false))
     }
 
     @Test
     fun `the native branches and the timer block are the candidates, alphabetically`() = runBlocking {
-        val config = controller("route-candidates-a").load(release, pair)
+        val config = controller("route-candidates-a").load(release)
         assertEquals(
             listOf(
                 "multicast_waiter", "select_stack", "sigreturn", "tcp_zerocopy", "timer_98260",
@@ -136,8 +134,8 @@ class RouteCandidatesTest {
     @Test
     fun `the timer choice is remembered and the editor keeps the native route`() = runBlocking {
         val controller = controller("route-candidates-b")
-        assertTrue(controller.selectRoute(release, pair, "timer_98260"))
-        val config = controller.load(release, pair)
+        assertTrue(controller.selectRoute(release, "timer_98260"))
+        val config = controller.load(release)
         assertEquals("timer_98260", config.selectedRoute)
         assertEquals("multicast_waiter", config.route)
     }
@@ -147,7 +145,7 @@ class RouteCandidatesTest {
         val prefs = context.getSharedPreferences("route-candidates-c", 0)
         prefs.edit { clear() }
         prefs.edit { putString("route_choice_$release", "bogus_route") }
-        val config = controller("route-candidates-c", prefs).load(release, pair)
+        val config = controller("route-candidates-c", prefs).load(release)
         assertEquals("multicast_waiter", config.selectedRoute)
         assertEquals(null, prefs.getString("route_choice_$release", null))
     }
@@ -155,13 +153,13 @@ class RouteCandidatesTest {
     @Test
     fun `a non-viable selection is refused and cleared`() = runBlocking {
         val controller = controller("route-candidates-d")
-        assertFalse(controller.selectRoute(release, pair, "bogus_route"))
-        assertTrue(controller.selectRoute(release, pair, "timer_98260"))
+        assertFalse(controller.selectRoute(release, "bogus_route"))
+        assertTrue(controller.selectRoute(release, "timer_98260"))
     }
 
     @Test
     fun `the export keeps the timer block and the native route`() = runBlocking {
-        val text = controller("route-candidates-e").renderResolved(release, pair)
+        val text = controller("route-candidates-e").renderResolved(release)
         assertNotNull(text)
         assertTrue(text!!.contains("timer_98260"))
         assertTrue(text.contains("select_stack"))

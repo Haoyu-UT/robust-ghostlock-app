@@ -256,7 +256,6 @@ data class OptionSuperset(
             "release",
             "schema_version",
             "kernel_major",
-            "recommend_shizuku",
             "kernel_phys_load",
             "kernel_phys_offset",
         )

@@ -24,8 +24,6 @@ import com.sesame.app.data.RoutePlans
 import com.sesame.app.data.ScratchInAnchor
 import com.sesame.app.data.TimerBlockText
 import com.sesame.app.data.decision
-import com.sesame.app.domain.model.CpuPair
-import com.sesame.app.domain.model.customCpuPairHint
 import com.sesame.app.domain.model.generationPhysComplete
 import com.sesame.app.domain.model.isMediaTekSoc
 import com.sesame.app.domain.model.isQualcommSoc
@@ -56,7 +54,6 @@ import com.sesame.app.domain.usecase.LoadKernelSnapshotUseCase
 import com.sesame.app.domain.usecase.ParseSourceUseCase
 import com.sesame.app.domain.usecase.ReadDocumentUseCase
 import com.sesame.app.domain.usecase.RunExploitUseCase
-import com.sesame.app.domain.usecase.SelectCpuPairUseCase
 import com.sesame.app.ui.nav.NavController
 import com.sesame.app.ui.nav.Screen
 import com.sesame.app.ui.state.AdvancedActions
@@ -195,7 +192,6 @@ class GhostlockViewModel(
     private var initialized = false
     private var running = false
     private val loadKernelSnapshot = LoadKernelSnapshotUseCase(repository)
-    private val selectCpuPairUseCase = SelectCpuPairUseCase(repository)
     private val parseSourceUseCase = ParseSourceUseCase(repository)
     private val readDocumentUseCase = ReadDocumentUseCase(repository)
     private val runExploitUseCase = RunExploitUseCase(repository)
@@ -247,7 +243,6 @@ class GhostlockViewModel(
     }
 
     private val runSettingsActionsImpl = object : RunSettingsActions {
-        override fun cpuPairSelected(index: Int) = selectCpuPair(index)
         override fun safeModeChanged(enabled: Boolean) = toggleSafeMode(enabled)
         override fun shizukuChanged(enabled: Boolean) = toggleShizuku(enabled)
         override fun openVrKo() = onOpenVrKo()
@@ -428,8 +423,7 @@ class GhostlockViewModel(
         viewModelScope.launch {
             refreshSnapshot()
             markInterruptedRunLogs()
-            applyRecommendedShizuku()
-            maybeSuggestShizukuForW3()
+            maybeNoticeInterruptedRun()
         }
         /* Best effort and off the main path: a no-shell device still records
          * the boot it was on; a Shizuku/root device captures the pstore.
@@ -456,53 +450,27 @@ class GhostlockViewModel(
         runCatching { repository.markInterruptedRunLogs() }
     }
 
-    private var recommendedShizukuApplied = false
+    private var interruptedRunNoticeChecked = false
 
     /**
-     * Kernels that recommend Shizuku start with the toggle on at every launch;
-     * a manual switch-off still applies for the rest of the session.
+     * A previous run that stopped mid-step left the step file `in_progress`.
+     * Name it with the export and leave the cause to the run store and the
+     * exported log: the step alone cannot tell a route miss from a crash, and
+     * it must not turn into an automatic execution-mode change.
      */
-    private fun applyRecommendedShizuku() {
-        if (recommendedShizukuApplied) return
-        recommendedShizukuApplied = true
-        val snapshot = kernelSnapshot ?: return
-        if (!snapshot.recommendShizuku || state.value.session.access.shizukuEnabled) return
-        toggleShizuku(true)
-    }
-
-    private var w3HintChecked = false
-
-    /**
-     * The previous run's native log survives export settings; when it failed
-     * at the W3 seccomp bypass in-process, suggest switching to Shizuku.
-     */
-    private suspend fun maybeSuggestShizukuForW3() {
-        if (w3HintChecked) return
-        w3HintChecked = true
-        val step = runCatching { repository.lastRunStuckStep() }.getOrNull() ?: return
-        if (state.value.session.access.shizukuEnabled) return
-        /* Any interrupted step is reported; only a W3 stall offers Shizuku,
-         * because Shizuku (shell uid, no seccomp) skips exactly that stage. */
-        val isW3 = step.startsWith("w3")
+    private suspend fun maybeNoticeInterruptedRun() {
+        if (interruptedRunNoticeChecked) return
+        interruptedRunNoticeChecked = true
+        runCatching { repository.lastRunStuckStep() }.getOrNull() ?: return
         mutableState.update {
             it.copy(
-                overlay = it.overlay.copy(dialog = if (isW3) {
-                    AppDialog.Confirm(
-                        titleRes = R.string.w3_shizuku_hint_title,
-                        messageRes = R.string.w3_shizuku_hint_message,
-                        confirmLabelRes = R.string.w3_shizuku_hint_enable,
-                        /* Both notices that say "your run did not finish" carry
-                         * the export: whichever one a reporter is looking at,
-                         * the log they need to send is one tap away. */
-                        exportLog = true,
-                    )
-                } else {
-                    AppDialog.Notice(
+                overlay = it.overlay.copy(
+                    dialog = AppDialog.Notice(
                         titleRes = R.string.run_interrupted_title,
                         messageRes = R.string.run_interrupted_message,
                         exportLog = true,
-                    )
-                }),
+                    ),
+                ),
             )
         }
     }
@@ -514,9 +482,8 @@ class GhostlockViewModel(
     /* profile-ui: the controller owns loading, merging and persistence. */
     fun loadExecutionProfile() {
         val snapshot = kernelSnapshot ?: return
-        val pair = snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair) ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            applyExecutionConfig(profileController.load(snapshot.kernelRelease, pair))
+            applyExecutionConfig(profileController.load(snapshot.kernelRelease))
             refreshMergeRows()
         }
     }
@@ -547,7 +514,6 @@ class GhostlockViewModel(
                         moduleAssetVerified = moduleAssetVerified,
                         magiskManager = magiskManager,
                     ),
-                    device = state.session.device.copy(customCpuPair = customCpuPairOf(config)),
                 ),
             )
         }
@@ -570,21 +536,6 @@ class GhostlockViewModel(
         mutableState.update { it.copy(
             session = it.session.copy(measurements = it.session.measurements.copy(mergeRows = rows)),
         ) }
-    }
-
-    /** The pair actually resolved from the profile, when it beats the device pick. */
-    private fun customCpuPairOf(config: ProfileConfig): CpuPair? {
-        val snapshot = kernelSnapshot ?: return null
-        val main = config.general
-            .firstOrNull { it.path == "execution.selected_cpus.main" }?.value ?: return null
-        val consumer = config.general
-            .firstOrNull { it.path == "execution.selected_cpus.consumer" }?.value ?: return null
-        return customCpuPairHint(
-            main,
-            consumer,
-            snapshot.cpuPairs,
-            snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair),
-        )
     }
 
     /* advanced-ui: the merged screen loads its editors and debug prefs. */
@@ -1246,12 +1197,11 @@ class GhostlockViewModel(
 
     fun onSelectBuiltinProfile(release: String?) {
         val snapshot = kernelSnapshot ?: return
-        val pair = snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair) ?: return
         viewModelScope.launch(Dispatchers.IO) {
             /* The controller keeps a single active source: picking a builtin
              * also clears the external selection (last explicit choice wins). */
             val config = runCatching {
-                profileController.selectBuiltin(release, snapshot.kernelRelease, pair)
+                profileController.selectBuiltin(release, snapshot.kernelRelease)
             }.getOrNull()
             if (config == null) {
                 send(GhostlockEffect.Toast(R.string.load_builtin_failed))
@@ -1320,14 +1270,6 @@ class GhostlockViewModel(
         }
     }
 
-    fun selectCpuPair(index: Int) {
-        val snapshot = kernelSnapshot ?: return
-        if (index !in snapshot.cpuPairs.indices) return
-        selectCpuPairUseCase(index)
-        kernelSnapshot = snapshot.copy(selectedCpuPair = index)
-        mutableState.update { it.copy(session = it.session.copy(device = it.session.device.copy(cpuPairIndex = index))) }
-    }
-
     fun toggleSafeMode(enabled: Boolean) {
         repository.setSafeModeEnabled(enabled)
         mutableState.update { it.copy(
@@ -1359,9 +1301,6 @@ class GhostlockViewModel(
     fun toggleShizuku(enabled: Boolean) {
         repository.setShizukuEnabled(enabled)
         mutableState.update { it.copy(session = it.session.copy(access = it.session.access.copy(shizukuEnabled = enabled))) }
-        if (!enabled && kernelSnapshot?.recommendShizuku == true) {
-            send(GhostlockEffect.Toast(R.string.shizuku_recommended_hint))
-        }
         // The grant dialog lands in another app, so the status is re-read and
         // onResume() refreshes it again when the dialog closes.
         viewModelScope.launch { refreshSnapshot() }
@@ -1403,7 +1342,6 @@ class GhostlockViewModel(
         dirtyFragOn: Boolean?,
     ) {
         val snapshot = kernelSnapshot ?: return
-        val pair = snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair) ?: return
         val release = snapshot.kernelRelease
         val selected = if (backend == Timer98260.BLOCK_KEY) Timer98260.BLOCK_KEY else syscall
         if (selected == null) return
@@ -1411,16 +1349,16 @@ class GhostlockViewModel(
             var routeStored = true
             if (syscall != null) {
                 routeStored = runCatching {
-                    profileController.selectRoute(release, pair, syscall)
+                    profileController.selectRoute(release, syscall)
                 }.getOrDefault(false)
                 if (carrier != null) {
-                    runCatching { profileController.selectCarrier(release, pair, syscall, carrier) }
+                    runCatching { profileController.selectCarrier(release, syscall, carrier) }
                 }
                 if (dirtyFragOn != null) {
-                    runCatching { profileController.selectDirtyFrag(release, pair, dirtyFragOn) }
+                    runCatching { profileController.selectDirtyFrag(release, dirtyFragOn) }
                 }
             }
-            runCatching { profileController.selectRoute(release, pair, selected) }
+            runCatching { profileController.selectRoute(release, selected) }
             withContext(Dispatchers.Main) {
                 if (!routeStored && syscall != null) {
                     appendLog("route: $syscall is not viable; using the default")
@@ -1641,12 +1579,10 @@ class GhostlockViewModel(
             onStatusClick()
             return
         }
-        val pair = snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair) ?: return
-        val pairLabel = snapshot.cpuPairLabels.getOrElse(snapshot.selectedCpuPair) { pair.toString() }
         viewModelScope.launch {
             /* Run-start pre-flight: class-1 checks stop the run before the log
              * sheet opens, so no run-store entry and no native are created. */
-            when (val preflight = withContext(Dispatchers.IO) { repository.preflight(pair, useShizuku) }) {
+            when (val preflight = withContext(Dispatchers.IO) { repository.preflight(useShizuku) }) {
                 is PreflightResult.Blocked -> {
                     showPreflightNotice(preflight.failure)
                     return@launch
@@ -1669,10 +1605,9 @@ class GhostlockViewModel(
                 application.getString(R.string.run_notif_running_text),
             )
             appendLog("==== start ${if (useShizuku) "Shizuku/V20" else "base"} ====")
-            appendLog("cpu pair: $pairLabel")
             withContext(Dispatchers.IO) {
                 try {
-                    val code = runExploitUseCase(config, pair, useShizuku, ::appendLog)
+                    val code = runExploitUseCase(config, useShizuku, ::appendLog)
                     appendLog(if (code == 0) "result: exploit completed" else "result: exploit failed (exit code=$code)")
                     appendLog("exit code=$code")
                     finishRunStatus(code)
@@ -1804,10 +1739,6 @@ class GhostlockViewModel(
             PreflightFailure.ANCHOR_GRID_MISMATCH -> {
                 title = R.string.preflight_anchor_title
                 message = R.string.preflight_anchor_grid
-            }
-            PreflightFailure.CPU_PAIR_UNAVAILABLE -> {
-                title = R.string.preflight_cpu_title
-                message = R.string.preflight_cpu_message
             }
             PreflightFailure.NO_ROOT_MANAGER -> {
                 /* The same warning the picker used to show; the picker keeps
@@ -2158,7 +2089,6 @@ class GhostlockViewModel(
         when {
             selectUri != null -> selectExternalProfile(selectUri)
             dialog is AppDialog.Input -> parseUrl(value)
-            dialog is AppDialog.Confirm -> toggleShizuku(true)
             dialog is AppDialog.NotificationPermission ->
                 send(GhostlockEffect.RequestNotificationPermission)
 
@@ -2262,9 +2192,7 @@ class GhostlockViewModel(
         val snapshot = withContext(Dispatchers.IO) { loadKernelSnapshot() }
         /* Validate the resolved profile here so the run button can grey out. */
         val loaded = withContext(Dispatchers.IO) {
-            val pair = snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair)
-                ?: return@withContext null
-            runCatching { profileController.load(snapshot.kernelRelease, pair) }.getOrNull()
+            runCatching { profileController.load(snapshot.kernelRelease) }.getOrNull()
         }
         val moduleState = withContext(Dispatchers.IO) { moduleFacts(loaded) }
         kernelSnapshot = snapshot
@@ -2276,9 +2204,6 @@ class GhostlockViewModel(
                         deviceName = snapshot.deviceName,
                         kernelRelease = snapshot.kernelRelease,
                         socName = snapshot.socName,
-                        cpuPairLabels = snapshot.cpuPairLabels,
-                        cpuPairIndex = snapshot.selectedCpuPair,
-                        customCpuPair = loaded?.let(::customCpuPairOf),
                     ),
                     runSettings = it.session.runSettings.copy(
                         safeModeEnabled = snapshot.safeModeEnabled,
@@ -2744,9 +2669,6 @@ class GhostlockViewModel(
         /* The live stride probe only makes sense for the running kernel; a
          * profile generated for another image skips it. */
         val runningRelease = kernelSnapshot?.kernelRelease
-        val pair = kernelSnapshot?.let { snapshot ->
-            snapshot.cpuPairs.getOrNull(snapshot.selectedCpuPair)
-        }
         /* The generated document may carry the optional timer block; a
          * single-route cut rendered from the option superset does not. Carry
          * the block into whatever this path exports (metadata only: the
@@ -2754,7 +2676,7 @@ class GhostlockViewModel(
         val exportDocument = result.documentText?.let { source ->
             TimerBlockText.extract(source)?.let { TimerBlockText.append(document, it) }
         } ?: document
-        val strideProbe = if (runningRelease != null && pair != null &&
+        val strideProbe = if (runningRelease != null &&
             runningRelease in result.releases
         ) {
             appendLog("stride: probing the mm_struct slab on the running kernel")
@@ -2780,7 +2702,7 @@ class GhostlockViewModel(
             send(GhostlockEffect.KeepScreenAwake(true))
             try {
                 runCatching {
-                    repository.probeStride(runningRelease, exportDocument, pair, ::appendLog)
+                    repository.probeStride(runningRelease, exportDocument, ::appendLog)
                 }.getOrNull()
             } finally {
                 send(GhostlockEffect.KeepScreenAwake(false))

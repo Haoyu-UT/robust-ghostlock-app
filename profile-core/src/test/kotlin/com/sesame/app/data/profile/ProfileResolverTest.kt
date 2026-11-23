@@ -4,6 +4,7 @@ import com.sesame.app.data.asValueMap
 import com.sesame.app.data.valueMapOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -172,12 +173,13 @@ class ProfileResolverTest {
     }
 
     @Test
-    fun `nativeValue folds selected cpus into the recommended slots`() {
+    fun `nativeValue no longer folds selected cpus into the recommended slots`() {
+        /* The app injects the neutral pair at the transport boundary; the
+         * document's selected_cpus (a retired field) is not a wire source. */
         val profile = valueMapOf(
             "execution" to valueMapOf("selected_cpus" to valueMapOf("main" to 3)),
         )
-        assertEquals(
-            3L,
+        assertNull(
             ProfileResolver.nativeValue(profile, "tcp_zerocopy", "none", "execution.recommended_cpus.main"),
         )
     }
@@ -262,6 +264,21 @@ class ProfileResolverTest {
     fun `validateMerged rejects an unknown top level key`() {
         val errors = ProfileResolver.validateMerged(validProfile() + ("bogus" to 1L), "select_stack", "none")
         assertTrue(errors.any { it.fieldPath == "bogus" })
+    }
+
+    @Test
+    fun `validateMerged still accepts the retired recommend_shizuku key`() {
+        /* Every schema-v3 external profile generated before 2026-11-23 carries
+         * the key; refusing it would invalidate all of them on an upgrade. It
+         * is retired from the authored schema and ignored, not rejected. */
+        assertEquals(
+            emptyList<ConfigError>(),
+            ProfileResolver.validateMerged(
+                validProfile() + ("recommend_shizuku" to 0L),
+                "select_stack",
+                "none",
+            ),
+        )
     }
 
     @Test

@@ -75,8 +75,11 @@ internal overrides (sparse HOCON text)    written by the advanced override page
 
 Merge priority (low to high): `execution-tuning` (plus the per-route
 `execution-<route>.conf`) → built-in profile + imported offsets → advanced
-overrides. Finally `execution.selected_cpus` is forced in (from the manual
-selection or an explicit imported/override value).
+overrides.
+
+The CPU pair is not a profile input: the native chooses it at run time
+(`cpu_select`). The wire's required `recommended_cpus` slots carry the neutral
+fallback `0/1`.
 
 ## 2. Top-level structure
 
@@ -297,7 +300,10 @@ addresses.
 | `offset.slide_nfulnl_logger` / `offset.slide_boot_id` / `offset.slide_loggers_0_1` | KASLR slide anchors |
 | `kernel_phys_load` | Kernel physical load address (0 falls back to the SoC formula) |
 | `kernel_phys_offset` | DRAM base / linear-map `PHYS_OFFSET` used for image→direct-map translation (default: compiled `P0_PHYS_OFFSET = 0x80000000`). Set it for devices whose DRAM base differs (e.g. MTK `0x40000000`); `boot.img` does not carry it — on MediaTek the extractor reads it from the `vendor_boot.img` embedded DTB's `/memory` node (or `--dtbo`), and on a rooted device `/proc/iomem` supplies it |
-| `recommend_shizuku` | Whether this kernel recommends the Shizuku path (0/1, required in every profile, default 0; advisory only). It is not shown in any editor: for recommended kernels the app **turns the home-screen "Run via Shizuku" switch on at every start**. You can turn it off for the session, and once off the app stops requiring Shizuku for that session |
+
+`recommend_shizuku` was retired from the authored schema on 2026-11-23. It is
+still accepted and ignored in existing schema-v3 documents; Shizuku is opt-in
+through the app switch.
 
 ### 4.4 select_stack / tcp route fields
 
@@ -484,9 +490,9 @@ defaults. The common groups come from `execution-tuning.conf` and the per-route
 groups from `execution-<route>.conf`; the app resolver (and the Gradle exporter)
 load these presets directly, so device profiles no longer `include` them:
 
-- `recommended_cpus` / `selected_cpus`: suggested and locally selected cores
-  (`selected_cpus` is maintained by the "general parameter override" page or the
-  home-screen CPU picker)
+- `recommended_cpus`: the wire's CPU-pair fallback. It is not authored here and
+  not shown in any editor; the app writes `0/1`, and the native chooses the
+  pair at run time.
 - `heap`: KernelSnitch search attempt counts and timeouts
 - `race`: route race wait / settle / poll intervals
 - `stages`: W1/W2/W3 attempt counts and settle times

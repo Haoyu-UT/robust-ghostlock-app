@@ -4,34 +4,10 @@ import com.sesame.app.data.OptionSuperset
 import com.sesame.app.data.profile.ModuleConfig
 import java.util.Locale
 
-data class CpuPair(val primary: Int, val consumer: Int) {
-    override fun toString(): String = "$primary,$consumer"
-}
-
-/**
- * The profile's CPU hint, accepted only when it names one of the device's own
- * candidate pairs. A hint from another device (8/9 on an 8-core phone, a
- * negative value, or a value that overflows an Int) is ignored rather than
- * displayed or acted on; the session pair remains the only pinning input.
- */
-internal fun customCpuPairHint(
-    primary: Long,
-    consumer: Long,
-    candidates: List<CpuPair>,
-    devicePair: CpuPair?,
-): CpuPair? {
-    if (primary !in 0L..Int.MAX_VALUE.toLong() || consumer !in 0L..Int.MAX_VALUE.toLong()) return null
-    val pair = CpuPair(primary.toInt(), consumer.toInt())
-    return pair.takeIf { it in candidates && it != devicePair }
-}
-
 data class KernelSnapshot(
     val deviceName: String,
     val kernelRelease: String,
     val socName: String = "",
-    val cpuPairs: List<CpuPair>,
-    val cpuPairLabels: List<String>,
-    val selectedCpuPair: Int,
     val safeModeEnabled: Boolean,
     /** Skip the pre-attack KernelSU check and run the exploit as a test. */
     val forceAttackTest: Boolean = false,
@@ -39,9 +15,7 @@ data class KernelSnapshot(
     val vrKoTagClear: VrKoMode = VrKoMode.AUTO,
     /** Block the vr.ko SELinux 0/1 enforce write; Auto targets the 5.10.198 class only. */
     val vrKoSelinuxBlock: VrKoMode = VrKoMode.AUTO,
-    /** Profile/imported offsets force the Shizuku path. */
-    val recommendShizuku: Boolean,
-    /** User-selected Shizuku path for kernels that do not require it. */
+    /** User-selected Shizuku path; opt-in only, never seeded from a profile. */
     val shizukuEnabled: Boolean = false,
     val shizukuStatus: ShizukuStatus,
 )
@@ -283,11 +257,6 @@ data class RouteCandidate(
 data class ProfileConfig(
     val release: String,
     val hasProfile: Boolean,
-    /**
-     * CPU pair this config was resolved for. The native document is resolved on
-     * demand rather than cached, so it needs the pair the caller resolved with.
-     */
-    val pair: CpuPair = CpuPair(0, 0),
     /** Resolved physical pair; null when the profile carries none for this device. */
     val physLoad: Long? = null,
     val physOffset: Long? = null,
@@ -343,8 +312,6 @@ data class ProfileConfig(
          * profile never shows another route's knobs.
          */
         val GeneralPaths = listOf(
-            "execution.selected_cpus.main",
-            "execution.selected_cpus.consumer",
             "execution.heap.prepare_max_attempts",
             "execution.heap.prepare_timeout_ms",
             "execution.heap.kernelsnitch_timeout_ms",

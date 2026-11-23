@@ -488,7 +488,6 @@ pub fn render_conf_with_device(input: &ConfInputs<'_>, device: Option<&str>) -> 
         format!("release = \"{release}\""),
         format!("schema_version = {schema_version}"),
         format!("kernel_major = {}", major.unwrap_or(0)),
-        "recommend_shizuku = 0".to_string(),
     ];
     if input.kdp == Some(true) {
         lines.push("kdp = 1".to_string());
@@ -1739,22 +1738,21 @@ mod tests {
         let bundled = flatten_conf(&bundled);
 
         assert!(generated.contains_key("route.multicast_waiter.waiter_off"));
-        // The one intentional difference: shizuku defaults to off in generated
-        // confs, the bundled profile recommends it.
-        assert_eq!(
-            generated.get("recommend_shizuku").map(String::as_str),
-            Some("0")
-        );
+        // `recommend_shizuku` is retired from the authored schema (2026-11-23):
+        // the generated profile no longer emits it, while the older bundled
+        // fixture still carries it, which proves the retired key is the only
+        // document-shape difference left.
+        assert_eq!(generated.get("recommend_shizuku"), None);
         assert_eq!(
             bundled.get("recommend_shizuku").map(String::as_str),
             Some("1")
         );
 
         for key in bundled.keys() {
-            // Two intentional differences: shizuku defaults to off in generated
-            // confs, and the slab stride is a runtime measurement (QEMU/device
-            // /proc/slabinfo, restored into the bundles by 91ceeea) that an
-            // image-only generation cannot supply.
+            // Two intentional differences: `recommend_shizuku` is retired from
+            // generated profiles, and the slab stride is a runtime measurement
+            // (QEMU/device /proc/slabinfo, restored into the bundles by 91ceeea)
+            // that an image-only generation cannot supply.
             if key == "recommend_shizuku" || key == "kernelsnitch.mm_struct_sz" {
                 continue;
             }

@@ -20,7 +20,6 @@ interface HomeActions {
 }
 
 interface RunSettingsActions {
-    fun cpuPairSelected(index: Int)
     fun safeModeChanged(enabled: Boolean)
     fun shizukuChanged(enabled: Boolean)
     fun openVrKo()

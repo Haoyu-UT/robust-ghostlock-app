@@ -1,6 +1,5 @@
 package com.sesame.app.domain.repository
 
-import com.sesame.app.domain.model.CpuPair
 import com.sesame.app.domain.model.CrashEvidenceInfo
 import com.sesame.app.domain.model.DebugSettings
 import com.sesame.app.domain.model.ImportedEvidence
@@ -22,8 +21,6 @@ import com.sesame.app.domain.model.VrKoMode
 
 interface GhostlockRepository {
     suspend fun snapshot(): KernelSnapshot
-
-    fun selectCpuPair(index: Int)
 
     fun setSafeModeEnabled(enabled: Boolean)
 
@@ -81,7 +78,6 @@ interface GhostlockRepository {
     suspend fun probeStride(
         release: String,
         documentText: String,
-        pair: CpuPair,
         onLog: (String) -> Unit = {},
     ): StrideProbe?
 
@@ -274,21 +270,20 @@ interface GhostlockRepository {
     /** Suggested file name for [exportReportBundle]. */
     fun reportBundleName(): String
 
-    suspend fun runExploit(config: ProfileConfig, pair: CpuPair, onLog: (String) -> Unit): Int
+    suspend fun runExploit(config: ProfileConfig, onLog: (String) -> Unit): Int
 
     suspend fun runExploitWithShizuku(
         config: ProfileConfig,
-        pair: CpuPair,
         onLog: (String) -> Unit,
     ): Int
 
     /**
      * Run-start pre-flight (class 1 of the 2026-11-07 exit audit): anchor slot
-     * state, CPU-pair affinity, and the root-manager scan. Returns the first
-     * blocking failure, or [PreflightResult.Passed]. App-side only; the native
-     * keeps its own refusals as the authority.
+     * state and the root-manager scan. Returns the first blocking failure, or
+     * [PreflightResult.Passed]. App-side only; the native keeps its own
+     * refusals — including the CPU pair — as the authority.
      */
-    suspend fun preflight(pair: CpuPair, useShizuku: Boolean): PreflightResult
+    suspend fun preflight(useShizuku: Boolean): PreflightResult
 
     /**
      * The step left `in_progress` by the previous run (usually a kernel panic),

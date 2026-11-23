@@ -3,7 +3,6 @@ package com.sesame.app.data
 import android.app.Application
 import androidx.core.content.edit
 import com.sesame.app.data.profile.Timer98260
-import com.sesame.app.domain.model.CpuPair
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -24,7 +23,6 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class TimerDocumentTest {
     private val context: Application = RuntimeEnvironment.getApplication()
-    private val pair = CpuPair(primary = 0, consumer = 1)
     private val diting = "5.10.236-android12-9-00003-gfb24cf99ad97-ab14313284"
     private val ditingFile = "$diting.conf"
 
@@ -64,7 +62,7 @@ class TimerDocumentTest {
 
     @Test
     fun `the diting document carries the timer block and the exact release`() {
-        val text = controllerFor(ditingFile).renderTimerDocument(diting, pair)
+        val text = controllerFor(ditingFile).renderTimerDocument(diting)
         assertNotNull("no timer document for $diting", text)
         val json = JSONObject(text!!)
         assertTrue("the timer block is missing", json.has("timer_98260"))
@@ -85,6 +83,6 @@ class TimerDocumentTest {
                     .let { !it.contains(Timer98260.BLOCK_KEY) }
         }
         if (entry == null) return
-        assertNull(controllerFor(entry.file).renderTimerDocument(entry.release, pair))
+        assertNull(controllerFor(entry.file).renderTimerDocument(entry.release))
     }
 }

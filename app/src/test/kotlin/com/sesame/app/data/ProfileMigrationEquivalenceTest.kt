@@ -2,7 +2,6 @@ package com.sesame.app.data
 
 import android.app.Application
 import androidx.core.content.edit
-import com.sesame.app.domain.model.CpuPair
 import com.sesame.app.domain.model.ProfileConfig
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
@@ -29,7 +28,6 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class ProfileMigrationEquivalenceTest {
     private val context: Application = RuntimeEnvironment.getApplication()
-    private val pair = CpuPair(primary = 0, consumer = 1)
     private val loader = AssetConfigLoader(context)
 
     private data class Entry(val release: String, val file: String)
@@ -48,7 +46,7 @@ class ProfileMigrationEquivalenceTest {
             val baseline = controller("baseline", device)
             val external = FakeExternalProfileStore()
             val imported = controller("imported", device, external)
-            val baselineModel = baseline.load(entry.release, pair)
+            val baselineModel = baseline.load(entry.release)
             /* A module-only profile has no native document to compare: the
              * external path cannot authorize the module chain either. */
             if ("module" in baselineModel.pipelineOrder &&
@@ -79,9 +77,9 @@ class ProfileMigrationEquivalenceTest {
         val uri = external.add("content://$label", text)
         assertNotNull(
             "$label: could not select the document",
-            imported.selectExternalProfile(uri, release, pair),
+            imported.selectExternalProfile(uri, release),
         )
-        val model = imported.load(release, pair)
+        val model = imported.load(release)
         assertTrue("$label: profile did not resolve", model.hasProfile)
         assertEquals(
             "$label: invalid fields ${model.invalidPaths}",
@@ -92,8 +90,8 @@ class ProfileMigrationEquivalenceTest {
         assertEquals("$label: fallback", baselineModel.fallbackTo, model.fallbackTo)
         assertEquals(
             "$label: resolved values",
-            baseline.resolvedNumbers(release, pair),
-            imported.resolvedNumbers(release, pair),
+            baseline.resolvedNumbers(release),
+            imported.resolvedNumbers(release),
         )
         val baselineNative = checkNotNull(baseline.nativeDocument(baselineModel)) {
             "$label: no bundled native document"

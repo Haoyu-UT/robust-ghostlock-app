@@ -215,7 +215,6 @@
     <string name="kernel_profile_invalid_summary">请修正标记的配置项</string>
     <string name="kernel_external_unreadable_summary">请在配置参数中重新导入配置</string>
     <string name="imported_profile_not_applicable_summary">导入的配置不适用于当前内核，请在配置参数中重新选择或取消</string>
-    <string name="cpu_pair_custom">自定义（%1$s）</string>
     <string name="cpu_pair_label">CPU 核心组</string>
     <string name="safe_mode_label">安全模式</string>
     <string name="safe_mode_summary">禁用所有模块</string>
@@ -242,14 +241,10 @@
     <string name="vr_ko_mode_off">关闭</string>
     <string name="shizuku_label">通过 Shizuku 执行</string>
     <string name="shizuku_summary">跳过 Seccomp bypass</string>
-    <string name="shizuku_recommended_hint">本内核推荐通过 Shizuku 运行</string>
     <string name="shizuku_status_not_running">请先启动 Shizuku，再回到本应用</string>
     <string name="shizuku_status_permission_required">请在弹窗中授予 Shizuku 权限</string>
     <string name="shizuku_status_ready">Shizuku 已就绪</string>
     <string name="shizuku_status_checking">正在检查 Shizuku 状态</string>
-    <string name="w3_shizuku_hint_title">建议启用 Shizuku</string>
-    <string name="w3_shizuku_hint_message">上次执行在 W3 seccomp bypass 阶段失败。通过 Shizuku 执行（shell uid、无 seccomp）可跳过该阶段。</string>
-    <string name="w3_shizuku_hint_enable">启用</string>
     <string name="run_interrupted_title">上次攻击未完成</string>
     <string name="run_interrupted_message">上次攻击在某个阶段中断（设备可能已内核 panic 并重启）。请确认设备状态后重试；如需反馈，请导出日志。</string>
     <string name="dialog_dismiss">关闭</string>
@@ -391,8 +386,6 @@
     <string name="field_execution_routes_tcp_zerocopy_arm_sequence">TCP 零拷贝布置序列</string>
     <string name="field_execution_routes_tcp_zerocopy_attempts">TCP 零拷贝尝试次数</string>
     <string name="field_execution_routes_tcp_zerocopy_post_receive_hold_iterations">TCP 接收后保持迭代</string>
-    <string name="field_execution_selected_cpus_consumer">消费者核心</string>
-    <string name="field_execution_selected_cpus_main">主核心</string>
     <string name="field_execution_stages_w1_attempts">W1 尝试次数</string>
     <string name="field_execution_stages_w1_scratch_repair_attempts">W1 scratch 修复次数</string>
     <string name="field_execution_stages_w1_settle_us">W1 稳定时间（微秒）</string>
@@ -453,8 +446,6 @@
     <string name="preflight_anchor_boot">本应用是在本次开机后安装或更新的，无法确认本次开机已用过的锚点槽位。请重启手机后再运行。</string>
     <string name="preflight_anchor_spent">本次开机的锚点槽位已用尽，继续运行可能破坏内核数据。请重启手机后再运行。</string>
     <string name="preflight_anchor_grid">锚点状态文件与当前配置的槽位网格不一致。请重启手机后再运行。</string>
-    <string name="preflight_cpu_title">CPU 组合不可用</string>
-    <string name="preflight_cpu_message">所选 CPU 组合当前不可用（系统可能暂停了该核心）。请换一组 CPU，或重启手机后再试。</string>
     <!-- 运行状态通知：前台服务让攻击进程在 KernelSU 管理器切到前台时不被冻结。 -->
     <string name="run_notif_channel_name">运行状态</string>
     <string name="run_notif_channel_description">攻击进度与结果</string>

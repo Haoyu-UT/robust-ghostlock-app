@@ -50,7 +50,9 @@ filesDir/offsets.conf                     解析/导入的偏移（imported，HO
         └──▶ UI：参数覆盖页 / 高级参数覆盖树
 ```
 
-合并优先级（低 → 高）：`execution-tuning`（+ 按路由的 `execution-<route>.conf`）→ `内置/profile + imported offsets` → `高级覆盖`；最后强制写入 `execution.selected_cpus`（来自手动选择或 imported/覆盖中的显式值）。
+合并优先级（低 → 高）：`execution-tuning`（+ 按路由的 `execution-<route>.conf`）→ `内置/profile + imported offsets` → `高级覆盖`。
+
+CPU 组合不是 profile 输入：native 在运行时自行选择（`cpu_select`）；wire 的 `recommended_cpus` 两个必填槽位固定写入中性回退值 `0/1`。
 
 ## 2. 顶层结构
 
@@ -226,7 +228,8 @@ cred
 | `offset.slide_nfulnl_logger` / `offset.slide_boot_id` / `offset.slide_loggers_0_1` | 地址滑移（KASLR）定位点 |
 | `kernel_phys_load` | 内核物理加载地址（0 时按 SoC 公式回退） |
 | `kernel_phys_offset` | DRAM 基址 / linear-map `PHYS_OFFSET`，用于 image→direct-map 换算（缺省用编译期 `P0_PHYS_OFFSET = 0x80000000`）。DRAM 基址不同的设备需填写（如 MTK `0x40000000`）；`boot.img` 不携带该值——联发科设备上提取器从 `vendor_boot.img` 内嵌 DTB 的 `/memory` 节点（或 `--dtbo`）读取，root 设备也可取自 `/proc/iomem` |
-| `recommend_shizuku` | 该内核是否建议走 Shizuku（0/1，所有 profile 必填，默认 0；仅提示不强制）。不在任何编辑器中显示：推荐内核在**每次启动时自动打开**主页“Run via Shizuku”开关，会话内可手动关闭，关闭后本次会话不再要求 Shizuku |
+
+`recommend_shizuku` 已于 2026-11-23 从作者侧 schema 移除；现有 schema-v3 文档中仍可接受但会被忽略。Shizuku 仅由应用内开关手动启用。
 
 ### 4.4 select_stack / tcp 路由字段
 
@@ -377,7 +380,7 @@ module {
 
 `execution` 全部为建议值，随 profile 合并后传入 native；数值语义与默认值见 [defaults_ZH.md](defaults_ZH.md)。通用分组来自 `execution-tuning.conf`，路由分组由 resolver 从 `execution-<route>.conf` 加载（主路由 + 回退路由），设备 profile 不再 include 它们：
 
-- `recommended_cpus` / `selected_cpus`：推荐与本地选定核心（`selected_cpus` 由参数覆盖页“一般参数覆盖”或主页 CPU 选择维护）
+- `recommended_cpus`：wire 的 CPU 组合回退值。不在 profile 中编写、不在任何编辑器中显示；应用写入 `0/1`，native 在运行时自行选择。
 - `heap`：KernelSnitch 搜索的尝试次数与超时
 - `race`：路由竞态等待/稳定/轮询间隔
 - `stages`：W1/W2/W3 尝试次数与稳定时间
