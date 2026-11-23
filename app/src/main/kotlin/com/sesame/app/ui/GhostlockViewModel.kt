@@ -23,8 +23,11 @@ import com.sesame.app.data.OptionSuperset
 import com.sesame.app.data.RoutePlans
 import com.sesame.app.data.ScratchInAnchor
 import com.sesame.app.data.TimerBlockText
+import com.sesame.app.data.TimerOnlyDocument
 import com.sesame.app.data.decision
+import com.sesame.app.domain.model.RunLogState
 import com.sesame.app.domain.model.generationPhysComplete
+import com.sesame.app.domain.model.physRule
 import com.sesame.app.domain.model.isMediaTekSoc
 import com.sesame.app.domain.model.isQualcommSoc
 import com.sesame.app.domain.model.ImportedEvidence
@@ -183,6 +186,12 @@ private sealed interface ParseStep {
     data class Overwrite(val request: ParseRequest, val releases: List<String>) : ParseStep
 }
 
+/** The native tone tag (`<b> `, `<k> `, …) in a stored log line. */
+private val ToneTag = Regex("<(b|k|s|-)> ")
+
+/** A stored log can be long; the sheet replays its tail. */
+private const val MaxReplayedLogLines = 4000
+
 class GhostlockViewModel(
     private val repository: GhostlockRepository,
     private val application: Application,
@@ -240,6 +249,7 @@ class GhostlockViewModel(
         override fun openGeneration() = onOpenGeneration()
         override fun selectProfileFile() = onSelectProfileFile()
         override fun openParameters() = onOpenParameters()
+        override fun selectBuiltinAuto() = onSelectBuiltinProfile(null)
     }
 
     private val runSettingsActionsImpl = object : RunSettingsActions {
@@ -345,6 +355,7 @@ class GhostlockViewModel(
 
     private val measurementsActionsImpl = object : MeasurementsActions {
         override fun close() = onCloseMeasurements()
+        override fun openMerge() = onOpenMergePreview()
     }
 
     private val mergePreviewActionsImpl = object : MergePreviewActions {
@@ -423,6 +434,7 @@ class GhostlockViewModel(
         viewModelScope.launch {
             refreshSnapshot()
             markInterruptedRunLogs()
+            seedLastRunStatus()
             maybeNoticeInterruptedRun()
         }
         /* Best effort and off the main path: a no-shell device still records
@@ -608,14 +620,49 @@ class GhostlockViewModel(
                 }
 
                 is ProfileImportResult.Rejected -> {
+                    /* Rejections are either a whole-document reason (schema,
+                     * no entry for this kernel) or per-field paths. Localize
+                     * both; the field lines keep the raw key for editing. */
+                    val fieldErrors = mutableListOf<String>()
+                    val documentErrors = mutableListOf<String>()
+                    for (error in result.errors) {
+                        val split = error.indexOf(": ")
+                        val path = if (split > 0) error.substring(0, split) else ""
+                        val labelRes = if (split > 0) fieldLabelRes(path) else null
+                        if (labelRes != null) {
+                            val rawReason = error.substring(split + 2)
+                            val reason = if (rawReason == "invalid") {
+                                application.getString(R.string.profile_field_invalid)
+                            } else {
+                                externalReasonText(rawReason, application)
+                            }
+                            fieldErrors += "${application.getString(labelRes)} ($path)：$reason"
+                        } else {
+                            documentErrors += externalReasonText(error, application)
+                        }
+                    }
+                    val message = buildString {
+                        if (documentErrors.isNotEmpty()) {
+                            append(documentErrors.joinToString("\n"))
+                        }
+                        if (fieldErrors.isNotEmpty()) {
+                            if (isNotEmpty()) append("\n\n")
+                            append(application.getString(R.string.profile_import_rejected_intro))
+                            append("\n")
+                            append(fieldErrors.joinToString("\n"))
+                        }
+                    }
                     mutableState.update {
                         it.copy(
                             overlay = it.overlay.copy(dialog = AppDialog.Notice(
                                 titleRes = R.string.profile_import_rejected_title,
-                                message = result.errors.joinToString("\n"),
+                                message = message,
                             )),
                         )
                     }
+                    /* A rejected import restores the previous selection; refresh
+                     * so the Home does not keep the pre-import state. */
+                    refreshSnapshot()
                 }
             }
         }
@@ -1469,7 +1516,7 @@ class GhostlockViewModel(
             clearLog()
             send(GhostlockEffect.KeepScreenAwake(true))
             mutableState.update {
-                it.copy(session = it.session.copy(run = it.session.run.copy(status = RunStatus.Running)))
+                it.copy(session = it.session.copy(run = it.session.run.copy(status = RunStatus.Running, startedAtMs = System.currentTimeMillis())))
             }
             RunStatusService.start(
                 application,
@@ -1631,7 +1678,7 @@ class GhostlockViewModel(
              * "nothing new during execution". */
             clearLog()
             send(GhostlockEffect.KeepScreenAwake(true))
-            mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(status = RunStatus.Running))) }
+            mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(status = RunStatus.Running, startedAtMs = System.currentTimeMillis()))) }
             /* A foreground service keeps the app's uid out of the cached
              * (freezable) state if the KSU manager takes the foreground during
              * the handoff; the notification also carries the run status. */
@@ -1800,16 +1847,75 @@ class GhostlockViewModel(
     }
 
     /** Opens the run sheet on the last run's retained log. */
-    fun onOpenLastRunLog() {
-        if (state.value.session.run.logLines.isEmpty()) return
+    /**
+     * The last run's row is store-backed, not process-backed: the in-memory log
+     * dies with the process (and with a crashed boot), and the store is the
+     * authoritative record. The Home summary is seeded from the store on start;
+     * opening the row replays the stored log when this process has none.
+     */
+    private suspend fun seedLastRunStatus() {
+        val entry = runCatching { repository.listRunLogs() }.getOrNull()?.firstOrNull()
+            ?: return
+        val status = if (entry.state == RunLogState.COMPLETED) RunStatus.Success else RunStatus.Failure
         mutableState.update {
-            it.copy(
-                session = it.session.copy(
-                    run = it.session.run.copy(sheetVisible = true, sheetDismissible = !running),
-                ),
-            )
+            if (it.session.run.status != RunStatus.Idle) it
+            else it.copy(session = it.session.copy(run = it.session.run.copy(status = status)))
         }
     }
+
+    private fun replayLine(raw: String): GhostlockLogLine {
+        val tag = ToneTag.find(raw)
+        val entry = if (tag == null) {
+            formatLog(raw)
+        } else {
+            formatLog(tag.value + raw.removeRange(tag.range))
+        }
+        return GhostlockLogLine(entry.text.trimEnd('\n'), toneColor(entry.tone))
+    }
+
+    fun onOpenLastRunLog() {
+        if (state.value.session.run.logLines.isNotEmpty()) {
+            mutableState.update {
+                it.copy(
+                    session = it.session.copy(
+                        run = it.session.run.copy(sheetVisible = true, sheetDismissible = !running),
+                    ),
+                )
+            }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val entry = runCatching { repository.listRunLogs() }.getOrNull()?.firstOrNull()
+            if (entry == null) {
+                send(GhostlockEffect.Toast(R.string.home_run_none))
+                return@launch
+            }
+            val text = runCatching { repository.readRunLog(entry.stamp) }.getOrNull()
+            /* The stored file carries the native's tone tag *after* the elapsed
+             * marker (`[A+…] <b> …`), while the live formatter expects it at
+             * the start; move it there so the tag becomes a colour and is not
+             * shown as text. */
+            val lines = text.orEmpty().lineSequence()
+                .filter { it.isNotBlank() }
+                .map(::replayLine)
+                .toList()
+                .takeLast(MaxReplayedLogLines)
+            val status = if (entry.state == RunLogState.COMPLETED) RunStatus.Success else RunStatus.Failure
+            mutableState.update {
+                it.copy(
+                    session = it.session.copy(
+                        run = it.session.run.copy(
+                            logLines = lines,
+                            status = status,
+                            sheetVisible = true,
+                            sheetDismissible = true,
+                        ),
+                    ),
+                )
+            }
+        }
+    }
+
 
     fun onOpenRunSettings() {
         nav.push(Screen.RunSettings)
@@ -2249,6 +2355,9 @@ class GhostlockViewModel(
                     access = it.session.access.copy(
                         shizukuEnabled = snapshot.shizukuEnabled,
                         shizukuStatus = snapshot.shizukuStatus,
+                        shizukuInstalled = runCatching {
+                            repository.shizukuInstalled()
+                        }.getOrDefault(false),
                         selectedManagerPackage = repository.selectedManagerPackage(),
                     ),
                     support = it.session.support.copy(
@@ -2286,16 +2395,16 @@ class GhostlockViewModel(
         send(GhostlockEffect.PickDocument(DocumentRequest.BootImage))
     }
 
-    /** The input image is staged; ask for the platform's recommended image
-     * before the first pass. */
+    /** The input image is staged; run the first pass on it alone.
+     *
+     * The image is all the analyzers need for the first pass: the 98260 timer
+     * analyzer never reads the physical pair, and the native extractor reports
+     * what the pair still needs. Prompting before any analysis asked for
+     * images the timer route does not require, and hid whether the timer was
+     * available (which decides whether those images are optional at all). */
     private fun beginParseInput(input: String) {
         pendingParse = ParseRequest(input)
-        val first = when {
-            isMediaTek() -> PhysImage.VENDOR_BOOT
-            isQualcomm() -> PhysImage.XBL
-            else -> null
-        }
-        if (first == null) launchParse() else showPhysPrompt(first, after = null)
+        launchParse()
     }
 
     private fun launchParse() {
@@ -2498,7 +2607,22 @@ class GhostlockViewModel(
         ) {
             /* Only MediaTek can reach this: its sidecars are the sole source
              * of the pair and the runtime has no default to fall back on.
-             * Elsewhere the sidecar advice is optional. */
+             * Elsewhere the sidecar advice is optional. The 98260 timer route
+             * never reads the pair, so a derived block still yields a usable
+             * timer-only profile instead of a partial GhostLock one. */
+            val timerOnly = if (result.timerDerived) {
+                TimerOnlyDocument.from(result.documentText)
+            } else {
+                null
+            }
+            if (timerOnly != null) {
+                appendLog(
+                    "warning: the physical layout is incomplete; " +
+                        "deriving the 98260 timer route only",
+                )
+                finishTimerOnly(result, timerOnly)
+                return
+            }
             appendLog(
                 "warning: the physical layout is incomplete; attach the missing image and re-parse",
             )
@@ -2550,10 +2674,34 @@ class GhostlockViewModel(
                 generation = it.generation.copy(step = GenerationStep.Confirm),
                 overlay = it.overlay.copy(dialog = AppDialog.ListDialog(
                     titleRes = title,
+                    /* Say what the image determines and what skipping means on
+                     * this platform: without the pair MediaTek cannot derive
+                     * the GhostLock route at all, while the other families use
+                     * a compiled default and treat the image as calibration. */
+                    messageRes = physPromptMessage(after),
                     itemResIds = listOf(attach, R.string.parse_phys_skip),
                 )),
             )
         }
+    }
+
+    /** The platform-specific meaning of the physical pair, for the image prompt. */
+    private fun physPromptMessage(after: ParseResult.Parsed?): Int {
+        val defaults = physRule(kernelSnapshot?.socName.orEmpty()).satisfiedByDefaults
+        return when {
+            !defaults && after?.timerDerived == true -> R.string.parse_phys_timer_hint
+            defaults -> R.string.parse_phys_default_hint
+            else -> R.string.parse_phys_required_hint
+        }
+    }
+
+    /** The timer-only outcome: no route, stride or lock plan applies. */
+    private suspend fun finishTimerOnly(result: ParseResult.Parsed, document: String) {
+        refreshSnapshot()
+        result.route?.let { appendLog("route: $it") }
+        appendLog("profile generated (98260 timer route only): ${result.releases.joinToString()}")
+        appendLog("result: profile generated; export it to use it")
+        continueParsed(result.copy(documentText = document), document, skipStride = true)
     }
 
     /** The Parsed branch once the image advice is satisfied. */
@@ -2700,7 +2848,11 @@ class GhostlockViewModel(
      * post-choice path: [document] is what will be exported (page mode has had
      * the `lock_anchor_*` triple removed in memory).
      */
-    private suspend fun continueParsed(result: ParseResult.Parsed, document: String) {
+    private suspend fun continueParsed(
+        result: ParseResult.Parsed,
+        document: String,
+        skipStride: Boolean = false,
+    ) {
         /* The live stride probe only makes sense for the running kernel; a
          * profile generated for another image skips it. */
         val runningRelease = kernelSnapshot?.kernelRelease
@@ -2711,7 +2863,7 @@ class GhostlockViewModel(
         val exportDocument = result.documentText?.let { source ->
             TimerBlockText.extract(source)?.let { TimerBlockText.append(document, it) }
         } ?: document
-        val strideProbe = if (runningRelease != null &&
+        val strideProbe = if (!skipStride && runningRelease != null &&
             runningRelease in result.releases
         ) {
             appendLog("stride: probing the mm_struct slab on the running kernel")

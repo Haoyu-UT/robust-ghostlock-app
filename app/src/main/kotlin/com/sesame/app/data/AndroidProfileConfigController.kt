@@ -298,16 +298,22 @@ internal class AndroidProfileConfigController(
             is Map<*, *> -> raw.keys.filterIsInstance<String>()
             else -> emptyList()
         }
-        val native = branchOrder
-            .filter { it in ProfileConfig.Routes }
-            .filter { routeErrors(full, it, fallbackTo).isEmpty() }
-            .map {
-                RouteCandidate(
-                    it,
-                    timer = false,
-                    carriers = RouteCarriers.of(full, it),
-                )
-            }
+        val native = if (!ProfileResolver.requiresW1(ProfileResolver.pipelineOrder(full))) {
+            /* A profile that selects no native chain (timer-only) must not
+             * offer the native routes: they cannot run without one. */
+            emptyList()
+        } else {
+            branchOrder
+                .filter { it in ProfileConfig.Routes }
+                .filter { routeErrors(full, it, fallbackTo).isEmpty() }
+                .map {
+                    RouteCandidate(
+                        it,
+                        timer = false,
+                        carriers = RouteCarriers.of(full, it),
+                    )
+                }
+        }
         val timer = if (timerViable(full)) {
             listOf(RouteCandidate(Timer98260.BLOCK_KEY, timer = true))
         } else {
@@ -409,58 +415,79 @@ internal class AndroidProfileConfigController(
             invalid += "kernelsnitch.mm_struct_sz"
         }
 
-        val routePrefix = route?.let { "route.$it" } ?: "route"
         val fallbackPrefix = fallbackTo?.takeIf { it != "none" }
             ?.let { "fallback.route.$it" }
-        /* The selectable carriers change which required fields apply: a
-         * `carriers` list names them; a branch without it keeps the legacy
-         * `compat_carrier` flag semantics. */
-        val routeCarriers = route?.let { RouteCarriers.of(profile, it) }.orEmpty()
-        val compatCarrier = RouteCarriers.Compat in routeCarriers
-        val nativeCarrier = RouteCarriers.Native in routeCarriers
-        when (route) {
-            "tcp_zerocopy" -> {
-                val compact = value("$routePrefix.compact_waiter")
-                if (compact == null || compact == 0L) {
-                    invalid += "$routePrefix.compact_waiter"
-                } else if (compact < 0L || compact > 0xffL) {
-                    invalid += "$routePrefix.compact_waiter"
-                }
-            }
 
-            "select_stack" -> {
-                /* The AArch32 compat carrier places the stamp from the
-                 * measured geometry (waiter_home / select_dst_depth), not from
-                 * the 64-bit fd_set word shift; a compat profile legitimately
-                 * omits waiter_shift and must state both depths instead. */
-                if (compatCarrier) {
-                    for (field in listOf("waiter_home", "select_dst_depth")) {
-                        val current = value("$routePrefix.$field")
-                        if (current == null || current <= 0L ||
-                            current > UInt.MAX_VALUE.toLong()
-                        ) {
-                            invalid += "$routePrefix.$field"
+        /* The per-branch geometry checks. A branch is validated whether or not
+         * it is the active one: every branch the document declares must be
+         * complete, otherwise `viableRoutes` silently drops it and a run takes
+         * a different route than the document promises (a select_stack branch
+         * missing `waiter_shift` used to fall through to sigreturn with no
+         * notice). */
+        fun checkBranch(name: String, prefix: String, carriers: List<String>) {
+            /* The selectable carriers change which required fields apply: a
+             * `carriers` list names them; a branch without it keeps the legacy
+             * `compat_carrier` flag semantics. */
+            val compatCarrier = RouteCarriers.Compat in carriers
+            val nativeCarrier = RouteCarriers.Native in carriers
+            when (name) {
+                "tcp_zerocopy" -> {
+                    val compact = value("$prefix.compact_waiter")
+                    if (compact == null || compact == 0L) {
+                        invalid += "$prefix.compact_waiter"
+                    } else if (compact < 0L || compact > 0xffL) {
+                        invalid += "$prefix.compact_waiter"
+                    }
+                }
+
+                "select_stack" -> {
+                    /* The AArch32 compat carrier places the stamp from the
+                     * measured geometry (waiter_home / select_dst_depth), not
+                     * from the 64-bit fd_set word shift; a compat profile
+                     * legitimately omits waiter_shift and must state both
+                     * depths instead. */
+                    if (compatCarrier) {
+                        for (field in listOf("waiter_home", "select_dst_depth")) {
+                            val current = value("$prefix.$field")
+                            if (current == null || current <= 0L ||
+                                current > UInt.MAX_VALUE.toLong()
+                            ) {
+                                invalid += "$prefix.$field"
+                            }
+                        }
+                        /* Optional: the derived ABI (0 time32, 1 time64).
+                         * Absent keeps the native's legacy home table. */
+                        val abi = value("$prefix.compat_futex_abi")
+                        if (abi != null && abi !in 0L..1L) {
+                            invalid += "$prefix.compat_futex_abi"
                         }
                     }
-                    /* Optional: the derived ABI (0 time32, 1 time64). Absent
-                     * keeps the native's legacy home table. */
-                    val abi = value("$routePrefix.compat_futex_abi")
-                    if (abi != null && abi !in 0L..1L) {
-                        invalid += "$routePrefix.compat_futex_abi"
+                    if (nativeCarrier || !compatCarrier) {
+                        val shift = value("$prefix.waiter_shift")
+                        if (shift == null ||
+                            shift < Int.MIN_VALUE.toLong() || shift > Int.MAX_VALUE.toLong()
+                        ) {
+                            invalid += "$prefix.waiter_shift"
+                        }
                     }
                 }
-                if (nativeCarrier || !compatCarrier) {
-                    val shift = value("$routePrefix.waiter_shift")
-                    if (shift == null ||
-                        shift < Int.MIN_VALUE.toLong() || shift > Int.MAX_VALUE.toLong()
-                    ) {
-                        invalid += "$routePrefix.waiter_shift"
-                    }
-                }
-            }
 
-            "multicast_waiter" ->
-                invalid += validateMulticastGeometry(routePrefix, ::value, compatCarrier)
+                "multicast_waiter" ->
+                    invalid += validateMulticastGeometry(prefix, ::value, compatCarrier)
+            }
+        }
+
+        val declaredBranches = buildSet {
+            when (val raw = profile["route"]) {
+                is String -> add(raw)
+                is Map<*, *> -> raw.keys.filterIsInstance<String>().forEach(::add)
+            }
+            explicitRoute?.let(::add)
+        }
+        for (name in declaredBranches) {
+            /* The fallback target keeps its own legacy carrier rule below. */
+            if (name !in ProfileConfig.Routes || name == fallbackTo) continue
+            checkBranch(name, "route.$name", RouteCarriers.of(profile, name))
         }
         if (fallbackTo != null && fallbackTo != "none" && fallbackTo !in ProfileConfig.Routes) {
             invalid += "fallback.to"
@@ -861,6 +888,9 @@ internal class AndroidProfileConfigController(
             socName,
             loadPresent = config.physLoad != null,
             offsetPresent = config.physOffset != null,
+            /* Only a chain that translates the image address needs the pair;
+             * a timer-only profile never reads it. */
+            needsW1 = ProfileResolver.requiresW1(config.pipelineOrder),
         )
         return errors
     }

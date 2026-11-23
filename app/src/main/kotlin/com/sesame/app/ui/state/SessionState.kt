@@ -74,6 +74,8 @@ data class SessionState(
     data class AccessState(
         val shizukuEnabled: Boolean = false,
         val shizukuStatus: ShizukuStatus = ShizukuStatus.NOT_REQUIRED,
+        /** The manager package is installed; NOT_RUNNING alone folds "absent". */
+        val shizukuInstalled: Boolean = false,
         /** Root-manager choice (package name); null means Auto. */
         val selectedManagerPackage: String? = null,
     )
@@ -96,6 +98,8 @@ data class SessionState(
         val logLines: List<GhostlockLogLine> = emptyList(),
         val sheetVisible: Boolean = false,
         val sheetDismissible: Boolean = false,
+        /** Wall-clock start of the run, for the sheet's elapsed line. */
+        val startedAtMs: Long = 0,
     )
 
     /** The measured database and the facts that would change the profile. */

@@ -266,6 +266,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         RunLogStore.list(appContext)
     }
 
+    override suspend fun readRunLog(stamp: String): String? = withContext(Dispatchers.IO) {
+        RunLogStore.readLog(appContext, stamp)
+    }
+
     override suspend fun exportRunLog(stamp: String, documentUri: String): Boolean =
         withContext(Dispatchers.IO) {
             RunLogStore.exportZip(appContext, stamp, documentUri.toUri())
@@ -623,6 +627,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 physSource = physSourceFromLines(captured),
                 physLoadPresent = resolved.any { it.getLongAt("kernel_phys_load") != null },
                 physOffsetPresent = resolved.any { it.getLongAt("kernel_phys_offset") != null },
+                timerDerived = timerBlock != null,
                 documentText = generated,
                 options = options,
             )

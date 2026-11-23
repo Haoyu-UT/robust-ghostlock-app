@@ -107,6 +107,11 @@ internal object RunLogStore {
                 writeMeta(dir, meta.entry, RunLogState.INTERRUPTED)
         }
 
+    /** The stored log text of one retained run; null when it cannot be read. */
+    fun readLog(context: Context, stamp: String): String? = runCatching {
+        File(File(root(context), stamp), LogName).readText()
+    }.getOrNull()
+
     /** Streams one run into [target] as `<stamp>/…`, the shape a report is read in. */
     fun exportZip(context: Context, stamp: String, target: Uri): Boolean = runCatching {
         val dir = File(root(context), stamp)

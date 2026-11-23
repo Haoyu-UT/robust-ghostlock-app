@@ -12,7 +12,11 @@ import com.sesame.app.ui.state.SessionState
  */
 sealed interface SupportStatus {
     data object Ready : SupportStatus
-    data class AccessPending(val status: ShizukuStatus) : SupportStatus
+    data class AccessPending(
+        val status: ShizukuStatus,
+        /** False when the manager package itself is absent (NOT_RUNNING folds it). */
+        val installed: Boolean = true,
+    ) : SupportStatus
     data object Missing : SupportStatus
 }
 
@@ -39,15 +43,17 @@ internal fun supportStatusOf(state: SessionState): SupportStatus = supportStatus
     hasProfile = state.support.hasProfile,
     shizukuEnabled = state.access.shizukuEnabled,
     shizukuStatus = state.access.shizukuStatus,
+    shizukuInstalled = state.access.shizukuInstalled,
 )
 
 private fun supportStatusOf(
     hasProfile: Boolean,
     shizukuEnabled: Boolean,
     shizukuStatus: ShizukuStatus,
+    shizukuInstalled: Boolean,
 ): SupportStatus = when {
     !hasProfile -> SupportStatus.Missing
     shizukuEnabled && shizukuStatus != ShizukuStatus.READY ->
-        SupportStatus.AccessPending(shizukuStatus)
+        SupportStatus.AccessPending(shizukuStatus, shizukuInstalled)
     else -> SupportStatus.Ready
 }

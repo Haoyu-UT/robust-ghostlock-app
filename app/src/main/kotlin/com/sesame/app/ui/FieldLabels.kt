@@ -9,7 +9,7 @@ import com.sesame.app.R
 internal fun fieldLabel(path: String, fallback: String): String =
     fieldLabelRes(path)?.let { stringResource(it) } ?: fallback
 
-private fun fieldLabelRes(path: String): Int? = when (path) {
+internal fun fieldLabelRes(path: String): Int? = when (path) {
     "route.multicast_waiter.compact_waiter" -> R.string.field_compact_waiter
     "fallback.to" -> R.string.field_fallback_to
     "route.tcp_zerocopy.compact_waiter" -> R.string.field_compact_waiter

@@ -238,6 +238,15 @@ object ProfileResolver {
             errors += ConfigError(ModuleBlock.BLOCK_KEY, "not an object")
         }
         errors += ModuleBlock.validate(moduleValue)
+        /* The timer route's block and pipeline entry are likewise one pair: the
+         * entry states that this profile selects no native chain (the pair is
+         * not needed), so the block must be there to deliver it. */
+        if ("timer" in pipelineOrder && !profile.containsKey(Timer98260.BLOCK_KEY)) {
+            errors += ConfigError(
+                Timer98260.BLOCK_KEY,
+                "the timer pipeline requires the block",
+            )
+        }
         if ((profile["kdp"] as? Number)?.toLong() == 1L &&
             (("dirtyfrag" !in pipelineOrder && "module" !in pipelineOrder) ||
                 "ghostlock" in pipelineOrder)
@@ -598,7 +607,7 @@ object ProfileResolver {
     /* `module` is the bundled-only chain: DirtyFrag without W1, a per-kernel
      * module as the SELinux switch, Magisk as the userspace manager. It is
      * never derived; see docs/analysis/module-magisk-implementation-plan.md. */
-    private val PipelineNames = setOf("ghostlock", "dirtyfrag", "module")
+    private val PipelineNames = setOf("ghostlock", "dirtyfrag", "module", "timer")
 }
 
 /** The nested map at a dotted path, or null when any level is absent. */

@@ -3,6 +3,7 @@
     <string name="app_name">Sesame</string>
     <string name="action_run">Run</string>
     <string name="action_running">Running…</string>
+    <string name="action_running_elapsed">Running · %1$02d:%2$02d</string>
     <string name="advanced_settings">Advanced options</string>
     <string name="advanced_settings_summary">Profiles, debug logs, and test settings</string>
     <string name="about">About</string>
@@ -45,6 +46,9 @@
     <string name="parse_phys_attach_uefi">Attach uefi.img (recommended)</string>
     <string name="parse_phys_attach_dtbo">Attach dtbo.img (recommended)</string>
     <string name="parse_phys_skip">Skip (physical values may stay incomplete)</string>
+    <string name="parse_phys_required_hint">MediaTek has no compiled default: the physical layout can only come from the image. Skipping means the GhostLock route cannot be derived and generation stops.</string>
+    <string name="parse_phys_default_hint">This platform has a compiled default; the image calibrates it. Skipping keeps the default for the GhostLock route.</string>
+    <string name="parse_phys_timer_hint">Skipping generates a 98260 timer-only profile; GhostLock needs this image for its physical layout.</string>
     <string name="parse_url_title">Full package URL</string>
     <string name="parse_url_hint">Paste full OTA zip URL</string>
     <string name="parse_start">Start</string>
@@ -220,9 +224,16 @@
     <string name="kernel_profile_required_summary">Load a profile to continue</string>
     <string name="kernel_profile_invalid_summary">Correct the marked fields</string>
     <string name="kernel_external_unreadable_summary">Re-import the profile in Parameters</string>
+    <string name="profile_external_unusable">This external profile is currently unusable; re-import it or clear the selection.</string>
+    <string name="external_reason_schema">This build supports schema %2$s only (this document is schema %1$s).</string>
+    <string name="external_reason_no_entry">This document has no entry for kernel %1$s.</string>
+    <string name="external_reason_no_kernel">No profile matches this kernel.</string>
+    <string name="external_reason_unresolved">The profile could not be resolved.</string>
+    <string name="external_reason_write">The profile copy could not be written.</string>
+    <string name="external_reason_read">The profile cannot be read or parsed.</string>
+    <string name="profile_field_invalid">invalid or missing</string>
     <string name="imported_profile_not_applicable_summary">The imported profile does not apply to this kernel; re-import or clear it in Parameters</string>
-    <string name="cpu_pair_label">CPU cores</string>
-    <string name="safe_mode_label">Safe mode</string>
+        <string name="safe_mode_label">Safe mode</string>
     <string name="safe_mode_summary">Disable all modules</string>
     <string name="force_attack_test_label">Force attack test</string>
     <string name="force_attack_test_summary">Ignore an existing KernelSU root and run the exploit anyway; the rooted child is discarded at the end</string>
@@ -246,8 +257,9 @@
     <string name="vr_ko_mode_on">On</string>
     <string name="vr_ko_mode_off">Off</string>
     <string name="shizuku_label">Run via Shizuku</string>
-    <string name="shizuku_summary">Skip Seccomp bypass</string>
+    <string name="shizuku_summary">Runs as shell, bypassing the app\'s own seccomp filter.</string>
     <string name="shizuku_status_not_running">Start Shizuku, then return here</string>
+    <string name="shizuku_status_missing">Shizuku is not installed; install and start it</string>
     <string name="shizuku_status_permission_required">Grant Shizuku access when asked</string>
     <string name="shizuku_status_ready">Shizuku ready</string>
     <string name="shizuku_status_checking">Checking Shizuku status</string>
@@ -264,7 +276,7 @@
     <string name="parameters_summary">Current profile, bundled sources and export</string>
     <string name="measurements_title">Measured data</string>
     <string name="measurements_summary">Root-measured kernel facts, read-only</string>
-    <string name="measurements_readonly">Facts recorded from a completed run\'s root phase. Nothing here is applied automatically; use the merge on the main screen to put a fact into a profile you export.</string>
+    <string name="measurements_readonly">Facts recorded from a completed run\'s root phase. Nothing is applied automatically; use Review merge below to merge them into a configuration and export it.</string>
     <string name="measurements_empty">No measurements yet. A completed attack run records the kernel\'s mm_struct slab facts here.</string>
     <string name="measurement_updated">Updated %1$s</string>
     <string name="measurement_source">Source: %1$s</string>
@@ -300,6 +312,7 @@
     <string name="profile_export_as_new">Export as new profile</string>
     <string name="merge_summary">Root measurements would change the active profile</string>
     <string name="merge_review">Review merge</string>
+    <string name="measurements_merge_summary">Merge the measured data into the configuration and export it</string>
     <string name="merge_nothing">The active profile already matches the measurements</string>
     <string name="merge_preview_title">Merge measurements</string>
     <string name="merge_preview_summary">A new profile is created with these values. The source profile is untouched; the export is the save.</string>
@@ -328,7 +341,7 @@
     <string name="user_profile_version">Version: v%1$d</string>
     <string name="profile_not_loaded">No configuration loaded</string>
     <string name="builtin_auto_no_match">Automatic matching selected; no profile matches this kernel</string>
-    <string name="builtin_immutable_notice">Built-in profiles cannot be edited. To use custom parameters, edit the overrides and save the result as a new profile.</string>
+    <string name="builtin_immutable_notice">Built-in profiles cannot be edited directly; export one, edit it, then import it again.</string>
     <string name="user_profile_detail">Profile details</string>
     <string name="user_profile_load">Load this profile</string>
     <string name="user_profile_unload">Unload</string>
@@ -476,10 +489,15 @@
     <!-- Home (V1) -->
     <string name="home_load_summary">Choose an existing .conf file</string>
     <string name="profile_import_rejected_title">Profile rejected</string>
+    <string name="profile_import_rejected_intro">These fields failed validation (the key in the profile file is in parentheses).</string>
     <string name="home_last_run">Last run</string>
     <string name="home_export_report_summary">Logs, crash evidence and the current profile</string>
     <string name="home_action_shizuku">Set up Shizuku</string>
     <string name="home_action_generate">Generate</string>
+    <string name="home_action_auto_match">Restore auto-match</string>
+    <string name="home_builtin_override_title">Built-in profile does not match this device</string>
+    <string name="home_builtin_override_summary">The selected built-in %1$s does not match this kernel (%2$s); restore auto-match or load a matching profile.</string>
+    <string name="builtin_not_applicable">not for this kernel</string>
     <string name="home_source_builtin">Builtin</string>
     <string name="home_source_external">External</string>
     <string name="home_device_info_title">Device info</string>
@@ -487,7 +505,7 @@
     <string name="home_run_done">Completed</string>
     <string name="home_run_failed">Failed</string>
     <string name="run_settings_title">Run settings</string>
-    <string name="run_settings_summary">CPU pair, safe mode, Shizuku, vr.ko</string>
+    <string name="run_settings_summary">Safe mode, Shizuku, vr.ko</string>
     <!-- Generation flow (V3) -->
     <string name="gen_step_source">1 Source</string>
     <string name="gen_step_parse">2 Parse</string>

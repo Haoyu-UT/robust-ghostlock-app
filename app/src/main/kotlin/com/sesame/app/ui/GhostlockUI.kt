@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import com.sesame.app.R
 import com.sesame.app.domain.model.CrashEvidenceInfo
 import com.sesame.app.ui.nav.NavController
@@ -289,8 +290,26 @@ private fun GhostlockExecutionSheet(
         },
         content = {
             if (!state.run.sheetDismissible) {
+                /* The design's "running · mm:ss": the elapsed comes from the
+                 * run's start stamp, re-read once a second while it runs. */
+                var now by remember { mutableStateOf(System.currentTimeMillis()) }
+                LaunchedEffect(state.run.startedAtMs, state.run.sheetDismissible) {
+                    while (!state.run.sheetDismissible) {
+                        now = System.currentTimeMillis()
+                        delay(1_000)
+                    }
+                }
+                val elapsedMs = if (state.run.startedAtMs > 0) {
+                    (now - state.run.startedAtMs).coerceAtLeast(0)
+                } else {
+                    0
+                }
                 Text(
-                    text = stringResource(R.string.action_running),
+                    text = stringResource(
+                        R.string.action_running_elapsed,
+                        (elapsedMs / 60_000).toInt(),
+                        ((elapsedMs / 1_000) % 60).toInt(),
+                    ),
                     modifier = Modifier.padding(bottom = 8.dp),
                     style = MiuixTheme.textStyles.body2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -305,13 +324,14 @@ private fun GhostlockExecutionSheet(
             )
             /* The run's visible verdict and the two terminal actions. The
              * manager itself is never auto-launched by the app: on a late-load
-             * ROM its own restart is what takes the foreground mid-handoff. */
+             * ROM its own restart is what takes the foreground mid-handoff.
+             * The verdict gets its own row: beside two long action labels it
+             * wrapped mid-word on a phone. */
             if (state.run.sheetDismissible) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (state.run.status != RunStatus.Idle) {
                         Text(
@@ -322,21 +342,25 @@ private fun GhostlockExecutionSheet(
                                     R.string.run_status_failed
                                 },
                             ),
-                            modifier = Modifier.weight(1f),
                             style = MiuixTheme.textStyles.body2,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
-                    } else {
-                        Spacer(Modifier.weight(1f))
+                        Spacer(Modifier.height(4.dp))
                     }
-                    TextButton(
-                        text = stringResource(R.string.run_log_export),
-                        onClick = actions::onOpenExportRunLog,
-                    )
-                    TextButton(
-                        text = stringResource(R.string.run_notif_open_manager),
-                        onClick = actions::onOpenManager,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            text = stringResource(R.string.run_log_export),
+                            onClick = actions::onOpenExportRunLog,
+                        )
+                        TextButton(
+                            text = stringResource(R.string.run_notif_open_manager),
+                            onClick = actions::onOpenManager,
+                        )
+                    }
                 }
             }
         },
@@ -368,6 +392,16 @@ private fun GhostlockDialog(
                 is AppDialog.RouteMatrix -> RouteMatrixContent(state, actions)
 
                 is AppDialog.ListDialog -> {
+                    if (dialog.messageRes != 0) {
+                        Text(
+                            text = stringResource(dialog.messageRes),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
                     val items = dialog.items.ifEmpty { dialog.itemResIds.map { stringResource(it) } }
                     val leading = dialog.leadingResId
                     val offset = if (leading != null) 1 else 0

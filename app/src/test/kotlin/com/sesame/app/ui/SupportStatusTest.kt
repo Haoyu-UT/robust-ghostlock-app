@@ -10,11 +10,13 @@ class SupportStatusTest {
         hasProfile: Boolean = true,
         shizukuEnabled: Boolean = false,
         shizuku: ShizukuStatus = ShizukuStatus.NOT_REQUIRED,
+        shizukuInstalled: Boolean = true,
     ) = SessionState(
         support = SessionState.SupportState(hasProfile = hasProfile),
         access = SessionState.AccessState(
             shizukuEnabled = shizukuEnabled,
             shizukuStatus = shizuku,
+            shizukuInstalled = shizukuInstalled,
         ),
     )
 
@@ -33,7 +35,19 @@ class SupportStatusTest {
         val status = supportStatusOf(
             state(shizukuEnabled = true, shizuku = ShizukuStatus.NOT_RUNNING),
         )
-        assertEquals(SupportStatus.AccessPending(ShizukuStatus.NOT_RUNNING), status)
+        assertEquals(SupportStatus.AccessPending(ShizukuStatus.NOT_RUNNING, installed = true), status)
+    }
+
+    @Test
+    fun `AccessPending carries a missing manager`() {
+        val status = supportStatusOf(
+            state(
+                shizukuEnabled = true,
+                shizuku = ShizukuStatus.NOT_RUNNING,
+                shizukuInstalled = false,
+            ),
+        )
+        assertEquals(SupportStatus.AccessPending(ShizukuStatus.NOT_RUNNING, installed = false), status)
     }
 
     @Test

@@ -17,6 +17,9 @@ interface HomeActions {
     fun openGeneration()
     fun selectProfileFile()
     fun openParameters()
+
+    /** Drop a hand-picked builtin override and return to auto-match. */
+    fun selectBuiltinAuto()
 }
 
 interface RunSettingsActions {
@@ -119,6 +122,9 @@ interface VrKoActions {
 
 interface MeasurementsActions {
     fun close()
+
+    /** Open the merge preview: the measured facts → an exported profile. */
+    fun openMerge()
 }
 
 interface MergePreviewActions {

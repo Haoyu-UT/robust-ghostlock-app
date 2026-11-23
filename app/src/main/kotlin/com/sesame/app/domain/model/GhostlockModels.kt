@@ -405,6 +405,8 @@ sealed interface ParseResult {
         val physLoadPresent: Boolean = false,
         /** The parsed document carries `kernel_phys_offset`. */
         val physOffsetPresent: Boolean = false,
+        /** The image's `timer_98260` block was derived and validated. */
+        val timerDerived: Boolean = false,
         /**
          * The generated document itself. The app stores no profile: the caller
          * probes it, applies the chosen stride in memory and requires an export

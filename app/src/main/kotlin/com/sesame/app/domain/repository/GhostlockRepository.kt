@@ -205,6 +205,9 @@ interface GhostlockRepository {
     /** Runs retained on the device, newest first, an unfinished one ahead of the rest. */
     suspend fun listRunLogs(): List<RunLogEntry>
 
+    /** The stored log text of one retained run; null when it cannot be read. */
+    suspend fun readRunLog(stamp: String): String?
+
     /** Streams one retained run into a document the user picked; false if it failed. */
     suspend fun exportRunLog(stamp: String, documentUri: String): Boolean
 
