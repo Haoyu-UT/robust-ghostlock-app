@@ -22,8 +22,9 @@ The module's exact rule (disassembly in `external/port/oplus-secureguard-2026-11
 sys_enter: save uid/euid/gid/egid + syscallno on the task's kernel stack
 sys_exit:  if (saved.uid == 0) return;                  // already root at entry
            if (saved.uid/euid/gid/egid > current) -> incident
-           incident: syscall in {143..147,149,203,204,208,210,213,214} ? return
-                     comm starts with "dumpstate" ? return
+           incident: syscall in the set*id family ? return
+                     (native 143..147,149; compat 203,204,208,210,213,214)
+                     the parent's comm starts with "dumpstate" ? return
                      kevent + send_sig(SIGKILL, current, 0)
 ```
 
@@ -172,9 +173,9 @@ flow is untouched either way.
 
 ## Alternatives considered
 
-- **Block the victim in an exempt syscall** (e.g. `connect` 203, which the post-handler allows):
-  fragile (needs a genuinely blocking connect) and only works for one syscall shape. The spin is
-  deterministic.
+- **Block the victim in an exempt syscall**: the only exempt family is set*id (native
+  143–147/149; compat 203/204/208/210/213/214), and none of those blocks for a useful window —
+  reading 203 as the native `connect` was wrong. The spin is deterministic.
 - **Unload or neuter `oplus_secure_guard`**: the module's code and data are in module memory whose
   base is not known without a leak, and `delete_module` needs `CAP_SYS_MODULE`. The spin needs no
   kernel write.
