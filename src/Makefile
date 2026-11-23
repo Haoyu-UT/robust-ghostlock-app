@@ -190,6 +190,7 @@ NATIVE_HOST_TESTS := \
   target_constants_test native_resource_test \
   profile_binary_test futex_hash_test scan_grid_test stride_verify_test slab_order_test \
   number_parse_test runtime_paths_test runtime_config_test handoff_probe_test victim_context_test \
+  victim_spin_test \
   run_state_test address_space_test cpp_link_probe_test compat_bitmap_test dirtyfrag_verdict_test \
   anchor_align_test cpu_select_test
 
@@ -216,6 +217,8 @@ HOST_ATTACK_DATAFLOW_SOURCES := \
   core/session/dirtyfrag_stage.cpp \
   core/session/exploit_session.cpp \
   core/session/runtime_config.cpp \
+  core/session/cpu_select.cpp \
+  core/session/victim_context.cpp \
   core/memory/heap_context.cpp \
   core/memory/address_space.cpp \
   core/race/pi_race.cpp \
@@ -384,6 +387,10 @@ $(HOST_BUILD_DIR)/handoff_probe_test: core/tests/handoff_probe_test.cpp core/ses
 $(HOST_BUILD_DIR)/victim_context_test: core/tests/victim_context_test.cpp core/session/victim_context.cpp core/session/victim_context.hpp core/support/native_resource.cpp core/support/native_resource.hpp
 	@mkdir -p $(HOST_BUILD_DIR)
 	$(HOST_CXX) $(HOST_CXXFLAGS) -pthread -Icore core/tests/victim_context_test.cpp core/session/victim_context.cpp core/support/native_resource.cpp -o $@
+
+$(HOST_BUILD_DIR)/victim_spin_test: core/tests/victim_spin_test.cpp core/session/victim_spin.h
+	@mkdir -p $(HOST_BUILD_DIR)
+	$(HOST_CXX) $(HOST_CXXFLAGS) -pthread -Icore core/tests/victim_spin_test.cpp -o $@
 
 $(HOST_BUILD_DIR)/dirtyfrag_verdict_test: core/tests/dirtyfrag_verdict_test.cpp core/session/dirtyfrag_verdict.hpp
 	@mkdir -p $(HOST_BUILD_DIR)

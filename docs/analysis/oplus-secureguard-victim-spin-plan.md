@@ -22,8 +22,9 @@ The module's exact rule (disassembly in `external/port/oplus-secureguard-2026-11
 sys_enter: save uid/euid/gid/egid + syscallno on the task's kernel stack
 sys_exit:  if (saved.uid == 0) return;                  // already root at entry
            if (saved.uid/euid/gid/egid > current) -> incident
-           incident: syscall in {143..147,149,203,204,208,210,213,214} ? return
-                     comm starts with "dumpstate" ? return
+           incident: syscall in the set*id family ? return
+                     (native 143..147,149; compat 203,204,208,210,213,214)
+                     the parent's comm starts with "dumpstate" ? return
                      kevent + send_sig(SIGKILL, current, 0)
 ```
 
@@ -66,13 +67,15 @@ away from the route's `{main, consumer}` pair so a spinning core does not pertur
 **The affinity is inherited, and that matters here.** `fork()` gives the child the calling thread's
 mask, and the calling thread is the native's main thread, already pinned to `main_cpu` (the log's
 `main thread running on cpu=N` precedes the fork). Today the child sleeps in `read()` immediately,
-so this is invisible; a naive spin would put it on the **same CPU as the route's waiter**. Before
-setting `spin_ready`, the child (or the parent, by pid) must:
+so this is invisible; a naive spin would put it on the **same CPU as the route's waiter**. The
+inherited mask must therefore not be treated as the allowed set: `sched_setaffinity` replaces the
+mask, and the cgroup cpuset is the real bound. Before setting `spin_ready` the child:
 
-- `sched_setaffinity` to a CPU outside `{main, consumer}` — a little core on the supported SoCs;
-- lower its scheduling weight (`SCHED_IDLE` or nice 19) so anything else on that core wins;
-- if no such CPU is in its mask, log (`victim spin: no off-pair cpu, spinning in place`) and
-  proceed — correctness is unaffected, only isolation is lost.
+- tries `sched_setaffinity` on each CPU `0..63` outside `{main, consumer}` and keeps the first that
+  succeeds — a little core on the supported SoCs;
+- lowers its scheduling weight (`SCHED_IDLE`, nice 19) so anything else on that core wins;
+- publishes the chosen CPU (or `~0`) and a flag in the shared page, so the parent's log says whether
+  isolation was achieved; with no non-pair CPU it spins in place and correctness is unaffected.
 
 All of these are syscalls made before the transition; they are invisible to the guard.
 
@@ -170,11 +173,49 @@ flow is untouched either way.
 
 ## Alternatives considered
 
-- **Block the victim in an exempt syscall** (e.g. `connect` 203, which the post-handler allows):
-  fragile (needs a genuinely blocking connect) and only works for one syscall shape. The spin is
-  deterministic.
+- **Block the victim in an exempt syscall**: the only exempt family is set*id (native
+  143–147/149; compat 203/204/208/210/213/214), and none of those blocks for a useful window —
+  reading 203 as the native `connect` was wrong. The spin is deterministic.
 - **Unload or neuter `oplus_secure_guard`**: the module's code and data are in module memory whose
   base is not known without a leak, and `delete_module` needs `CAP_SYS_MODULE`. The spin needs no
   kernel write.
 - **Never give the victim uid 0** (capability-only): the handoff's `ksud` and the root script
   expect uid 0, and a crafted cred would need a kernel page the page-free route does not have.
+
+## RESULT — diting regression (2026-11-23)
+
+The guard-less rig (`5.10.236`, build 833 vs the clean `document` 832) reads: **select 5/5** fresh
+boots, every run `victim spin: armed seq=1 cpu=0 flags=1` and `child uid = 0` on W2 attempt 1,
+end-to-end 7.2–8.4 s against the 8.0–8.7 s baseline. **Sigreturn A/B (same 5 boots each):
+1/5 spin vs 2/5 baseline** (Fisher p ≈ 1.0), every failure the route's own
+`rt_mutex_adjust_prio_chain+0x188` class at W1/W3, none at W2; both runs that reached W2 in the spin
+arm verified it. The spin is neutral where no guard exists; the evasion itself still needs the
+reporter's Neo7. Record:
+`external/port/oplus-secureguard-2026-11-22/device/README.md`.
+
+**More devices (same day, builds 835 vs the parent 832).** The POCO X6 Pro (`duchamp`, 6.1.138)
+runs the GhostLock/select chain 3/3 with the spin armed and W2 `child uid = 0` on attempt 1
+(baseline 4/4, no spin line; 62–85 s both arms). The OnePlus 13s (`CPH2723`, 6.6.66) runs its
+DirtyFrag pipeline 3/3 in both arms (`RESULT=OK script=0 enforce=1`); the spin is not on that
+path, so the check is that the build still carries the chain. Both are guard-less rigs — the
+regression result, not the evasion.
+
+## QEMU verification — the rule itself (2026-11-23)
+
+The exploit cannot complete under QEMU (its copy→walk race and TCG's timing), but the guard's
+decision does not depend on it: it compares one task's creds at `sys_enter` and `sys_exit`. A bench
+module performs the W2 store (`task+0x838` ← `init_cred`) on a chosen task, and the guest runs
+three arms against the device's own `oplus_secure_guard.ko` on the exact Image:
+
+| arm | guard on | guard off |
+|---|---|---|
+| control: blocked in `read()`, no write | survives, uid 2000; snapshot armed (`sg_flag=1 sg_scno=63 sg_uid=2000`) | survives, uid 2000; block zero |
+| blocked in `read()`, write while blocked | **killed**: `oplus_root_killed, pid=117, uid = 0` (`sig=9`) | survives, uid 0 |
+| spinning in user space, write, no syscall in flight | **survives, uid 0** | survives, uid 0 |
+
+The blocked arm reproduces the sixth report; the spin arm confirms the short-circuit: the next
+syscall enters with `saved.uid == 0` and the post handler bails. One labelled accommodation: the
+guard keeps its snapshot in the MTK "ux" scheduler's `oplus_task_struct` (`task+0xdd8`), whose
+allocator is a module the guest does not load, so the bench installs a zeroed block; the guard
+reads only the six `sg_*` words in it. This settles the kernel-side rule and the spin's mechanism;
+the reporter's device still decides the exploit's own W2 delivery and the ROM's other hooks.

