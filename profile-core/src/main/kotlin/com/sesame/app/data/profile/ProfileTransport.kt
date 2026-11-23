@@ -51,11 +51,23 @@ object ProfileTransport {
         carrier: String? = null,
         pipeline: String? = null,
         safeMode: Boolean = false,
-    ): String {
+    ): String = ProfileDocument.renderJson(
+        document(resolved, deviceId, route, carrier, pipeline, safeMode),
+    )
+
+    /** The transport document tree (run keys included). */
+    fun document(
+        resolved: Map<String, Any?>,
+        deviceId: String? = null,
+        route: String? = null,
+        carrier: String? = null,
+        pipeline: String? = null,
+        safeMode: Boolean = false,
+    ): Map<String, Any?> {
         val base = imageBase(resolved)
         val branches = branches(resolved)
         val selected = route?.takeIf { it in branches } ?: branches.keys.firstOrNull()
-        val document = linkedMapOf<String, Any?>(
+        return linkedMapOf(
             "schema_version" to ProfileResolver.ProfileSchemaVersion.toLong(),
             "release" to resolved["release"],
             "mode" to pipeline,
@@ -65,7 +77,48 @@ object ProfileTransport {
             "ghostlock" to ghostlock(resolved, branches, selected, carrier),
             "timer" to timer(resolved, base),
         )
-        return ProfileDocument.renderJson(document)
+    }
+
+    /**
+     * The *authored* cleaned document: the same shape without the run keys and
+     * with the per-device entries and the merged tuning left out (the app
+     * merges those at load time, exactly as the bundled assets do). Used by
+     * the one-shot migration of the bundled assets and by the exporter.
+     */
+    fun authoredDocument(raw: Map<String, Any?>): Map<String, Any?> {
+        val base = imageBase(raw)
+        val branches = branches(raw)
+        val selected = branches.keys.firstOrNull()
+        val module = raw[ModuleBlock.BLOCK_KEY].asValueMap()
+        val ghostlock = if (branches.isEmpty() && module == null) {
+            null
+        } else {
+            linkedMapOf<String, Any?>(
+                "syscall" to selected,
+                "carrier" to carrierFor(branches[selected], null),
+                "anchor" to selected?.let { anchor(branches[it], raw) },
+                "syscalls" to if (branches.isEmpty()) null else linkedMapOf<String, Any?>(
+                    *Syscalls.map { name -> name to branches[name]?.let { branchBlocks(name, it) } }
+                        .toTypedArray(),
+                ),
+                "module" to module?.let {
+                    mapOf(
+                        "asset" to it["asset"],
+                        "sha256" to it["asset_sha256"],
+                        "vendor_files" to it["vendor_files"],
+                    )
+                },
+                "execution" to null,
+            )
+        }
+        return linkedMapOf(
+            "schema_version" to ProfileResolver.ProfileSchemaVersion.toLong(),
+            "release" to raw["release"],
+            "devices" to authoredDevices(raw),
+            "kernel" to kernel(raw, base, branches[selected]),
+            "ghostlock" to ghostlock,
+            "timer" to timer(raw, base),
+        )
     }
 
     // ---- kernel -----------------------------------------------------------
@@ -164,12 +217,42 @@ object ProfileTransport {
      * images, which the timer does not carry.
      */
     private fun credential(resolved: Map<String, Any?>, timer: ValueMap?): Map<String, Any?> {
-        fun overlay(key: String): Long? = (timer?.get(key) as? Number)?.toLong()
-        fun ref(overlayKey: String, offsetPath: String, imagePath: String): Map<String, Any?> =
-            mapOf(
-                "offset" to (overlay(overlayKey) ?: num(resolved, offsetPath)),
-                "image" to unsignedHex(resolved.getLongAt(imagePath)),
+        fun overlay(key: String): Long? = (timer?.get(key) as? Number)?.toLong()?.takeIf { it != 0L }
+        /* The named reference slots, by offset. The timer's derived overlay is
+         * the layout authority (it is BTF-derived); the ghostlock block states
+         * the references positionally, so each image is assigned to the name
+         * whose offset it sits at, falling back to the positional name. */
+        val named = listOf(
+            "user" to overlay("cred_user_offset"),
+            "user_ns" to overlay("cred_user_ns_offset"),
+            "ucounts" to overlay("cred_ucounts_offset"),
+            "group_info" to overlay("cred_group_info_offset"),
+        )
+        val positional = listOf("user", "user_ns", "ucounts", "group_info")
+        val refSlots = listOf(
+            "cred.ref0_offset" to "cred.ref0_image",
+            "cred.ref1_offset" to "cred.ref1_image",
+            "cred.ref2_offset" to "cred.ref2_image",
+            "cred.ref3_offset" to "cred.ref3_image",
+        )
+        val refs = linkedMapOf<String, Map<String, Any?>>()
+        for ((index, slot) in refSlots.withIndex()) {
+            val offset = num(resolved, slot.first)?.takeIf { it != 0L }
+            val image = resolved.getLongAt(slot.second)?.takeIf { it != 0L }
+            if (offset == null && image == null) continue
+            val name = named.firstOrNull { (_, namedOffset) ->
+                namedOffset != null && namedOffset == offset
+            }?.first ?: positional[index]
+            refs[name] = mapOf(
+                "offset" to (offset ?: named.firstOrNull { it.first == name }?.second),
+                "image" to unsignedHex(image),
             )
+        }
+        /* A named slot the positions did not fill keeps its derived offset. */
+        for ((name, offset) in named) {
+            if (offset == null || name in refs) continue
+            refs[name] = mapOf("offset" to offset, "image" to null)
+        }
         return linkedMapOf(
             "copy_size" to num(resolved, "cred.copy_size"),
             "usage" to mapOf(
@@ -186,17 +269,11 @@ object ProfileTransport {
                 "count" to (overlay("cred_caps_count") ?: num(resolved, "cred.caps_count")),
                 "mask" to unsignedHex(resolved.getLongAt("cred.caps_value")),
             ),
-            "refs" to mapOf(
-                "user" to ref("cred_user_offset", "cred.ref0_offset", "cred.ref0_image"),
-                "user_ns" to ref(
-                    "cred_user_ns_offset", "cred.ref1_offset", "cred.ref1_image",
-                ),
-                "ucounts" to ref(
-                    "cred_ucounts_offset", "cred.ref2_offset", "cred.ref2_image",
-                ),
-                "group_info" to ref(
-                    "cred_group_info_offset", "cred.ref3_offset", "cred.ref3_image",
-                ),
+            "refs" to linkedMapOf<String, Any?>(
+                "user" to (refs["user"] ?: mapOf("offset" to null, "image" to null)),
+                "user_ns" to (refs["user_ns"] ?: mapOf("offset" to null, "image" to null)),
+                "ucounts" to (refs["ucounts"] ?: mapOf("offset" to null, "image" to null)),
+                "group_info" to (refs["group_info"] ?: mapOf("offset" to null, "image" to null)),
             ),
         )
     }
@@ -460,6 +537,28 @@ object ProfileTransport {
     }
 
     // ---- helpers ----------------------------------------------------------
+
+    /** The authored per-device entries, every identity preserved. */
+    private fun authoredDevices(raw: Map<String, Any?>): Map<String, Any?>? {
+        val load = raw["kernel_phys_load"].asValueMap()
+        val offset = raw["kernel_phys_offset"].asValueMap()
+        if (load == null && offset == null) return null
+        val ids = LinkedHashSet<String>()
+        load?.keys?.forEach { ids += it }
+        offset?.keys?.forEach { ids += it }
+        return ids.associateWith { id ->
+            fun entry(map: ValueMap?): String? {
+                val key = map?.keys?.firstOrNull { it.equals(id, ignoreCase = true) }
+                return unsignedHex((map?.get(key) as? Number)?.toLong())
+            }
+            mapOf(
+                "phys" to mapOf(
+                    "load" to entry(load),
+                    "offset" to entry(offset),
+                ),
+            )
+        }
+    }
 
     /** The authored route branches, plus a fallback target folded in as one. */
     private fun branches(resolved: Map<String, Any?>): LinkedHashMap<String, ValueMap> {

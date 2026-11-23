@@ -381,23 +381,16 @@ namespace ghostlock::json_profile {
             if (null_or_absent(refs)) return true;
             if (!want_object(refs, "kernel.struct.cred.refs", c)) return false;
             if (!keys_of(refs, kRefsKeys, "kernel.struct.cred.refs", c)) return false;
-            struct {
-                const char *key;
-                uint32_t *offset;
-                uint64_t *image;
-            } const table[] = {
-                {"user", &out->credential.ref0_offset,
-                 &out->credential.ref0_image},
-                {"user_ns", &out->credential.ref1_offset,
-                 &out->credential.ref1_image},
-                {"ucounts", &out->credential.ref2_offset,
-                 &out->credential.ref2_image},
-                {"group_info", &out->credential.ref3_offset,
-                 &out->credential.ref3_image},
+            /* The transport writes `ref_count` references in slot order, so
+             * the image-bearing references are compacted into slots 0..n-1.
+             * (The document names them; the kernel only needs offset/image
+             * pairs.) A reference with an image must state where to write it. */
+            static const char *const order[] = {
+                "user", "user_ns", "ucounts", "group_info",
             };
             uint32_t count = 0;
-            for (const auto &entry: table) {
-                const gl_json_value *ref = member(refs, entry.key);
+            for (const char *name: order) {
+                const gl_json_value *ref = member(refs, name);
                 std::optional<uint64_t> image;
 
                 if (null_or_absent(ref)) continue;
@@ -407,26 +400,50 @@ namespace ghostlock::json_profile {
                 if (!keys_of(ref, kRefKeys, "kernel.struct.cred.refs.<name>", c)) {
                     return false;
                 }
+                if (!opt_u64(ref, "image", "kernel.struct.cred.refs.<name>", image,
+                             c)) {
+                    return false;
+                }
+                if (!image) continue;
+                if (count >= 4) {
+                    return fail(c,
+                                "profile: kernel.struct.cred.refs carries more "
+                                "than four writable references");
+                }
                 unsigned long long offset = 0;
                 if (!u64_field(ref, "offset", "kernel.struct.cred.refs.<name>",
-                               &offset, false, c)) {
+                               &offset, true, c)) {
                     return false;
                 }
                 if (offset > 0xffffffffULL) {
                     return fail(c,
                                 "profile: kernel.struct.cred.refs.%s.offset is out "
                                 "of range",
-                                entry.key);
+                                name);
                 }
-                *entry.offset = static_cast<uint32_t>(offset);
-                if (!opt_u64(ref, "image", "kernel.struct.cred.refs.<name>", image,
-                             c)) {
-                    return false;
+                uint32_t *slot_offset = nullptr;
+                uint64_t *slot_image = nullptr;
+                switch (count) {
+                    case 0:
+                        slot_offset = &out->credential.ref0_offset;
+                        slot_image = &out->credential.ref0_image;
+                        break;
+                    case 1:
+                        slot_offset = &out->credential.ref1_offset;
+                        slot_image = &out->credential.ref1_image;
+                        break;
+                    case 2:
+                        slot_offset = &out->credential.ref2_offset;
+                        slot_image = &out->credential.ref2_image;
+                        break;
+                    default:
+                        slot_offset = &out->credential.ref3_offset;
+                        slot_image = &out->credential.ref3_image;
+                        break;
                 }
-                if (image) {
-                    *entry.image = *image;
-                    count++;
-                }
+                *slot_offset = static_cast<uint32_t>(offset);
+                *slot_image = *image;
+                count++;
             }
             out->credential.ref_count = count;
             return true;

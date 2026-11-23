@@ -52,10 +52,10 @@ namespace {
         "uid": 4, "security": 120, "security_sid": 4,
         "caps": { "offset": 40, "count": 5, "mask": "0xffffffffffffffff" },
         "refs": {
-          "user": { "offset": 128, "image": null },
+          "user": { "offset": 128, "image": "0xffffffc0a0000000" },
           "user_ns": { "offset": 136, "image": null },
           "ucounts": { "offset": 144, "image": null },
-          "group_info": { "offset": 152, "image": null }
+          "group_info": { "offset": 152, "image": "0xffffffc0a0000100" }
         }
       },
       "waiter": { "shape": "compact", "pi_tree": 24, "task": 48, "lock": 56, "wake_state": 64 },
@@ -187,9 +187,15 @@ int32_t main(void) {
         decoded.credential.security_offset != 120 ||
         decoded.credential.usage_size != 4 ||
         decoded.credential.usage_value != 1 ||
+        /* The image-bearing references are compacted into slots 0..n-1;
+         * the named-but-unwritten ones keep no slot. */
         decoded.credential.ref0_offset != 128 ||
-        decoded.credential.ref3_offset != 152 ||
-        decoded.credential.ref_count != 0) {
+        decoded.credential.ref0_image != 0xffffffc0a0000000ULL ||
+        decoded.credential.ref1_offset != 152 ||
+        decoded.credential.ref1_image != 0xffffffc0a0000100ULL ||
+        decoded.credential.ref2_offset != 0 ||
+        decoded.credential.ref3_offset != 0 ||
+        decoded.credential.ref_count != 2) {
         std::fprintf(stderr, "cred/task decode wrong\n");
         return 1;
     }
