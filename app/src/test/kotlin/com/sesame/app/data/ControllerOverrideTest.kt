@@ -100,12 +100,14 @@ class ControllerOverrideTest {
     @Test
     fun `the native document carries the neutral CPU pair`() = runBlocking {
         val config = controller.load(release)
-        val decoded = checkNotNull(
-            NativeProfileDocument.fromBinary(checkNotNull(controller.nativeDocument(config))),
+        val text = String(
+            checkNotNull(controller.nativeDocument(config)),
+            Charsets.UTF_8,
         )
-        /* The native chooses the pair at run time (cpu_select); the wire's
-         * required slots carry the neutral fallback, never a UI prediction. */
-        assertEquals(0u, decoded.execution.recommendedMainCpu)
-        assertEquals(1u, decoded.execution.recommendedConsumerCpu)
+        val parsed = checkNotNull(HoconSupport.parseValue(text).asValueMap())
+        /* The native chooses the pair at run time (cpu_select); the document's
+         * slots carry the neutral fallback, never a UI prediction. */
+        assertEquals(0L, parsed.getLongAt("ghostlock.execution.recommended_cpus.main"))
+        assertEquals(1L, parsed.getLongAt("ghostlock.execution.recommended_cpus.consumer"))
     }
 }

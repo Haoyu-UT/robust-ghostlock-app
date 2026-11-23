@@ -10,6 +10,7 @@ import com.sesame.app.data.profile.PerDevicePhys
 import com.sesame.app.data.profile.ProfileDocument
 import com.sesame.app.data.profile.ProfileMerger
 import com.sesame.app.data.profile.ProfileResolver
+import com.sesame.app.data.profile.ProfileTransport
 import com.sesame.app.data.profile.RouteCarriers
 import com.sesame.app.data.profile.Timer98260
 import com.sesame.app.data.route.RouteKind
@@ -689,7 +690,10 @@ internal class AndroidProfileConfigController(
         val view = resolved.copyValue().asValueMap() ?: return null
         /* The tool refuses a document whose release differs from uname -r. */
         view["release"] = release
-        return ProfileDocument.render(view)
+        /* The tool computes its own kernel VAs from `kernel.image_base` plus
+         * the image-relative offsets, so it reads the same transport document
+         * the ghostlock backend does — only its block matters. */
+        return ProfileTransport.render(view, deviceId = transportDeviceId())
     }
 
     /**
@@ -785,7 +789,11 @@ internal class AndroidProfileConfigController(
         val invalid = validateProfileFields(merged, route, fallbackTo, needsW1) +
             ProfileResolver.validateMerged(merged, route, fallbackTo).map { it.fieldPath }
         if (invalid.isNotEmpty()) return null
-        return buildNativeDocument(release, merged)?.toBinary()
+        return ProfileTransport.render(
+            merged,
+            deviceId = transportDeviceId(),
+            route = route,
+        ).toByteArray(Charsets.UTF_8)
     }
 
     override suspend fun builtinReleases(): List<String> {
@@ -920,62 +928,29 @@ internal class AndroidProfileConfigController(
      * Resolved on demand: the result depends on the selection, so a cached
      * document would go stale.
      */
-    override fun nativeDocument(config: ProfileConfig, pipeline: String?): ByteArray? = synchronized(lock) {
+    override fun nativeDocument(
+        config: ProfileConfig,
+        pipeline: String?,
+        safeMode: Boolean,
+    ): ByteArray? = synchronized(lock) {
         val resolved = resolve(config.release).profile
             ?: return@synchronized null
-        /* The wire carries the picker's selected route, not the document's
-         * first branch: the superset's default is alphabetical and the
-         * selected route can be any branch. The carrier choice likewise comes
-         * from the picker and is injected into the wire's `compat_carrier`. */
-        buildNativeDocument(
-            config.release,
+        /* The document carries the picker's selected syscall and carrier, not
+         * the superset's alphabetical first branch. */
+        val route = config.route?.takeIf { it in ProfileConfig.Routes } ?: routeNameOf(resolved)
+        ProfileTransport.render(
             resolved,
-            pipeline,
-            config.route,
-            config.selectedCarrier,
-        )?.toBinary()
+            deviceId = transportDeviceId(),
+            route = route,
+            carrier = config.selectedCarrier,
+            pipeline = pipeline,
+            safeMode = safeMode,
+        ).toByteArray(Charsets.UTF_8)
     }
 
-    /** Builds the single resolved authority native consumes at run time. */
-    private fun buildNativeDocument(
-        release: String,
-        profile: ValueMap,
-        /** Only a run has a resolved pipeline; previews and schema checks omit it. */
-        pipeline: String? = null,
-        /** The picker's selected native route; null keeps the document's first. */
-        routeOverride: String? = null,
-        /**
-         * The picker's carrier for that route (`native`/`compat`). It replaces
-         * the branch's legacy `compat_carrier` flag on the wire; null keeps the
-         * flag the document states.
-         */
-        carrier: String? = null,
-    ): Profile? {
-        val route = routeOverride?.takeIf { it in ProfileConfig.Routes } ?: routeNameOf(profile)
-        val fallbackTo = fallbackTargetOf(profile)
-        val value: (String) -> Long? = { path ->
-            when {
-                /* The native chooses the CPU pair at run time (cpu_select picks
-                 * the two highest-frequency CPUs that accept a verified pin).
-                 * The wire's required slots carry the neutral fallback, which
-                 * is also what the native keeps when fewer than two CPUs pin. */
-                path == "execution.recommended_cpus.main" -> 0L
-                path == "execution.recommended_cpus.consumer" -> 1L
-                /* Only the compat bit needs injecting: the native carrier is
-                 * the wire's default (an absent/0 flag), so a carriers profile
-                 * with the native choice writes exactly what the document
-                 * states. */
-                path == "compat_carrier" && carrier == RouteCarriers.Compat -> 1L
-                else -> ProfileResolver.nativeValue(profile, route, fallbackTo, path)
-            }
-        }
-        return Profile.fromValueMap(
-            release = release,
-            route = RouteKind.fromToken(route),
-            fallbackTo = RouteKind.fromToken(fallbackTo),
-            pipeline = pipeline,
-        ) { path -> value(path) }
-    }
+    /** The identity the transport document's single `devices` entry carries. */
+    private fun transportDeviceId(): String? =
+        deviceCodename ?: deviceCandidates.firstOrNull()
 
     // ---- resolution ----
 
@@ -1138,15 +1113,36 @@ internal class AndroidProfileConfigController(
      * and never crosses the transport either way.
      */
     private fun uncarriedRouteKeys(profile: ValueMap, route: String?): List<String> {
-        val release = profile["release"] as? String ?: return emptyList()
-        val known = buildNativeDocument(release, profile)?.document?.wireKeys() ?: return emptyList()
         val branch = route?.let { name -> profile["route"].asValueMap()?.get(name).asValueMap() }
             ?: return emptyList()
-        /* `carriers` is the app's choice list; it is consumed here and never a
-         * wire field, so it is not an uncarried-key warning. */
-        return branch.keys.filterIsInstance<String>()
-            .filterNot { it in known || it == "carriers" }
-            .sorted()
+        /* The branch keys the transport document carries. `carriers` is the
+         * app's choice list and is consumed by the renderer itself; anything
+         * outside these sets is a setting the profile asks for and the run
+         * cannot deliver. */
+        val known = when (route) {
+            "select_stack" -> setOf(
+                "carriers", "waiter_shift", "compact_waiter", "lock_anchor_image",
+                "lock_anchor_bytes", "lock_anchor_stride", "compat_carrier",
+                "waiter_home", "select_dst_depth", "compat_futex_abi",
+                "enter_delay_us", "timeout_us",
+            )
+
+            "multicast_waiter" -> setOf(
+                "carriers", "waiter_off", "buffer_size", "task_offset", "lock_offset",
+                "compact_waiter", "lock_anchor_image", "lock_anchor_bytes",
+                "lock_anchor_stride", "compat_carrier", "compat_waiter_off",
+                "compat_buffer_size", "compat_futex_abi",
+            )
+
+            "sigreturn" -> setOf(
+                "carriers", "waiter_off_sve", "waiter_off_plain", "compact_waiter",
+                "lock_anchor_image", "lock_anchor_bytes", "lock_anchor_stride",
+            )
+
+            "tcp_zerocopy" -> setOf("carriers", "compact_waiter")
+            else -> emptySet()
+        }
+        return branch.keys.filterIsInstance<String>().filterNot { it in known }.sorted()
     }
 
     /**

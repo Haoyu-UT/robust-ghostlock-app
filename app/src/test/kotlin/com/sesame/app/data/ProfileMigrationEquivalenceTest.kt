@@ -99,12 +99,16 @@ class ProfileMigrationEquivalenceTest {
         val importedNative = checkNotNull(imported.nativeDocument(model)) {
             "$label: no external native document"
         }
-        assertArrayEquals("$label: native bytes", baselineNative, importedNative)
-        val decoded = checkNotNull(Profile.fromBinary(importedNative)) {
-            "$label: native document did not decode"
-        }
-        assertEquals("$label: native release", release, decoded.release)
-        assertEquals("$label: native route", baselineModel.route, decoded.route.token)
+        assertArrayEquals("$label: transport document", baselineNative, importedNative)
+        val rendered = checkNotNull(
+            HoconSupport.parseValue(String(importedNative, Charsets.UTF_8)).asValueMap(),
+        )
+        assertEquals("$label: document release", release, rendered["release"])
+        assertEquals(
+            "$label: document syscall",
+            baselineModel.route,
+            rendered["ghostlock"].asValueMap()?.get("syscall"),
+        )
     }
 
     private fun bundledEntries(): List<Entry> {

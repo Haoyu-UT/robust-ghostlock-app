@@ -93,7 +93,11 @@ interface ProfileConfigController {
      * an invocation that does not match it. Null omits the cross-check (the
      * parse/preview paths).
      */
-    fun nativeDocument(config: ProfileConfig, pipeline: String? = null): ByteArray?
+    fun nativeDocument(
+        config: ProfileConfig,
+        pipeline: String? = null,
+        safeMode: Boolean = false,
+    ): ByteArray?
 
     companion object {
         /** Reference templates ("6.6-template"): manually loadable, never auto-matched. */

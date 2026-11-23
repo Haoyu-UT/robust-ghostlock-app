@@ -51,6 +51,11 @@ object ProfileDocument {
             TimerKey to merged[TimerKey],
             ModuleKey to merged[ModuleKey],
         )
+        return renderJson(document)
+    }
+
+    /** Serializes one value tree as the canonical document text. */
+    fun renderJson(document: Map<String, Any?>): String {
         val out = StringBuilder()
         writeValue(out, document, 0)
         out.append('\n')

@@ -65,14 +65,15 @@ class TimerDocumentTest {
         val text = controllerFor(ditingFile).renderTimerDocument(diting)
         assertNotNull("no timer document for $diting", text)
         val json = JSONObject(text!!)
-        assertTrue("the timer block is missing", json.has("timer_98260"))
+        assertTrue("the timer block is missing", json.has("timer"))
         assertEquals(diting, json.getString("release"))
-        assertEquals("core_state", json.getJSONObject("timer_98260").getString("trigger"))
-        /* The canonical split: native keys live under "native", never at the
-         * top level, so the tool reads only its own block. */
-        assertTrue(json.has("native"))
+        assertEquals("core_state", json.getJSONObject("timer").getString("trigger"))
+        /* One document for every backend: the engine blocks are siblings and
+         * the tool reads only `timer` (plus the shared `kernel` facts). */
         assertTrue(json.has("kernel"))
+        assertTrue(json.has("ghostlock"))
         assertTrue(!json.has("route"))
+        assertTrue(!json.has("timer_98260"))
     }
 
     @Test

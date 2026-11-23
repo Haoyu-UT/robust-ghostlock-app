@@ -24,6 +24,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class RouteCandidatesTest {
+    private fun document(bytes: ByteArray?): ValueMap =
+        checkNotNull(
+            HoconSupport.parseValue(String(checkNotNull(bytes), Charsets.UTF_8)).asValueMap(),
+        )
+
     private val context: Application = RuntimeEnvironment.getApplication()
     private val release = "6.1.138-android14-11-g44bda9e8f6e9-ab13792638"
     private val file = "$release.conf"
@@ -77,20 +82,35 @@ class RouteCandidatesTest {
         val native = controller.load(release)
         assertEquals(listOf("native", "compat"), native.carrierCandidates)
         assertEquals("native", native.selectedCarrier)
-        val nativeLayout = NativeProfileDocument.fromBinary(
-            checkNotNull(controller.nativeDocument(native)),
-        )!!.routeConfig as SelectConfig
-        assertEquals(null, nativeLayout.compatCarrier)
+        val nativeDoc = document(controller.nativeDocument(native))
+        assertEquals("native", nativeDoc["ghostlock"].asValueMap()?.get("carrier"))
+        assertEquals("select_stack", nativeDoc["ghostlock"]?.asValueMap()?.get("syscall"))
+        assertEquals(
+            1L,
+            nativeDoc.getLongAt("ghostlock.syscalls.select_stack.native.waiter_shift"),
+        )
 
         assertTrue(controller.selectCarrier(release, "select_stack", "compat"))
         val compat = controller.load(release)
         assertEquals("compat", compat.selectedCarrier)
-        val compatLayout = NativeProfileDocument.fromBinary(
-            checkNotNull(controller.nativeDocument(compat)),
-        )!!.routeConfig as SelectConfig
-        assertEquals(1.toUByte(), compatLayout.compatCarrier)
-        assertEquals(488u, compatLayout.waiterHome)
-        assertEquals(496u, compatLayout.selectDstDepth)
+        val compatDoc = document(controller.nativeDocument(compat))
+        assertEquals("compat", compatDoc["ghostlock"]?.asValueMap()?.get("carrier"))
+        assertEquals(
+            488L,
+            compatDoc.getLongAt("ghostlock.syscalls.select_stack.compat.waiter_home"),
+        )
+        assertEquals(
+            496L,
+            compatDoc.getLongAt("ghostlock.syscalls.select_stack.compat.dst_depth"),
+        )
+        assertEquals(
+            "time64",
+            compatDoc["ghostlock"].asValueMap()
+                ?.get("syscalls").asValueMap()
+                ?.get("select_stack").asValueMap()
+                ?.get("compat").asValueMap()
+                ?.get("futex_abi"),
+        )
 
         /* A stale/unknown carrier is refused and the choice falls back. */
         assertFalse(controller.selectCarrier(release, "select_stack", "bogus"))

@@ -1080,7 +1080,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             /* The Shizuku path runs GhostLock only (the order check below
              * refuses a list without it); the wire carries that resolution so
              * the native's cross-check covers this invocation too. */
-            val profileBlob = profileController.nativeDocument(config, "ghostlock")
+            val profileBlob =
+                profileController.nativeDocument(config, "ghostlock", safeModeEnabled)
             archivedLog(
                 "<s> profile resolved hasProfile=${config.hasProfile} " +
                     "blob=${profileBlob?.size ?: 0} invalid=${config.invalidPaths.size}",
@@ -1115,15 +1116,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                         )
                         return@withDebugAttackLog 1
                     }
-                    /* Mirror the UserService patch so the dumped blob is the
-                     * effective one native will actually receive. */
-                    val runtimeBlob = if (safeModeEnabled) {
-                        NativeProfileDocument.patchSafeMode(profileBlob) ?: profileBlob
-                    } else {
-                        profileBlob
-                    }
-                    logProfileDigest(archivedLog, runtimeBlob)
-                    dumpRuntimeProfile(archivedLog, writeSidecar, release, runtimeBlob)
+                    logProfileDigest(archivedLog, profileBlob)
+                    dumpRuntimeProfile(archivedLog, writeSidecar, release, profileBlob)
                     archivedLog("<b> starting UserService")
                     resetRunState()
                     shizukuRunner.run(
@@ -1319,24 +1313,18 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     }
 
     /**
-     * The digest the app just put in the blob native receives (§E.18); native
-     * recomputes and logs its own, and refuses the run on a mismatch.
+     * The document's identity: its sha256, quoted in the run log and matching
+     * the `profile.json` sidecar byte for byte, so a device failure is
+     * replayable host-side.
      */
     private fun logProfileDigest(log: (String) -> Unit, blob: ByteArray) {
-        val digest = NativeProfileDocument.digestOf(blob)
-        log(
-            if (digest == null) {
-                "<k> profile digest: absent"
-            } else {
-                "<k> profile digest=0x%016x".format(digest.toLong())
-            },
-        )
+        val text = String(blob, StandardCharsets.UTF_8)
+        log("<k> profile document ${blob.size}B sha256=${sha256Of(text)}")
     }
 
     /**
-     * Writes the effective runtime profile into the attempt folder: the resolved
-     * HOCON (`profile.conf`) and the exact GLK1 v2 bytes handed to native
-     * (`profile.bin`). No-op when debug export is disabled.
+     * Writes the exact document handed to the backend into the attempt folder
+     * (`profile.json`). No-op when debug export is disabled.
      */
     private fun dumpRuntimeProfile(
         log: (String) -> Unit,
@@ -1344,14 +1332,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         release: String,
         blob: ByteArray?,
     ) {
-        val conf = runCatching { profileController.renderResolvedForDebug(release) }.getOrNull()
-        val confWritten = conf?.let {
-            writeSidecar("profile.conf", it.toByteArray(StandardCharsets.UTF_8))
-        } ?: false
-        val blobWritten = blob?.let { writeSidecar("profile.bin", it) } ?: false
-        if (confWritten || blobWritten) {
-            log("<k> runtime profile written: profile.conf/profile.bin")
-        }
+        val written = blob?.let { writeSidecar("profile.json", it) } ?: false
+        if (written) log("<k> runtime profile written: profile.json ($release)")
     }
 
     override fun requestShizukuPermission() = shizukuRunner.requestPermission()
@@ -1766,13 +1748,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 onLog("<b> pipeline=module: stage exited code=$moduleCode")
                 return moduleCode
             }
-            var profileBlob = profileController.nativeDocument(config, pipeline)
-                ?: error("profile is unavailable for $release")
-            // v2: safe_mode lives in the meta section; there is no fixed slot
-            // offset, so the blob is rescanned and rewritten.
-            if (safeModeEnabled) {
-                profileBlob = NativeProfileDocument.patchSafeMode(profileBlob) ?: profileBlob
-            }
+            val profileBlob = profileController.nativeDocument(
+                config,
+                pipeline,
+                safeModeEnabled,
+            ) ?: error("profile is unavailable for $release")
             logProfileDigest(onLog, profileBlob)
             dumpRuntimeProfile(onLog, writeSidecar, release, profileBlob)
             val ksuOffset = AtomicLong()

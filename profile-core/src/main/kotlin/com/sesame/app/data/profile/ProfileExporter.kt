@@ -1,7 +1,6 @@
 package com.sesame.app.data.profile
 
 import com.sesame.app.data.HoconSupport
-import com.sesame.app.data.NativeProfileDocument
 import com.sesame.app.data.ValueMap
 import com.sesame.app.data.asValueMap
 import com.sesame.app.data.route.RouteKind
@@ -88,23 +87,10 @@ object ProfileExporter {
                 println("exportKernelProfiles: $actualRelease (module-only; no native wire)")
                 continue
             }
-            val bytes = NativeProfileDocument.from(
-                release = actualRelease,
-                route = RouteKind.fromToken(route)?.token,
-                fallbackTo = RouteKind.fromToken(fallbackTo)?.token,
-            ) { path ->
-                when (path) {
-                    /* The native chooses the CPU pair at run time; the wire's
-                     * required slots carry the neutral fallback, exactly as the
-                     * app's transport boundary does. */
-                    "execution.recommended_cpus.main" -> 0L
-                    "execution.recommended_cpus.consumer" -> 1L
-                    else -> ProfileResolver.nativeValue(merged, route, fallbackTo, path)
-                }
-            }.toBinary()
-            File(staging, "$actualRelease.bin").writeBytes(bytes)
+            val document = ProfileTransport.render(merged, route = route)
+            File(staging, "$actualRelease.json").writeText(document)
             count++
-            println("exportKernelProfiles: $actualRelease (${bytes.size} bytes)")
+            println("exportKernelProfiles: $actualRelease (${document.length} bytes)")
         }
 
         /* Swap without ever deleting the previous output first: move it aside,

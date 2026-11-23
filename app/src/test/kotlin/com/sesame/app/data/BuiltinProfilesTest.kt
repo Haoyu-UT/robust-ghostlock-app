@@ -105,13 +105,22 @@ class BuiltinProfilesTest {
                     )
                 }
 
-                /* The resolved document re-encodes and decodes identically. */
+                /* The resolved document renders as the transport shape and
+                 * names the same engine selection the config resolved. */
                 val bytes = controller.nativeDocument(config)
                 assertNotNull("${entry.release}: no native document", bytes)
-                val profile = Profile.fromBinary(bytes!!)
-                assertNotNull("${entry.release}: native document failed to decode", profile)
-                assertEquals(entry.release, profile!!.release)
-                assertEquals(route, profile.route.token)
+                val rendered = checkNotNull(
+                    HoconSupport.parseValue(String(bytes!!, Charsets.UTF_8)).asValueMap(),
+                )
+                assertEquals(entry.release, rendered["release"])
+                assertEquals(
+                    route,
+                    rendered["ghostlock"].asValueMap()?.get("syscall"),
+                )
+                assertEquals(
+                    3L,
+                    (rendered["schema_version"] as Number).toLong(),
+                )
             }
             /* The bundle check, app-side: a module asset is referenced by a
              * bundled module profile, and no module asset is unreferenced. */
