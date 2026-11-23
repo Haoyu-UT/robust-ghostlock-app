@@ -17,14 +17,14 @@ Landed, gated and committed on `fix/ui-behaviour-2026-11-23`:
 |---|---|
 | Native JSON transport (decision 19) | **done**: `src/core/profile/json.{c,h}` (shared tree parser), `json_profile.cpp` (ghostlock mapper), `timer/profile_fields.c` (timer mapper), `entry.*`/`main.cpp` over JSON, the GLK1 wire deleted. Gates: native build 0 warnings, timer build, `lint-tidy` 0, host suite incl. `json_test`/`timer_profile_test`, `cmp_disasm` control (identical instruction counts). |
 | App-side transport render | **done**: `ProfileTransport` renders the one document from the resolved tree; the run path, timer tool, Shizuku frame and Gradle exporter use it; `profile.json` sidecar + sha256 log line replace the wire dump/digest; the emitted document golden re-frozen. Gates: app 285 tests, profile-core 85, `assembleDebug`. All 68 exported documents decode through the native mapper on the host. |
-| Device gate (partial) | **diting build 875**: fresh boot, run store `completed` — native `resolved profile loaded`, ladder `dirtyfrag`, W1-only, DirtyFrag stage `RESULT=OK script=0 enforce=1`, KernelSU loaded; the run's `profile.json` decodes through the native mapper. The device gate also found one real defect, now fixed: the 5.10 assets state the waiter shape through the branch's `compact_waiter`, which the transport must carry into `kernel.struct.waiter.shape`. |
+| Device gate | **All three rigs on build 875, fresh boot, run store `completed`**: diting 5.10.236 (W1-only + DirtyFrag stage `RESULT=OK script=0 enforce=1`, KernelSU loaded), POCO 6.1.138 (`compact=1` from the BTF layout, select native, `KernelSU ready`), OnePlus 6.6.66 (`compact=0` node shape, four clean route calls, `KernelSU ready`). The run's `profile.json` decodes through the native mapper, and the native's `--load-prebuilt-profile` refusals were run on the diting: unknown key (named path), truncated JSON, the old GLK1 bytes, and a release mismatch all exit 255 with one message and no crash. The gate found one real defect, now fixed: the 5.10 assets state the waiter shape through the branch's `compact_waiter`, which the transport must carry into `kernel.struct.waiter.shape`. |
 
 Remaining (the authored-shape migration, slices 1b–3 below): convert the 74
 assets and the store via the rewriter, rewrite `ProfileResolver` /
 `ProfileMerger` / `PerDevicePhys` / `Timer98260` / `ProfileDocument` for the
 new shape, migrate the controller/repository/UI candidate model, update the
-Rust extractor's `--format conf` and the ship script, then the full device
-pass (POCO 6.1.138 and OnePlus 6.6.66 arms not yet run).
+Rust extractor's `--format conf` and the ship script, then the remaining device
+arms (Shizuku transport; the authored-shape import path).
 
 
 **Scope:** the authored HOCON profile (bearer of `schema_version = 3`), its two renderers (the Rust
