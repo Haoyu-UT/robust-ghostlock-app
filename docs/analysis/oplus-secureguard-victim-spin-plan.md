@@ -193,6 +193,13 @@ arm verified it. The spin is neutral where no guard exists; the evasion itself s
 reporter's Neo7. Record:
 `external/port/oplus-secureguard-2026-11-22/device/README.md`.
 
+**More devices (same day, builds 835 vs the parent 832).** The POCO X6 Pro (`duchamp`, 6.1.138)
+runs the GhostLock/select chain 3/3 with the spin armed and W2 `child uid = 0` on attempt 1
+(baseline 4/4, no spin line; 62–85 s both arms). The OnePlus 13s (`CPH2723`, 6.6.66) runs its
+DirtyFrag pipeline 3/3 in both arms (`RESULT=OK script=0 enforce=1`); the spin is not on that
+path, so the check is that the build still carries the chain. Both are guard-less rigs — the
+regression result, not the evasion.
+
 ## QEMU verification — the rule itself (2026-11-23)
 
 The exploit cannot complete under QEMU (its copy→walk race and TCG's timing), but the guard's
