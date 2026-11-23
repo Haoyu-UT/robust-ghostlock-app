@@ -384,7 +384,7 @@ namespace ghostlock::attack {
              * here, and the caller restores enforcing afterwards. */
             "magisk_handoff() {\n"
             "  mg_m=\"${MAGISKTMP:-/debug_ramdisk}\"\n"
-            "  echo \"[*] magisk: bin=$MAGISK_BIN tmp=$mg_m module=${MODULE_PATH:-none}\" >>\"$LOG\"\n"
+            "  echo \"[*] magisk: bin=$MAGISK_BIN tmp=$mg_m script_module=${MODULE_PATH:-none}\" >>\"$LOG\"\n"
             "  mkdir -p \"$mg_m\" /data/adb/magisk /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d 2>>\"$LOG\"\n"
             "  if ! grep -q \" $mg_m \" /proc/mounts 2>/dev/null; then\n"
             "    mount -t tmpfs -o mode=0755 tmpfs \"$mg_m\" 2>>\"$LOG\" || \\\n"

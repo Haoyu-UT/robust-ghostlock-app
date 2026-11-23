@@ -615,6 +615,35 @@ namespace ghostlock::session {
             }
         }
 
+        /* The module pipeline's handoff is Magisk, not KernelSU: report it as
+         * its own verdict line so the run log names the daemon, the policy
+         * phase and the delivered target the way the KSU path names its
+         * late-load. It is printed even when the init shell never connected,
+         * so a handoff that did not happen is named as such. The final
+         * enforce state still comes from RESULT. */
+        if (!no_script && config::runtime_config_snapshot().handoff == "magisk") {
+            dirtyfrag_verdict::MagiskSummary magisk{};
+            const bool reported = shell_uid0 &&
+                dirtyfrag_verdict::parse_magisk_summary(script_output, &magisk);
+            const char *reason = !shell_uid0
+                                     ? "no-shell"
+                                     : (!reported ? "no-summary"
+                                                  : (magisk.ready() ? "ok" : "magiskd-none"));
+            const auto &runtime = config::runtime_config_snapshot();
+            std::printf(
+                "dirtyfrag: T+%lldms MAGISK-HANDOFF %s reason=%s magiskd=%s policy=%s "
+                "policy_rc=%s enforce=%s bin=%s module=%s\n",
+                static_cast<long long>(stage_ms()),
+                magisk.ready() ? "ok" : "fail",
+                reason,
+                reported ? magisk.magiskd.c_str() : "none",
+                reported ? magisk.policy.c_str() : "none",
+                reported ? magisk.policy_rc.c_str() : "none",
+                reported ? magisk.enforce.c_str() : "unknown",
+                runtime.magisk_bin.c_str(),
+                plan.vendor_lib.empty() ? "none" : plan.vendor_lib.c_str());
+        }
+
         /* Probe after the script, whatever its verdict: a run whose root phase
          * left SELinux permissive is not success, and the RESULT line has to
          * carry the state the device keeps. */

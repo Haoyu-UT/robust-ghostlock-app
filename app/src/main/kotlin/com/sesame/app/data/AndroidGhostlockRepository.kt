@@ -1406,7 +1406,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     /**
      * The module chain's staged manager: the root script installs Magisk from
      * this directory. Only the profile-driven pair supplies it — there is no
-     * marker file, so a W1 run never inherits a Magisk handoff.
+     * marker file, so a W1 run never inherits a Magisk handoff. The module
+     * itself is loaded by the init stub, not by the script, so no module path
+     * is exported here (the stage reports the delivered target from its plan).
      */
     private fun handoffEnv(magiskBin: File?): Map<String, String> =
         if (magiskBin == null) {
@@ -1438,6 +1440,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         mode: String,
         onLog: (String) -> Unit,
         magiskBin: File? = null,
+        /** Per-run root-script log; absent keeps the legacy shared file. */
+        ksuLog: File? = null,
     ): Int {
         val binary = File(appContext.applicationInfo.nativeLibraryDir, NativeBinaryName)
         val command = ProcessBuilder(
@@ -1453,6 +1457,13 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 environment()["GHOSTLOCK_HOME"] = filesDir.absolutePath
                 environment()["TMPDIR"] = filesDir.absolutePath
                 environment()["HOME"] = filesDir.absolutePath
+                /* The root script and its tail must be this stage's own; the
+                 * shared default file let a failed run show a previous run's
+                 * script lines (the same-named file is appended by every
+                 * DirtyFrag stage). */
+                if (ksuLog != null) {
+                    environment()["GHOSTLOCK_KSU_LOG"] = ksuLog.absolutePath
+                }
                 environment().putAll(handoffEnv(magiskBin))
             }
         val code = runProcess(command, onLog = onLog, captureOutput = true, timeoutSeconds = 120L)
@@ -1487,6 +1498,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         debugDir: String?,
         run: ModuleRun? = null,
     ): Int {
+        /* One log per stage run: the script appends, so a shared file made a
+         * failed run read as if it had a root phase (the previous run's
+         * lines were still in it). */
+        val stageKsuLog = File(filesDir, ksuLogName(System.currentTimeMillis()))
         val ipsec = appContext.getSystemService(Context.IPSEC_SERVICE) as? IpSecManager
             ?: run {
                 onLog("<-> second way: IpSecManager unavailable")
@@ -1543,7 +1558,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     auxHost = File(crashDumpPath),
                     auxHelper = helper,
                 )
-                val installCode = runStage(installPlan, "aux-install", onLog, run.magiskBin)
+                val installCode =
+                    runStage(installPlan, "aux-install", onLog, run.magiskBin, stageKsuLog)
                 onLog("<k> second way: bridge install code=$installCode")
                 if (installCode != 0) return 1
             }
@@ -1598,7 +1614,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 else -> "full"
             }
             onLog("<k> second way: mode=$dirtyfragMode")
-            return runStage(plan, dirtyfragMode, onLog, run?.magiskBin)
+            return runStage(plan, dirtyfragMode, onLog, run?.magiskBin, stageKsuLog)
         } finally {
             runCatching { transform.close() }
             runCatching { spiObj.close() }
