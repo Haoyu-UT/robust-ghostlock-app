@@ -192,3 +192,23 @@ end-to-end 7.2–8.4 s against the 8.0–8.7 s baseline. **Sigreturn A/B (same 5
 arm verified it. The spin is neutral where no guard exists; the evasion itself still needs the
 reporter's Neo7. Record:
 `external/port/oplus-secureguard-2026-11-22/device/README.md`.
+
+## QEMU verification — the rule itself (2026-11-23)
+
+The exploit cannot complete under QEMU (its copy→walk race and TCG's timing), but the guard's
+decision does not depend on it: it compares one task's creds at `sys_enter` and `sys_exit`. A bench
+module performs the W2 store (`task+0x838` ← `init_cred`) on a chosen task, and the guest runs
+three arms against the device's own `oplus_secure_guard.ko` on the exact Image:
+
+| arm | guard on | guard off |
+|---|---|---|
+| control: blocked in `read()`, no write | survives, uid 2000; snapshot armed (`sg_flag=1 sg_scno=63 sg_uid=2000`) | survives, uid 2000; block zero |
+| blocked in `read()`, write while blocked | **killed**: `oplus_root_killed, pid=117, uid = 0` (`sig=9`) | survives, uid 0 |
+| spinning in user space, write, no syscall in flight | **survives, uid 0** | survives, uid 0 |
+
+The blocked arm reproduces the sixth report; the spin arm confirms the short-circuit: the next
+syscall enters with `saved.uid == 0` and the post handler bails. One labelled accommodation: the
+guard keeps its snapshot in the MTK "ux" scheduler's `oplus_task_struct` (`task+0xdd8`), whose
+allocator is a module the guest does not load, so the bench installs a zeroed block; the guard
+reads only the six `sg_*` words in it. This settles the kernel-side rule and the spin's mechanism;
+the reporter's device still decides the exploit's own W2 delivery and the ROM's other hooks.
