@@ -78,6 +78,12 @@
     <string name="dirtyfrag_off_label">关（仅 GhostLock）</string>
     <string name="timer_reboot_first_title">请先重启</string>
     <string name="timer_reboot_first_message">本次开机已运行过一次定时器路线。请重启后再试——在此之前暂停的工具仍持有伪造凭据页。</string>
+    <string name="timer_shizuku_missing_title">需要 Shizuku</string>
+    <string name="timer_shizuku_missing_message">定时器路线通过 Shizuku 运行。请安装 Shizuku 并启动其服务后重试。</string>
+    <string name="timer_shizuku_not_running_title">请启动 Shizuku</string>
+    <string name="timer_shizuku_not_running_message">Shizuku 已安装但未运行。请在 Shizuku 应用中启动后重试。</string>
+    <string name="timer_shizuku_permission_title">请授予 Shizuku 权限</string>
+    <string name="timer_shizuku_permission_message">请在 Shizuku 应用中允许本应用后重试。</string>
     <string name="parse_lock_title">锁来源 — 请选择</string>
     <string name="parse_lock_page">页面 — 锁在回收页中；不会选错内核对象，成功率较低</string>
     <string name="parse_lock_anchor">锚点 — 使用镜像中的零 .bss 区域；区域正确时成功率更高，选错会破坏内核数据</string>

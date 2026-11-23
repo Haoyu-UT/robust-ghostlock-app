@@ -1385,6 +1385,11 @@ class GhostlockViewModel(
      * attempt on the same boot. There is no separate consent dialog (operator
      * decision, 2026-11-22): the picker already names the timer route, and the
      * reboot-bound risks are logged at the start of the run.
+     *
+     * A missing Shizuku is *not* auto-opened: switching to the Shizuku app
+     * would take the foreground and hide the explanation. The refusal is a
+     * notice that names the missing step (install / start / grant), with the
+     * project link when the app is not installed at all.
      */
     private fun onRunTimer() {
         val snapshot = kernelSnapshot ?: return
@@ -1403,10 +1408,25 @@ class GhostlockViewModel(
         }
         if (shizuku != ShizukuStatus.READY) {
             appendLog("<s> Shizuku is required for the timer route")
-            when (shizuku) {
-                ShizukuStatus.NOT_RUNNING -> send(GhostlockEffect.OpenShizuku)
-                ShizukuStatus.PERMISSION_REQUIRED -> repository.requestShizukuPermission()
-                else -> Unit
+            val installed = runCatching { repository.shizukuInstalled() }.getOrDefault(false)
+            when (timerShizukuBlocker(shizuku, installed)) {
+                TimerShizukuBlocker.MISSING -> showTimerBlocker(
+                    titleRes = R.string.timer_shizuku_missing_title,
+                    messageRes = R.string.timer_shizuku_missing_message,
+                    docUrl = SHIZUKU_URL,
+                )
+
+                TimerShizukuBlocker.NOT_RUNNING -> showTimerBlocker(
+                    titleRes = R.string.timer_shizuku_not_running_title,
+                    messageRes = R.string.timer_shizuku_not_running_message,
+                )
+
+                TimerShizukuBlocker.PERMISSION -> showTimerBlocker(
+                    titleRes = R.string.timer_shizuku_permission_title,
+                    messageRes = R.string.timer_shizuku_permission_message,
+                )
+
+                null -> Unit
             }
             return
         }
@@ -1425,6 +1445,21 @@ class GhostlockViewModel(
             return
         }
         runTimerNow()
+    }
+
+    /** The timer refusal notice — the start path's only dialog. */
+    private fun showTimerBlocker(titleRes: Int, messageRes: Int, docUrl: String? = null) {
+        mutableState.update {
+            it.copy(
+                overlay = it.overlay.copy(
+                    dialog = AppDialog.Notice(
+                        titleRes = titleRes,
+                        messageRes = messageRes,
+                        docUrl = docUrl,
+                    ),
+                ),
+            )
+        }
     }
 
     /** The timer run, with the same operation/status plumbing as the native run. */

@@ -78,6 +78,12 @@
     <string name="dirtyfrag_off_label">Off (GhostLock only)</string>
     <string name="timer_reboot_first_title">Reboot first</string>
     <string name="timer_reboot_first_message">A timer attempt already ran on this boot. Reboot before trying again — the parked tool holds a fake credential page until then.</string>
+    <string name="timer_shizuku_missing_title">Shizuku is required</string>
+    <string name="timer_shizuku_missing_message">This timer route runs through Shizuku. Install Shizuku and start its service, then run again.</string>
+    <string name="timer_shizuku_not_running_title">Start Shizuku</string>
+    <string name="timer_shizuku_not_running_message">Shizuku is installed but not running. Start it from the Shizuku app, then run again.</string>
+    <string name="timer_shizuku_permission_title">Grant Shizuku access</string>
+    <string name="timer_shizuku_permission_message">Open the Shizuku app and allow this app, then run again.</string>
     <string name="parse_lock_title">Lock source — choose one</string>
     <string name="parse_lock_page">Page — the lock lives in the reclaimed payload page; it cannot pick a wrong kernel object, lower success rate</string>
     <string name="parse_lock_anchor">Anchor — use the image\'s zeroed .bss region; higher success if the region is correct, a wrong region can corrupt kernel data</string>
