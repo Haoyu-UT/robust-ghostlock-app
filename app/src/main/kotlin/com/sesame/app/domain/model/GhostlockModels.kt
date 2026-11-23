@@ -1,6 +1,7 @@
 package com.sesame.app.domain.model
 
 import com.sesame.app.data.OptionSuperset
+import com.sesame.app.data.profile.ModuleConfig
 import java.util.Locale
 
 data class CpuPair(val primary: Int, val consumer: Int) {
@@ -34,8 +35,6 @@ data class KernelSnapshot(
     val safeModeEnabled: Boolean,
     /** Skip the pre-attack KernelSU check and run the exploit as a test. */
     val forceAttackTest: Boolean = false,
-    /** Second way: stop after W1 and run the DirtyFrag page-cache stage. */
-    val secondWay: Boolean = false,
     /** Clear the vendor vr.ko task tags before W2; Auto follows the probe/version recommendation. */
     val vrKoTagClear: VrKoMode = VrKoMode.AUTO,
     /** Block the vr.ko SELinux 0/1 enforce write; Auto targets the 5.10.198 class only. */
@@ -328,6 +327,8 @@ data class ProfileConfig(
     val dirtyFragOn: Boolean = false,
     /** The profile's ordered pipeline preference; empty = legacy ghostlock. */
     val pipelineOrder: List<String> = emptyList(),
+    /** The module chain's pair manifest, when the pipeline selects `module`. */
+    val module: ModuleConfig? = null,
     /** Dotted paths whose resolved value violates the geometry rules. */
     val invalidPaths: Set<String> = emptySet(),
 ) {

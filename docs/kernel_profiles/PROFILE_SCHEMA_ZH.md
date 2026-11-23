@@ -75,10 +75,28 @@ offset { init_task = 34464384, init_cred = 34538824 }
 | `release` | string | 必须与设备 `uname -r` 完全一致（区分大小写/后缀）；模板文件不参与匹配 |
 | `schema_version` | int | 必须为 `3`；其它值（或缺省）一律拒绝。物理字段可为按设备映射（首选）、全设备标量或 `null`（native 默认） |
 | `kernel_major` | int | `5` 或 `6`；用于地址解析与合法性检查，不再决定路由 |
-| `route` | object | 显式路由父项，只含一个分支，见第 3 节 |
+| `pipeline` | list | 可选的有序执行链列表：`ghostlock`、`dirtyfrag`、`module`；缺省等价于 `[ "ghostlock" ]`，见下文 *执行链选择* |
+| `route` | object | 显式路由父项，可含一个或多个分支；应用的选择器显示所有可行路由；见第 3 节 |
+| `routes` | list | 遗留且忽略：应用没有路由顺序，按名称顺序显示可行路由；见第 3 节 |
 | `fallback` | object | 回退声明（`to` + 可选 `route` 分支），见第 3 节 |
-| 几何字段 | object/int | 按命名空间分组：`task_struct` / `cred` / `offset` / `kernelsnitch`；当前路由的全字段与公共几何**必须全部出现**，无法提供的值写显式 `null`（不要用 `0` 占位）；非当前路由的分支省略 |
+| 几何字段 | object/int | 按命名空间分组：`task_struct` / `cred` / `offset` / `kernelsnitch`。未使用的路由专属字段直接省略——不要写 `0` 或占位符；`null` 仅出现在模板和编辑过程中 |
 | `execution` | object | 调优参数（advisory）；通用项来自 `execution-tuning.conf`，路由项来自 `execution-<route>.conf`；两者由 resolver 作为 preset 加载，设备 profile 不 include。只写差异 |
+| `timer_98260` | object | 可选的定时器路由能力块（第 4.9 节）；缺省 = 仅原生 profile |
+| `module` | object | 模块执行链的配对清单（第 4.10 节）；必须与 `pipeline` 中的 `module` 条目同时出现 |
+
+### 执行链选择（`pipeline`）
+
+`pipeline` 可选；缺少时等价于旧的默认值 `[ "ghostlock" ]`。它是一个有序链名列表：resolver 在任何阶段
+开始前按顺序选择第一个可行的条目。合法取值：`ghostlock`、`dirtyfrag`、`module`。
+
+`module` 是仅随内置包提供的链（无 W1 的 DirtyFrag，用每内核模块切换 SELinux，Magisk 作为用户态管理器）。
+提取器从不生成它：只有与手编模块同版本一起随包提供的内置 profile 才能使用它，并由 `module` 块
+（第 4.10 节）声明；外部导入的 profile 声明该值会被拒绝。该条目与块互为前提：只有其一都会被拒绝。
+
+必填项按执行链区分：`release`、`schema_version`、`kernel_major` 始终必填；`route`、`task_struct`、
+`cred`、`offset` 仅在列表包含需要 W1 的条目（`ghostlock` 或 `dirtyfrag`，包括旧默认值）时必填；
+`[ "module" ]` 可以完全省略它们。若给出了 `route`，仍按第 3 节校验。KDP 镜像（`kdp = 1`）的顺序
+必须是严格的 `[ "dirtyfrag" ]` 或 `[ "module" ]`。
 
 ## 3. 路由（route）机制
 
@@ -312,6 +330,48 @@ app 把合并并通过校验的 profile 渲染为规范的后端文档（`Profil
 `release`/`schema_version`/`kernel_major`、`kernel` 块（共享几何）、`native` 块
 （route/fallback/pipeline/execution）以及本块。定时器工具只读 `release` 与 `timer_98260` 并
 自行复核不变量；本版本中原生仍使用二进制 wire。文档中的 64 位值一律写成 `"0x..."` 字符串。
+
+### 4.10 模块链的配对清单（`module`）
+
+模块链（无 W1 的 DirtyFrag、每内核模块切换 SELinux、Magisk 作为用户态管理器）的可选顶层块。
+它是 Kotlin 侧的块：原生利用从不读取它，原生 wire 也从不携带它（同一 profile 带与不带此块生成的
+原生文档字节一致）。它是仅随内置包提供的配对的唯一声明——内置 profile 与它命名的、手工构建并
+一起验证的 `.ko`——不存在单独的资产索引。
+
+块与 `pipeline` 条目互为前提：`pipeline = [ "module" ]` 要求该块；没有条目的块会因无意义而被拒绝。
+
+```hocon
+module {
+  version = 1
+  asset = "modules/5.10.236-android12-9-00003-gfb24cf99ad97-ab14313284.ko"
+  asset_sha256 = "…"                       # 64 个十六进制字符
+  vendor_files = [                         # 可选；缺省 = 内置探测列表
+    "/vendor/lib64/libbinderdebug.so",
+    "/vendor/lib64/libstagefrighthw.so",
+    "/vendor/lib64/libstagefright_aidl_bufferpool2.so",
+  ]
+}
+```
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `version` | int | 恒为 `1`；块的演进不改变 `schema_version` |
+| `asset` | string | 内置工件，相对于 `assets/`：`modules/<name>.ko`；不允许绝对路径、`..` 或空路径段 |
+| `asset_sha256` | string | 64 个十六进制字符；哈希不符的工件会被拒绝 |
+| `vendor_files` | list | 可选的有序 `vendor_file` 投递目标；缺省 = 应用内置列表。使用第一个存在、可通过 bridge 读取且容纳模块的路径。每项为绝对 `/vendor/…` 路径，短于 stub 的 64 字节目标字段（63 字节 + NUL）；显式空列表会报错 |
+
+规则：未知键报错；`version`、`asset`、`asset_sha256` 必填；有 `module` 条目而无块、有块而无条目，
+都会被拒绝。
+
+镜像的模块 ABI（vermagic、`sizeof(struct module)`、`module_layout` CRC）刻意不作为 profile 键：
+构建关卡固定了镜像的精确配置，加载器强制 ABI（错误的 magic 半段或 CRC 会干净地返回 `ENOEXEC`），
+而 `asset_sha256` 绑定了确切工件。唯一不干净的加载结果——`struct module` 过小——由“使用镜像精确
+配置构建”在编写阶段避免；应用读不到运行内核的 ABI（5.10 无 BTF，也无法读取配置），因此 profile
+里的副本无法与之核对。
+
+应用在任何投递之前解析配对：打开 `assets/<asset>` 并校验哈希，然后探测选择 `vendor_files` 目标。
+该块会渲染进规范后端文档（`ProfileDocument`），以便往返保留；外部导入的 profile 仍不能启用该链
+（仅限内置包）。
 
 ## 5. execution 调优参数（advisory）
 

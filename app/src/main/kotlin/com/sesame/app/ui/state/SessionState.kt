@@ -1,6 +1,7 @@
 package com.sesame.app.ui.state
 
 import androidx.compose.runtime.Stable
+import com.sesame.app.data.profile.ModuleConfig
 import com.sesame.app.domain.model.CpuPair
 import com.sesame.app.domain.model.MeasuredKernelInfo
 import com.sesame.app.domain.model.MeasurementMergeRow
@@ -61,6 +62,16 @@ data class SessionState(
         val dirtyFragOn: Boolean = false,
         /** The profile's ordered pipeline (the DirtyFrag list's capability source). */
         val pipelineOrder: List<String> = emptyList(),
+        /**
+         * The module chain's pair manifest, when `pipeline` selects `module`.
+         * The chain has no route to pick, so the home and the parameters screen
+         * present this block instead of a route line.
+         */
+        val module: ModuleConfig? = null,
+        /** The bundled `.ko` opens and matches its `asset_sha256`. */
+        val moduleAssetVerified: Boolean = false,
+        /** Installed Magisk manager package; null = the chain cannot run. */
+        val magiskManager: String? = null,
     )
 
     /** Privileged-access facts: the Shizuku switch and the chosen root manager. */

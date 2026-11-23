@@ -81,6 +81,14 @@ object ProfileExporter {
             if (errors.isNotEmpty()) {
                 error("$file fails validation: ${errors.joinToString()}")
             }
+            /* A module-only profile has no native wire: the DirtyFrag stage is
+             * invoked with its plan, not a profile document. A mixed list keeps
+             * the W1 fallback's wire. */
+            val order = ProfileResolver.pipelineOrder(merged)
+            if ("module" in order && !ProfileResolver.requiresW1(order)) {
+                println("exportKernelProfiles: $actualRelease (module-only; no native wire)")
+                continue
+            }
             val bytes = NativeProfileDocument.from(
                 release = actualRelease,
                 route = RouteKind.fromToken(route)?.token,

@@ -27,6 +27,15 @@ class ExporterAgreementTest {
     private val context: Application = RuntimeEnvironment.getApplication()
     private val pair = CpuPair(primary = 0, consumer = 1)
 
+    private fun isModuleOnly(file: String): Boolean {
+        val document = HoconSupport.parseValue(
+            AssetConfigLoader(context).load("kernel_profiles/$file"),
+        ).asValueMap() ?: return false
+        val order = com.sesame.app.data.profile.ProfileResolver.pipelineOrder(document)
+        return "module" in order &&
+            !com.sesame.app.data.profile.ProfileResolver.requiresW1(order)
+    }
+
     @Test
     fun `exporter output matches the app native documents`() = runBlocking {
         val exporterDir = File("../build/kernel-profiles")
@@ -40,8 +49,15 @@ class ExporterAgreementTest {
         ).asValueMap() ?: error("index.conf is not an object")
         val expected = index["profiles"].asValueList().orEmpty()
             .mapNotNull { it.asValueMap() }
-            .mapNotNull { it["release"] as? String }
-            .filterNot { it.endsWith("-template") }
+            .mapNotNull { entry ->
+                val release = entry["release"] as? String ?: return@mapNotNull null
+                val file = entry["file"] as? String ?: return@mapNotNull null
+                release to file
+            }
+            .filterNot { it.first.endsWith("-template") }
+            /* The exporter writes no native wire for a module-only profile. */
+            .filterNot { (_, file) -> isModuleOnly(file) }
+            .map { it.first }
             .toSortedSet()
         val actual = exporterDir.listFiles { file -> file.isFile && file.name.endsWith(".bin") }
             .orEmpty().map { it.name.removeSuffix(".bin") }.toSortedSet()

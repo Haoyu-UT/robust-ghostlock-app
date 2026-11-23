@@ -7,6 +7,8 @@ package com.sesame.app.data.profile
  *
  * The app hands this document to a backend; each backend reads its block. The
  * timer tool reads `release` and `timer_98260` and ignores `kernel`/`native`.
+ * The `module` block is the app's own pair manifest: no external backend reads
+ * it, but it is rendered so a round-trip preserves it.
  * The native exploit keeps its typed binary wire in W2 (`NativeProfileDocument`
  * is its own encoding of the same merged map); migrating the native to this
  * document is a separate, versioned workstream.
@@ -30,6 +32,9 @@ object ProfileDocument {
     /** The timer route's capability block. */
     private val TimerKey = Timer98260.BLOCK_KEY
 
+    /** The module chain's pair manifest (read by the app, not a native backend). */
+    private val ModuleKey = ModuleBlock.BLOCK_KEY
+
     private const val MAX_EXACT = 1L shl 53
 
     fun render(merged: Map<String, Any?>): String {
@@ -44,6 +49,7 @@ object ProfileDocument {
             "kernel" to kernel,
             "native" to native,
             TimerKey to merged[TimerKey],
+            ModuleKey to merged[ModuleKey],
         )
         val out = StringBuilder()
         writeValue(out, document, 0)

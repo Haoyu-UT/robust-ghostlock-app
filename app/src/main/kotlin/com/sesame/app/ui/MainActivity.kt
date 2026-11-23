@@ -83,11 +83,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         viewModel.initialize()
         handleSendIntent(intent)
-        /* Debug-only test hook: `am start --ez second_way true` turns the second
-         * way on and persists it, so a harness restart keeps the setting. */
-        if (BuildConfig.DEBUG && intent?.hasExtra("second_way") == true) {
-            viewModel.toggleSecondWay(intent.getBooleanExtra("second_way", false))
-        }
         /* Debug-only: `am start --ez probe_check true` runs the DirtyFrag
          * viability probe without an attack and records a clear result. */
         if (BuildConfig.DEBUG && intent?.hasExtra("probe_check") == true) {
@@ -101,11 +96,6 @@ class MainActivity : ComponentActivity() {
          * preflight (the stage's cave/hook analysis) without an attack. */
         if (BuildConfig.DEBUG && intent?.hasExtra("preflight_check") == true) {
             viewModel.runDirtyfragPreflightCheck()
-        }
-        /* Debug-only: `am start --ez fallback_test true` arms the one-shot
-         * pre-W1 fallback gate (two-entry order + a forced DirtyFrag failure). */
-        if (BuildConfig.DEBUG && intent?.hasExtra("fallback_test") == true) {
-            viewModel.setFallbackTest(intent.getBooleanExtra("fallback_test", false))
         }
         /* Debug-only: `am start --ez timer_test true` delivers the timer tool
          * over Shizuku and runs its safe `probe` mode (no root, no reboot). */

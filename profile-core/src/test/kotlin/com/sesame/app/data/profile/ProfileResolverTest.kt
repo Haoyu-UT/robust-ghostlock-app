@@ -3,10 +3,23 @@ package com.sesame.app.data.profile
 import com.sesame.app.data.asValueMap
 import com.sesame.app.data.valueMapOf
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProfileResolverTest {
+    private val moduleRelease = "5.4.233-qgki-gbb70cde46897"
+
+    private fun moduleBlock(
+        release: String = moduleRelease,
+        overrides: Map<String, Any?> = emptyMap(),
+    ): Map<String, Any?> = valueMapOf(
+        "version" to 1L,
+        "asset" to "modules/$release.ko",
+        "asset_sha256" to "a".repeat(64),
+        "vendor_files" to listOf("/vendor/lib64/libbinderdebug.so"),
+    ) + overrides
+
     @Test
     fun `a KDP profile requires the strict dirtyfrag order`() {
         fun pipelineErrors(profile: Map<String, Any?>) =
@@ -23,6 +36,7 @@ class ProfileResolverTest {
         )
         assertTrue(pipelineErrors(valueMapOf("kdp" to 1L)).isNotEmpty())
         assertTrue(pipelineErrors(valueMapOf("kdp" to 1L, "pipeline" to listOf("DIRTYFRAG"))).isEmpty())
+        assertTrue(pipelineErrors(valueMapOf("kdp" to 1L, "pipeline" to listOf("module"))).isEmpty())
         assertTrue(pipelineErrors(valueMapOf("kdp" to 0L, "pipeline" to listOf("ghostlock"))).isEmpty())
         assertTrue(pipelineErrors(valueMapOf("pipeline" to listOf("ghostlock"))).isEmpty())
         assertTrue(pipelineErrors(valueMapOf("pipeline" to listOf("bogus"))).isNotEmpty())
@@ -72,6 +86,89 @@ class ProfileResolverTest {
             ),
         )
         assertEquals(emptyList<String>(), RouteCarriers.of(valueMapOf(), "select_stack"))
+    }
+
+    @Test
+    fun `a bundled module profile needs no route or w1 geometry`() {
+        val profile = valueMapOf(
+            "release" to moduleRelease,
+            "schema_version" to 3,
+            "kernel_major" to 5,
+            "pipeline" to listOf("module"),
+            "module" to moduleBlock(),
+        )
+        assertEquals(emptyList<Any>(), ProfileResolver.validateMerged(profile, null, null))
+    }
+
+    @Test
+    fun `the module entry and the block imply each other`() {
+        fun fields(profile: Map<String, Any?>) =
+            ProfileResolver.validateMerged(profile, null, null).map { it.fieldPath }
+
+        val entryOnly = valueMapOf(
+            "release" to moduleRelease,
+            "schema_version" to 3,
+            "kernel_major" to 5,
+            "pipeline" to listOf("module"),
+        )
+        assertTrue("module" in fields(entryOnly))
+
+        val blockOnly = valueMapOf(
+            "release" to moduleRelease,
+            "schema_version" to 3,
+            "kernel_major" to 5,
+            "module" to moduleBlock(),
+        )
+        assertTrue("pipeline" in fields(blockOnly))
+
+        val nullBlock = valueMapOf(
+            "release" to moduleRelease,
+            "schema_version" to 3,
+            "kernel_major" to 5,
+            "pipeline" to listOf("module"),
+            "module" to null,
+        )
+        assertTrue("module" in fields(nullBlock))
+    }
+
+    @Test
+    fun `a w1 chain in the list keeps the w1 requirements`() {
+        val profile = valueMapOf(
+            "release" to "test",
+            "schema_version" to 3,
+            "kernel_major" to 6,
+            "pipeline" to listOf("module", "ghostlock"),
+            "module" to moduleBlock(release = "test"),
+        )
+        val fields = ProfileResolver.validateMerged(profile, null, null)
+            .map { it.fieldPath }.toSet()
+        for (required in listOf("route", "task_struct", "cred", "offset")) {
+            assertTrue("missing $required", required in fields)
+        }
+    }
+
+    @Test
+    fun `the legacy default still requires w1`() {
+        val profile = valueMapOf(
+            "release" to "test",
+            "schema_version" to 3,
+            "kernel_major" to 6,
+        )
+        val fields = ProfileResolver.validateMerged(profile, null, null)
+            .map { it.fieldPath }.toSet()
+        assertTrue("route" in fields)
+        assertTrue("task_struct" in fields)
+    }
+
+    @Test
+    fun `pipeline helpers read the order and the w1 need`() {
+        assertEquals(
+            listOf("module"),
+            ProfileResolver.pipelineOrder(valueMapOf("pipeline" to listOf("MODULE"))),
+        )
+        assertFalse(ProfileResolver.requiresW1(listOf("module")))
+        assertTrue(ProfileResolver.requiresW1(listOf("module", "ghostlock")))
+        assertTrue(ProfileResolver.requiresW1(emptyList()))
     }
 
     @Test
