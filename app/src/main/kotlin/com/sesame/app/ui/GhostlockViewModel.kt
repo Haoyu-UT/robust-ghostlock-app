@@ -1342,16 +1342,6 @@ class GhostlockViewModel(
         ) }
     }
 
-    /** Debug-only lab hook (`am start --ez second_way …`); no UI. */
-    fun toggleSecondWay(enabled: Boolean) {
-        repository.setSecondWay(enabled)
-    }
-
-    /** Debug-only: arm the one-shot pre-W1 fallback gate for the next run. */
-    fun setFallbackTest(enabled: Boolean) {
-        repository.setFallbackTest(enabled)
-    }
-
     fun setVrKoTagClear(mode: VrKoMode) {
         repository.setVrKoTagClear(mode)
         mutableState.update { it.copy(

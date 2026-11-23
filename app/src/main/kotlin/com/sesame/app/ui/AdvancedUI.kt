@@ -181,9 +181,8 @@ internal fun AdvancedScreen(
                     )
                 }
             }
-            /* The profile's `pipeline` is the only product selector; the
-             * debug-only `second_way` intent remains a lab hook for the
-             * harness and has no UI (see profile-pipeline-selection-plan). */
+            /* The profile's `pipeline` is the only selector; there is no UI
+             * override and no debug intent that changes the order. */
             item(key = "rootManager") {
                 Card {
                     ArrowPreference(
