@@ -61,7 +61,7 @@ object ProfileTransport {
             "mode" to pipeline,
             "safe_mode" to safeMode,
             "devices" to devices(resolved, deviceId),
-            "kernel" to kernel(resolved, base),
+            "kernel" to kernel(resolved, base, branches[selected]),
             "ghostlock" to ghostlock(resolved, branches, selected, carrier),
             "timer" to timer(resolved, base),
         )
@@ -70,14 +70,29 @@ object ProfileTransport {
 
     // ---- kernel -----------------------------------------------------------
 
-    private fun kernel(resolved: Map<String, Any?>, base: ULong?): Map<String, Any?> {
+    private fun kernel(
+        resolved: Map<String, Any?>,
+        base: ULong?,
+        selectedBranch: ValueMap?,
+    ): Map<String, Any?> {
         val timer = resolved[TimerKey].asValueMap()
         val layout = resolved["waiter_layout"].asValueMap()
-        val shape = when ((layout?.get("compact") as? Number)?.toLong()) {
+        /* One waiter-shape fact. The per-image layout states it when derived;
+         * the older 5.10 assets carry only the active branch's
+         * `compact_waiter`, which the wire used to read from the branch. */
+        val shapeValue = (layout?.get("compact") as? Number)?.toLong()
+            ?: (selectedBranch?.get("compact_waiter") as? Number)?.toLong()
+        val shape = when (shapeValue) {
             1L -> "compact"
             0L -> "node"
             else -> null
         }
+        /* task/lock are shared too; a branch that states them fills a layout
+         * the image did not derive (the template case). */
+        val taskOffset = (layout?.get("task") as? Number)?.toLong()
+            ?: (selectedBranch?.get("task_offset") as? Number)?.toLong()
+        val lockOffset = (layout?.get("lock") as? Number)?.toLong()
+            ?: (selectedBranch?.get("lock_offset") as? Number)?.toLong()
         val symbols = linkedMapOf<String, Any?>(
             "init_task" to hex(resolved.getLongAt("offset.init_task")),
             "init_cred" to hex(resolved.getLongAt("offset.init_cred")),
@@ -118,8 +133,8 @@ object ProfileTransport {
             "waiter" to mapOf(
                 "shape" to shape,
                 "pi_tree" to num(resolved, "waiter_layout.pi_tree"),
-                "task" to num(resolved, "waiter_layout.task"),
-                "lock" to num(resolved, "waiter_layout.lock"),
+                "task" to taskOffset,
+                "lock" to lockOffset,
                 "wake_state" to num(resolved, "waiter_layout.wake_state"),
             ),
             "rt_mutex" to mapOf("size" to num(resolved, "kernelsnitch.rt_mutex_size")),
