@@ -76,7 +76,6 @@ internal class AndroidProfileConfigController(
         DeviceIdentity.candidates(deviceCodename, deviceAliases)
 
     override suspend fun load(release: String): ProfileConfig {
-        migrateLegacyExternalSelection(release)
         val resolution = resolve(release)
         val full = resolution.profile
         if (full == null) {
@@ -143,7 +142,6 @@ internal class AndroidProfileConfigController(
             roots = roots,
             general = generalFields(full, baseline, route),
             route = route,
-            fallbackTo = null,
             routeCandidates = candidates,
             selectedRoute = chosen,
             carrierCandidates = carrierCandidates,
@@ -478,35 +476,6 @@ internal class AndroidProfileConfigController(
     override fun importedProfileExists(): Boolean = externalProfiles.importedProfileExists()
 
     /**
-     * Moves the pre-import-copy selection (`external_profile_*` preferences)
-     * into the app-private copy once. A readable URI for the running release
-     * is copied; the old keys are deleted either way. When a copy already
-     * exists it wins and the keys are deleted without a read (the crash window
-     * between the copy write and the key delete).
-     */
-    override fun migrateLegacyExternalSelection(deviceRelease: String) {
-        if (!LegacyExternalKeys.any(preferences::contains)) return
-        if (!externalProfiles.importedProfileExists()) {
-            val uri = preferences.getString(PrefExternalUri, null)?.takeIf { it.isNotEmpty() }
-            if (uri != null) {
-                val text = externalProfiles.read(uri)
-                if (text != null &&
-                    ProfileDocumentParser.entryForRelease(
-                        text, deviceRelease, ::loadBundledInclude,
-                    ) != null
-                ) {
-                    externalProfiles.writeImportedProfile(text)
-                }
-            }
-        }
-        clearLegacyExternalPreferences()
-    }
-
-    private fun clearLegacyExternalPreferences() {
-        preferences.edit { LegacyExternalKeys.forEach { remove(it) } }
-    }
-
-    /**
      * Selects [uri] as the external profile for [deviceRelease]. Transactional:
      * the previous copy is restored when the candidate fails verification, so a
      * rejected import never becomes the selection. The selection wins over the
@@ -543,7 +512,6 @@ internal class AndroidProfileConfigController(
         if (!externalProfiles.writeImportedProfile(text)) {
             return ProfileImportResult.Rejected(listOf("the profile copy could not be written"))
         }
-        clearLegacyExternalPreferences()
         preferences.edit { remove(PrefBuiltinRelease) }
         forcedSelection = null
         val config = runCatching { load(deviceRelease) }.getOrNull()
@@ -586,7 +554,6 @@ internal class AndroidProfileConfigController(
 
     override suspend fun clearExternalProfile(deviceRelease: String): ProfileConfig {
         externalProfiles.clearImportedProfile()
-        clearLegacyExternalPreferences()
         forcedSelection = null
         return load(deviceRelease)
     }
@@ -596,7 +563,6 @@ internal class AndroidProfileConfigController(
         deviceRelease: String,
     ): ProfileConfig {
         externalProfiles.clearImportedProfile()
-        clearLegacyExternalPreferences()
         preferences.edit {
             if (release.isNullOrBlank()) remove(PrefBuiltinRelease)
             else putString(PrefBuiltinRelease, release)
@@ -1021,18 +987,6 @@ internal class AndroidProfileConfigController(
         private const val BuiltinDirectory = "kernel_profiles"
 
         const val PrefBuiltinRelease = "debug_builtin_release"
-        const val PrefExternalUri = "external_profile_uri"
-        const val PrefExternalName = "external_profile_name"
-        const val PrefExternalRelease = "external_profile_release"
-        const val PrefExternalSha256 = "external_profile_sha256"
-        const val PrefExternalParent = "external_profile_parent"
-        const val PrefExternalParentSha256 = "external_profile_parent_sha256"
-
-        /** Pre-import-copy selection keys; read only by the one-time migration. */
-        private val LegacyExternalKeys = listOf(
-            PrefExternalUri, PrefExternalName, PrefExternalRelease,
-            PrefExternalSha256, PrefExternalParent, PrefExternalParentSha256,
-        )
     }
 }
 

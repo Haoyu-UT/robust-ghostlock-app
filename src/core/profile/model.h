@@ -80,19 +80,19 @@ namespace ghostlock::profile {
         return kRouteAuto;
     }
 
-    /* Wire v2 model objects, one per transport section. Signedness/width mirror
-     * Kotlin (uint8_t->UByte, uint32_t->UInt, uint64_t->ULong, int32_t->Int).
-     * Fields with a runtime fallback are std::optional: absence means "not
-     * provided", distinct from a provided 0 (kernel_phys_load = 0 is
-     * meaningful). The wire carries presence by key occurrence. */
+    /* The decoded document's model objects, one per transport section.
+     * Signedness/width mirror Kotlin (uint8_t->UByte, uint32_t->UInt,
+     * uint64_t->ULong, int32_t->Int). Fields with a runtime fallback are
+     * std::optional: `null` means "not provided", distinct from a provided 0
+     * (kernel_phys_load = 0 is meaningful). */
     struct ProfileMeta {
         uint8_t kernel_major = 0;
-        uint8_t recommend_shizuku = 0;
+        /* Reserved: the document carries no route fallback (the app resolves
+         * the ladder before W1), so this is always 0. */
         uint8_t fallback_route = 0;
         uint8_t safe_mode = 0;
         /* The app's resolved pipeline (1 = GhostLock, 2 = DirtyFrag). Absent on
-         * a document that predates the cross-check; the native then keeps the
-         * legacy behaviour. */
+         * the parse/preview documents, which skip the cross-check. */
         std::optional<uint32_t> pipeline;
     };
 

@@ -41,7 +41,6 @@ data class SessionState(
         val hasProfile: Boolean = false,
         val release: String = "",
         val route: String? = null,
-        val fallback: String? = null,
         val importedProfilePresent: Boolean = false,
         val activeBuiltinProfile: String? = null,
         val layers: ProfileLayers? = null,

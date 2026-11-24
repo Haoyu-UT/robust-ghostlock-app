@@ -46,7 +46,6 @@ import com.sesame.app.domain.model.nextPhysImage
 import com.sesame.app.domain.model.CrashEvidenceInfo
 import com.sesame.app.domain.model.RouteCandidate
 import com.sesame.app.domain.model.ShizukuStatus
-import com.sesame.app.data.profile.RouteCarriers
 import com.sesame.app.data.profile.Timer98260
 import com.sesame.app.shizuku.TimerVerdict
 import com.sesame.app.domain.model.StrideProbe
@@ -512,7 +511,6 @@ class GhostlockViewModel(
                         release = config.release,
                         hasProfile = config.hasProfile,
                         route = config.route,
-                        fallback = config.fallbackTo,
                         activeBuiltinProfile = profileController.activeBuiltinRelease(),
                         importedProfilePresent = profileController.importedProfileExists(),
                         layers = config.layers,
@@ -1301,7 +1299,6 @@ class GhostlockViewModel(
                 session = state.session.copy(
                     support = state.session.support.copy(
                         route = config.route,
-                        fallback = config.fallbackTo,
                         activeBuiltinProfile = profileController.activeBuiltinRelease(),
                         importedProfilePresent = profileController.importedProfileExists(),
                         layers = config.layers,
@@ -2389,7 +2386,6 @@ class GhostlockViewModel(
                     support = it.session.support.copy(
                         hasProfile = loaded?.hasProfile ?: false,
                         route = loaded?.route,
-                        fallback = loaded?.fallbackTo,
                         layers = loaded?.layers,
                         importedProfilePresent = profileController.importedProfileExists(),
                         routeCandidates = loaded?.routeCandidates.orEmpty(),

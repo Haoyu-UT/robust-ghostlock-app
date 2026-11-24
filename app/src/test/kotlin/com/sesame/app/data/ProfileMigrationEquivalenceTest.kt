@@ -87,7 +87,6 @@ class ProfileMigrationEquivalenceTest {
             model.invalidPaths,
         )
         assertEquals("$label: route", baselineModel.route, model.route)
-        assertEquals("$label: fallback", baselineModel.fallbackTo, model.fallbackTo)
         assertEquals(
             "$label: resolved values",
             baseline.resolvedNumbers(release),

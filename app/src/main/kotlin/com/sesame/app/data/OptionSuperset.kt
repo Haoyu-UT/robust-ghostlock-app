@@ -69,15 +69,7 @@ data class OptionRoute(
     val alternatives: List<OptionRouteVariant> = emptyList(),
 )
 
-/** One `pipelines[]` verdict from the extractor's maximal pass. */
-data class OptionPipeline(
-    val pipeline: String,
-    val verdict: String,
-    val reason: String,
-)
-
-/**
- * One `device_analysis[]` record: the sidecar set the derivations were made
+/** One `device_analysis[]` record: the sidecar set the derivations were made
  * for and where its physical pair came from. The pair itself lives in the
  * document (`devices.<codename>.phys`), not here.
  */
@@ -135,20 +127,9 @@ data class OptionSuperset(
     val document: ValueMap?,
     /** The device sidecar sets the extractor derived (`device_analysis[]`). */
     val devices: List<OptionDevice> = emptyList(),
-    /** The image's pipeline verdicts (`pipelines[]`); empty on a superset
-     * written before the selector existed. */
-    val pipelines: List<OptionPipeline> = emptyList(),
-    /** The extractor's pipeline order (highest precedence first); the
-     * document's `kernel.dirtyfrag` verdict already reflects it. */
-    val pipelineOrder: List<String> = emptyList(),
 ) {
     /** The device key this superset was generated for, when it has one. */
     val device: String? get() = devices.firstOrNull()?.device
-
-    /** The pipelines this image can run; the extractor requires a choice when
-     * more than one is feasible. */
-    val feasiblePipelines: List<OptionPipeline>
-        get() = pipelines.filter { it.verdict == Feasible }
 
     fun route(name: String): OptionRoute? = routes.firstOrNull { it.route == name }
 
@@ -264,17 +245,6 @@ data class OptionSuperset(
                     physSource = map["phys_source"] as? String ?: "unset",
                 )
             }
-            val pipelines = root["pipelines"].asValueList().orEmpty().mapNotNull { entry ->
-                val map = entry.asValueMap() ?: return@mapNotNull null
-                val pipeline = map["pipeline"] as? String ?: return@mapNotNull null
-                OptionPipeline(
-                    pipeline = pipeline,
-                    verdict = map["verdict"] as? String ?: "",
-                    reason = map["reason"] as? String ?: "",
-                )
-            }
-            val pipelineOrder = root["pipeline_order"].asValueList().orEmpty()
-                .mapNotNull { (it as? String)?.trim()?.lowercase()?.takeIf(String::isNotEmpty) }
             OptionSuperset(
                 release = root["release"] as? String ?: return@runCatching null,
                 kernelMajor = (root["kernel_major"] as? Number)?.toInt(),
@@ -282,8 +252,6 @@ data class OptionSuperset(
                 plans = plans,
                 document = document,
                 devices = devices,
-                pipelines = pipelines,
-                pipelineOrder = pipelineOrder,
             )
         }.getOrNull()
 

@@ -58,7 +58,7 @@ object ProfileExporter {
             if (release.endsWith("-template")) continue
             val parsed = parseFile(File(srcDir, file), srcDir) ?: error("cannot parse $file")
             require(ProfileResolver.isCleanedShape(parsed)) {
-                "$file is not the cleaned v3 layout; run the one-off migration"
+                "$file is not the cleaned v3 layout; regenerate it with this build"
             }
             val cleaned = parsed
             /* The exporter is device-neutral: the per-device entries are

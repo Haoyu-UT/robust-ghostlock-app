@@ -240,15 +240,14 @@ def asset_has_stride(path):
 
 MISSING = object()
 
-# `schema_version`/addresses are structural and `recommend_shizuku` is retired
-# from the authored schema, so neither is compared as a fact.
+# `schema_version` and the addresses' key order are structural, so neither is
+# compared as a fact.
 FACT_SKIP = {
-    "schema_version", "recommend_shizuku",
+    "schema_version",
     # The engine selection is the app's default (the alphabetically first
     # viable syscall), not a store fact.
     "ghostlock.syscall", "ghostlock.carrier",
 }
-WAITER_LAYOUT_ORDER = ("compact", "pi_tree", "task", "lock", "wake_state")
 
 
 def flatten_facts(value, prefix=""):
@@ -302,48 +301,6 @@ def fact_mismatches(entry, asset_path):
     return mismatched
 
 
-def _render_literal(value):
-    if value is None:
-        return "null"
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if isinstance(value, str):
-        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return str(value)
-
-
-def _insert_block_keys(text, block, lines):
-    match = re.search(rf"(?m)^(\s*){re.escape(block)}\s*\{{\s*$", text)
-    if not match:
-        return None
-    indent = match.group(1) + "  "
-    payload = "".join(f"{indent}{line}\n" for line in lines)
-    return text[: match.end() + 1] + payload + text[match.end() + 1:]
-
-
-def _append_block(text, name, mapping, order):
-    body = [
-        f"  {key} = {_render_literal(mapping[key])}\n"
-        for key in order
-        if key in mapping
-    ]
-    return text.rstrip("\n") + "\n\n" + name + " {\n" + "".join(body) + "}\n"
-
-
-def _replace_null_line(text, key, value):
-    """Fill an explicit `key = null` placeholder in place (no duplicate key)."""
-    pattern = re.compile(rf"(?m)^(\s*){re.escape(key)}\s*=\s*null\s*$")
-    if not pattern.search(text):
-        return None
-    return pattern.sub(
-        lambda match: f"{match.group(1)}{key} = {_render_literal(value)}",
-        text,
-        count=1,
-    )
-
-
 def mm_struct_stride(directory, meta=None):
     """The measured /proc/slabinfo mm_struct objsize, or None.
 
@@ -364,28 +321,6 @@ def mm_struct_stride(directory, meta=None):
         if value.isdigit():
             return int(value)
     return None
-
-
-def set_mm_struct_stride(text, stride):
-    """Write the measured slab stride into the kernelsnitch block."""
-    line = (
-        f"  # measured /proc/slabinfo mm_struct objsize {stride}.\n"
-        f"  mm_struct_sz = {stride}\n"
-    )
-    existing = re.compile(r"^  mm_struct_sz\s*=\s*\d+\s*$", re.MULTILINE)
-    if existing.search(text):
-        return existing.sub(f"  mm_struct_sz = {stride}", text, count=1)
-    block = re.search(r"^kernelsnitch\s*\{\s*\n", text, re.MULTILINE)
-    if block:
-        return text[: block.end()] + line + text[block.end():]
-    return text + f"\nkernelsnitch {{\n{line}}}\n"
-
-
-def replace_line(text, key, line):
-    pattern = re.compile(rf"^{re.escape(key)}\s*=.*$", re.MULTILINE)
-    if not pattern.search(text):
-        raise RuntimeError(f"rendered profile has no {key} line")
-    return pattern.sub(line, text, count=1)
 
 
 def candidates(store):
@@ -489,7 +424,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="report only, exit 1 on a missing or mismatched golden")
     parser.add_argument("--apply", action="store_true", help="render and index the missing goldens")
-    parser.add_argument("--refresh", action="store_true", help="rewrite existing SHIPPED GOLDEN assets whose pipeline line or measured mm_struct_sz is missing/infeasible")
+    parser.add_argument("--refresh", action="store_true", help="rewrite an existing SHIPPED GOLDEN asset that --apply would otherwise refuse")
     parser.add_argument("--refresh-all", action="store_true", help="re-render every shipped golden from the store as the route superset")
     parser.add_argument("--store", default=DEFAULT_STORE)
     parser.add_argument("--assets", default=DEFAULT_ASSETS)

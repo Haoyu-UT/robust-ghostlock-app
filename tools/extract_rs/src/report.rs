@@ -112,7 +112,7 @@ pub(crate) const CONF_ROUTE_FIELDS: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// Full credential field universe (native `kCred` / `credential-6x.conf`).
+/// Full credential field universe (the document's `kernel.struct.cred` block).
 pub(crate) const CONF_CRED_FIELDS: &[&str] = &[
     "copy_size",
     "usage_offset",
@@ -189,9 +189,9 @@ pub struct ConfExtraOffsets {
     pub empty_zero_page: Option<u64>,
 }
 
-/// The shared 6.x credential template (`credential-6x.conf`), in the bundled
+/// The shared 6.x credential template (`kernel.struct.cred`), in the bundled
 /// order. The flatten rule inlines it instead of an include line; the values
-/// stay pinned to that asset by `BuiltinProfilesTest`.
+/// stay pinned by `BuiltinProfilesTest`.
 pub fn conf_cred_6x() -> Vec<(String, String)> {
     [
         ("caps_offset", 48),
@@ -453,19 +453,21 @@ pub fn render_conf(input: &ConfInputs<'_>) -> String {
     render_conf_with_device(input, None)
 }
 
-/// Renders the profile with the physical pair keyed by `device` (schema v2).
-/// The option superset and every other render stay device-neutral; this is the
-/// cut/runnable form, and the app resolves the map for the running device.
+/// Renders the profile with the physical pair under `devices.<device>.phys`
+/// (the v3 document). The option superset and every other render stay
+/// device-neutral; this is the cut/runnable form, and the app resolves the map
+/// for the running device.
 pub fn render_conf_with_device(input: &ConfInputs<'_>, device: Option<&str>) -> String {
     let release = input.release;
+    let device_label = device.unwrap_or("<device>");
     let mut fact_sources = vec![
         format!(
-            "kernel_phys_load={} ({})",
+            "devices.{device_label}.phys.load={} ({})",
             input.phys.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
             input.phys_source
         ),
         format!(
-            "kernel_phys_offset={} ({})",
+            "devices.{device_label}.phys.offset={} ({})",
             input.phys_offset
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "null".to_string()),
@@ -990,7 +992,7 @@ mod tests {
             layouts: None,
             stage1: None,
         });
-        assert!(out.contains("kernel_phys_load=2818572288 (--phys)"));
+        assert!(out.contains("devices.<device>.phys.load=2818572288 (--phys)"));
         assert!(out.contains("devices = null"));
         /* The comment is the only record of the operator value; no new key. */
         assert!(!out.contains("phys_source ="));

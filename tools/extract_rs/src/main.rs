@@ -66,20 +66,22 @@ struct Cli {
     /// kernel physical load address (hex or decimal); overrides defaults
     #[arg(long, value_parser = parse_int)]
     phys: Option<u64>,
-    /// the phone codename the physical pair belongs to; --format conf and the
-    /// cut emit schema v2 with `kernel_phys_load = { <device> = <value> }`.
-    /// With --options-out the superset records this device's derivation; the
-    /// store harness runs once per device and merges the entries.
+    /// the phone codename the physical pair belongs to; --format conf records
+    /// it as `devices.<codename>.phys`. With --options-out the superset records
+    /// this device's derivation; the store harness runs once per device and
+    /// merges the entries.
     #[arg(long)]
     device: Option<String>,
-    /// output format: text (JSON), json, or conf (flattened GLK profile HOCON)
+    /// output format: text (JSON), json, or conf (the cleaned v3 profile
+    /// document, HOCON)
     #[arg(long, value_parser = ["text", "json", "conf"], default_value = "text")]
     format: String,
     /// route written to --format conf; defaults to the analysis suggestion
     #[arg(long, value_parser = ["tcp_zerocopy", "select_stack", "multicast_waiter", "sigreturn"])]
     route: Option<String>,
-    /// deprecated single-choice pipeline override; the profile now carries an
-    /// ordered list. Mutually exclusive with --pipeline-order.
+    /// single-pipeline override for diagnostics and tests; the profile's ladder
+    /// is derived from `kernel.dirtyfrag` / `kernel.kdp` / `ghostlock.module` /
+    /// `timer`. Mutually exclusive with --pipeline-order.
     #[arg(long, value_parser = ["ghostlock", "dirtyfrag"])]
     pipeline: Option<String>,
     /// ordered pipeline preference (`dirtyfrag,ghostlock`), highest first;
@@ -1776,7 +1778,10 @@ fn run(cli: &Cli) -> Result<i32> {
                 release: release_text,
                 layouts: &layouts,
             };
-            eprint!("{}", fact::explain_conf(&inputs, &provenance).render());
+            eprint!(
+                "{}",
+                fact::explain_conf(&inputs, &provenance, cli.device.as_deref()).render()
+            );
         }
         let feasible_routes = option_superset
             .routes

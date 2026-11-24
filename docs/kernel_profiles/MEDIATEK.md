@@ -41,23 +41,24 @@ then asks for `vendor_boot.img` (recommended) — attach it. If the `vendor_boot
 carries no usable `/memory` (or you skip it), the app asks for `dtbo.img` next.
 The parsed profile then contains both physical values if either image supplied
 them; finish the parse flow as usual. Skipping both leaves
-`kernel_phys_offset` empty, and the run fails at W1.
+`devices.<codename>.phys.offset` null, and the run fails at W1.
 
 ### On a PC
 
 ```sh
 ghostlock-extract boot.img --vendor-boot vendor_boot.img \
-    --iomem /dev/null --format conf --out profile.conf
+    --format conf --out profile.conf
 ```
 
-`--iomem /dev/null` matters on a PC: without it the tool reads the **build
-host's** `/proc/iomem` and silently produces a plausible wrong pair.
+The extractor takes the physical pair only from the images you attach (or
+`--phys`); it never reads the build host's `/proc/iomem`, so there is no host
+side-channel to disable.
 
 If the image carries no DTB, add the phone's `dtbo.img`:
 
 ```sh
 ghostlock-extract boot.img --vendor-boot vendor_boot.img --dtbo dtbo.img \
-    --iomem /dev/null --format conf --out profile.conf
+    --format conf --out profile.conf
 ```
 
 The tool prints which source it used:
@@ -147,11 +148,11 @@ run the extractor with the device's `boot.img` plus its `vendor_boot.img`:
 
 ```sh
 ghostlock-extract boot.img --vendor-boot vendor_boot.img \
-    --iomem /dev/null --format conf --out profile.conf
+    --format conf --out profile.conf
 ```
 
 The extractor now emits **both** physical values from those images (adding
 `--dtbo` when the `vendor_boot` has no DTB). Prefer the image's embedded
 kallsyms; do not pass a device `/proc/kallsyms`. Only when no image carries a
-DTB does `kernel_phys_offset` need `--iomem` (a rooted device dump) or a
-hand-filled value, and `kernel_phys_load` can come from `--phys`.
+DTB does `kernel_phys_offset` stay `null`; fill it by hand (or with the value
+the rooted fallback prints) and `kernel_phys_load` can come from `--phys`.

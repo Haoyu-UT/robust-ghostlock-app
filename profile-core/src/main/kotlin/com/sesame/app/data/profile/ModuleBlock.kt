@@ -5,9 +5,10 @@ package com.sesame.app.data.profile
  *
  * The chain is bundle-only: a bundled profile and the hand-built `.ko` it
  * names were validated together, so the profile is the only declaration of
- * that pair; there is no separate asset index. Selection stays in `pipeline`
- * and this block only makes the `module` entry viable —
- * [ProfileResolver.validateMerged] requires the two together.
+ * that pair; there is no separate asset index. The document's ladder derives
+ * `module` from this block (it and `syscalls` are mutually exclusive) —
+ * [ProfileResolver.validateMerged] refuses a block without the matching
+ * `ghostlock` shape.
  *
  * The block states identity and delivery only. The image's module ABI
  * (vermagic, `sizeof(struct module)`, the `module_layout` CRC) is not
@@ -18,7 +19,6 @@ package com.sesame.app.data.profile
  * kernel's ABI to check it against.
  */
 data class ModuleConfig(
-    val version: Int,
     val asset: String,
     val assetSha256: String,
     /** Empty = the app's built-in ordered probe list. */
@@ -131,7 +131,6 @@ object ModuleBlock {
 
         if (errors.isNotEmpty()) return null to errors
         return ModuleConfig(
-            version = 1,
             asset = asset!!,
             assetSha256 = sha!!.lowercase(),
             vendorFiles = files,

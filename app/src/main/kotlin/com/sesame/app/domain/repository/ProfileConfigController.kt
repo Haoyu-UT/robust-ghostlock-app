@@ -58,13 +58,6 @@ interface ProfileConfigController {
     fun importedProfileExists(): Boolean
 
     /**
-     * Moves the pre-import-copy `external_profile_*` preferences into the
-     * app-private copy once. Idempotent; called before the support decision and
-     * at every load.
-     */
-    fun migrateLegacyExternalSelection(deviceRelease: String)
-
-    /**
      * Imports the SD-card document [uri] for [deviceRelease] into the
      * app-private copy. Transactional: the document is verified before the copy
      * is kept, so a rejected import leaves the previous selection untouched and

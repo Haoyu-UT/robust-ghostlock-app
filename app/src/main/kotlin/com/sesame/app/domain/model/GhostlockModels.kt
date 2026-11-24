@@ -52,7 +52,7 @@ data class OffsetCandidate(val release: String, val document: String)
 
 /** One root-measured fact, as the read-only measurements screen shows it. */
 data class MeasuredFactInfo(
-    /** Dotted profile path (`kernelsnitch.mm_struct_sz`). */
+    /** Dotted profile path (`kernel.heap.stride`). */
     val key: String,
     val value: Long,
     /** Only `root-slabinfo` today; the screen shows it verbatim. */
@@ -248,8 +248,9 @@ data class RouteCandidate(
     /** The Shizuku-delivered timer backend rather than a native route. */
     val timer: Boolean = false,
     /**
-     * The carriers this route's branch lists (`native`/`compat`), primary
-     * first. Empty for the timer and for the legacy single-carrier flag form.
+     * The carriers this route's branch states (`native`/`compat`), primary
+     * first. Empty for the timer and for a route that declares no carrier
+     * block.
      */
     val carriers: List<String> = emptyList(),
 )
@@ -270,8 +271,6 @@ data class ProfileConfig(
     val general: List<ExecutionFieldValue> = emptyList(),
     /** Explicit route from the profile; null means geometry inference. */
     val route: String? = null,
-    /** Declared fallback route ("none"/"<route>"); null means unset. */
-    val fallbackTo: String? = null,
     /**
      * The routes this profile can run on the device, in the profile's order.
      * A native branch plus the timer block is already a two-candidate profile.
@@ -284,9 +283,9 @@ data class ProfileConfig(
      */
     val selectedRoute: String? = null,
     /**
-     * The carriers the active native route lists, and the remembered choice
-     * among them. Empty/null for the legacy single-carrier form (the branch's
-     * `compat_carrier` flag decides) and for the timer selection.
+     * The carriers the active native route states (the branch's `native` and
+     * `compat` blocks), and the remembered choice among them. Empty for the
+     * timer selection.
      */
     val carrierCandidates: List<String> = emptyList(),
     val selectedCarrier: String? = null,
@@ -294,7 +293,7 @@ data class ProfileConfig(
     val dirtyFragSelectable: Boolean = false,
     /** The remembered DirtyFrag choice; false = GhostLock only for this run. */
     val dirtyFragOn: Boolean = false,
-    /** The profile's ordered pipeline preference; empty = legacy ghostlock. */
+    /** The profile's ordered pipeline preference (the document's derived ladder). */
     val pipelineOrder: List<String> = emptyList(),
     /** The module chain's pair manifest, when the pipeline selects `module`. */
     val module: ModuleConfig? = null,

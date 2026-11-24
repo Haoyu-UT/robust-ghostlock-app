@@ -30,22 +30,22 @@
 开始解析，选择手机的 `boot.img`。联发科设备随后会提示提供 `vendor_boot.img`（推荐），请附加它。
 若该 `vendor_boot` 没有可用的 `/memory`（或你跳过了它），App 会继续提示提供 `dtbo.img`。
 只要其中一个镜像提供了值，解析出的 profile 就会包含这两个物理地址；随后照常完成解析流程。
-两个都跳过时 `kernel_phys_offset` 会为空，运行会在 W1 失败。
+两个都跳过时 `devices.<codename>.phys.offset` 会为空，运行会在 W1 失败。
 
 ### 在电脑上
 
 ```sh
 ghostlock-extract boot.img --vendor-boot vendor_boot.img \
-    --iomem /dev/null --format conf --out profile.conf
+    --format conf --out profile.conf
 ```
 
-在电脑上 `--iomem /dev/null` 很重要：否则工具会读取**构建主机**的 `/proc/iomem`，并静默产生一组看起来合理的错误取值。
+提取器只从你附加的镜像（或 `--phys`）取得物理地址对，从不读取**构建主机**的 `/proc/iomem`，因此不需要关闭主机侧的旁路。
 
 若镜像不带 DTB，再附加手机的 `dtbo.img`：
 
 ```sh
 ghostlock-extract boot.img --vendor-boot vendor_boot.img --dtbo dtbo.img \
-    --iomem /dev/null --format conf --out profile.conf
+    --format conf --out profile.conf
 ```
 
 工具会打印所用来源：
@@ -121,7 +121,7 @@ kernel_phys_offset = <值>
 
 ```sh
 ghostlock-extract boot.img --vendor-boot vendor_boot.img \
-    --iomem /dev/null --format conf --out profile.conf
+    --format conf --out profile.conf
 ```
 
-提取器现已从这些镜像同时输出两个物理地址（当 `vendor_boot` 不带 DTB 时再加 `--dtbo`）。优先使用镜像内嵌 kallsyms，不要传入设备的 `/proc/kallsyms`。只有在没有任何镜像携带 DTB 时，`kernel_phys_offset` 才需要用 `--iomem`（root 设备转储）或手工填写，`kernel_phys_load` 可用 `--phys` 提供。
+提取器现已从这些镜像同时输出两个物理地址（当 `vendor_boot` 不带 DTB 时再加 `--dtbo`）。优先使用镜像内嵌 kallsyms，不要传入设备的 `/proc/kallsyms`。只有在没有任何镜像携带 DTB 时，`kernel_phys_offset` 才会保持 `null`；此时可手工填写（或用 rooted 回退方案打印的值），`kernel_phys_load` 可用 `--phys` 提供。

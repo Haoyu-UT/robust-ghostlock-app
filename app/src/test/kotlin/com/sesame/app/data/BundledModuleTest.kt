@@ -26,7 +26,6 @@ class BundledModuleTest {
         val block = (document["ghostlock"] as? Map<*, *>)?.get("module").asValueMap()
             ?: error("$release: module block missing")
         return ModuleConfig(
-            version = 1,
             asset = block["asset"] as String,
             assetSha256 = block["sha256"] as String,
             vendorFiles = emptyList(),

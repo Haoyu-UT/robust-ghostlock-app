@@ -140,11 +140,6 @@ class OptionSupersetTest {
                     "geometry" to valueMapOf("compact_waiter" to 1L),
                 ),
             ),
-            "pipelines" to valueListOf(
-                valueMapOf("pipeline" to "ghostlock", "verdict" to "feasible", "reason" to "KDP is not enabled"),
-                valueMapOf("pipeline" to "dirtyfrag", "verdict" to "feasible", "reason" to "the ESP fix is absent"),
-            ),
-            "pipeline_order" to valueListOf("dirtyfrag", "ghostlock"),
             "document" to document,
             "device_analysis" to valueListOf(
                 valueMapOf(
@@ -199,11 +194,8 @@ class OptionSupersetTest {
     }
 
     @Test
-    fun `both feasible pipelines are exposed and the document carries the verdict`() {
+    fun `the cut carries the document's dirtyfrag verdict`() {
         val superset = sample()
-        val feasible = superset.feasiblePipelines
-        assertEquals(listOf("ghostlock", "dirtyfrag"), feasible.map { it.pipeline })
-        assertEquals(listOf("dirtyfrag", "ghostlock"), superset.pipelineOrder)
         val plan = superset.plansFor("select_stack")!!.safeOptions[0]
         val cut = requireNotNull(superset.cut("select_stack", plan))
         /* The fixed ladder is the document's own verdict, not a list. */

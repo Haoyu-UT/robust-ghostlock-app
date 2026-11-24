@@ -69,7 +69,6 @@ import java.util.concurrent.atomic.AtomicReference
 /** Android implementation of the domain repository. All platform I/O lives here. */
 class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private companion object {
-        const val LegacyOffsetsFileName = "offsets.json"
         const val FeasibleReportFileName = "offsets_feasible.json"
         const val OptionsReportFileName = "offsets_options.json"
         const val EditSessionPreferences = "ghostlock_edit_session"
@@ -92,7 +91,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         /** The generated document's release line, for the timer analyzer's template rule. */
         val ReleasePattern = Regex("(?m)^release\\s*=\\s*\"([^\"]+)\"")
         const val PrefForceAttackTest = "force_attack_test"
-        /** Tri-state vr.ko choices, stored as auto/on/off (legacy booleans are migrated). */
+        /** Tri-state vr.ko choices, stored as auto/on/off. */
         const val PrefVrKoTagClear = "vr_ko_tag_clear"
         const val PrefVrKoSelinuxBlock = "vrko_selinux_block"
 
@@ -154,19 +153,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         restoreForceAttackTest()
         restoreVrKoTagClear()
         restoreVrKoSelinuxBlock()
-        dropLegacyOffsetsCache()
-    }
-
-    /** The old JSON offsets cache is not compatible and is discarded. */
-    private fun dropLegacyOffsetsCache() {
-        runCatching { File(filesDir, LegacyOffsetsFileName).delete() }
     }
 
     override suspend fun snapshot(): KernelSnapshot {
         val release = System.getProperty("os.version", "unknown").orEmpty()
-        /* One-time move of the pre-import-copy selection before the support
-         * decision reads the copy. */
-        profileController.migrateLegacyExternalSelection(release)
         /* Shizuku is opt-in only: the toggle is the user's, never seeded from a
          * profile or inferred from a kernel property. */
         val shizukuActive = shizukuEnabled
@@ -1142,13 +1132,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 }
 
                 else -> {
-                    val order = config.pipelineOrder.ifEmpty { listOf("ghostlock") }
-                    if (config.pipelineOrder.isEmpty()) {
-                        archivedLog(
-                            "<s> pipeline=ghostlock (legacy default; profile has no " +
-                                "pipeline key)",
-                        )
-                    }
+                    val order = config.pipelineOrder
                     if ("ghostlock" !in order) {
                         archivedLog(
                             "<s> error: profile pipeline order=${order.joinToString(",")}; " +
@@ -1656,16 +1640,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
              * record). No fallback after W1; a failed stage is restore/reboot. */
             var moduleRun: ModuleRun? = null
             val pipeline = run {
-                val order = when {
-                    config.pipelineOrder.isEmpty() -> {
-                        onLog(
-                            "<k> pipeline=ghostlock (legacy default; profile has no " +
-                                "pipeline key)",
-                        )
-                        listOf("ghostlock")
-                    }
-                    else -> config.pipelineOrder
-                }
+                val order = config.pipelineOrder
                 /* The DirtyFrag box: off trims the profile's ordered pipeline
                  * to GhostLock for this run; the profile keeps the capability. */
                 val effectiveOrder = if (config.dirtyFragSelectable && !config.dirtyFragOn) {
@@ -2148,13 +2123,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         vrKoSelinuxBlock = readVrKoMode(PrefVrKoSelinuxBlock)
     }
 
-    /**
-     * Reads a tri-state preference. The unreleased v2 build stored a boolean:
-     * true maps to Auto (never a forced On) and false to Off.
-     */
+    /** Reads a tri-state preference (`auto`/`on`/`off`). */
     private fun readVrKoMode(key: String): VrKoMode =
         when (val raw = preferences.all[key]) {
-            is Boolean -> if (raw) VrKoMode.AUTO else VrKoMode.OFF
             is String -> VrKoMode.fromWire(raw)
             else -> VrKoMode.AUTO
         }

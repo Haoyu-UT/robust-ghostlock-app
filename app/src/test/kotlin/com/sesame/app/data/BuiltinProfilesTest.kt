@@ -86,12 +86,9 @@ class BuiltinProfilesTest {
                 val route = config.route
                 assertNotNull("${entry.release}: route unresolved", route)
 
-                /* The general list offers the active route (and its fallback)
-                 * tuning, and nothing from another route. */
-                val allowed = setOfNotNull(
-                    route,
-                    config.fallbackTo?.takeIf { it != "none" },
-                )
+                /* The general list offers the active route's tuning, and
+                 * nothing from another route. */
+                val allowed = setOf(route)
                 val routePaths = config.general.map { it.path }
                     .filter { it.startsWith("execution.routes.") }
                 for (path in routePaths) {
