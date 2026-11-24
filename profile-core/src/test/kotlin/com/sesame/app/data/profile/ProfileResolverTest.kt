@@ -257,9 +257,25 @@ class ProfileResolverTest {
     @Test
     fun `the schema version is fixed`() {
         val old = document().apply { put("schema_version", 2L) }
-        assertTrue(pathErrors(old, "schema_version").isNotEmpty())
+        assertEquals(
+            listOf(ProfileResolver.schemaErrorMessage(2)),
+            pathErrors(old, "schema_version").map { it.message },
+        )
         val absent = document().apply { remove("schema_version") }
-        assertTrue(pathErrors(absent, "schema_version").isNotEmpty())
+        /* An absent key is also "missing required key"; the schema sentence
+         * must still be among its errors. */
+        assertTrue(
+            pathErrors(absent, "schema_version").map { it.message }
+                .contains(ProfileResolver.schemaErrorMessage(null)),
+        )
+    }
+
+    @Test
+    fun `the transport-only keys are not part of an authored document`() {
+        for (key in listOf("mode", "safe_mode")) {
+            val doc = document().apply { put(key, if (key == "mode") "ghostlock" else true) }
+            assertTrue(pathErrors(doc, key).isNotEmpty())
+        }
     }
 
     @Test

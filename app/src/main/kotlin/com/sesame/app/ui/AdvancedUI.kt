@@ -181,7 +181,7 @@ internal fun AdvancedScreen(
                     )
                 }
             }
-            /* The profile's `pipeline` is the only selector; there is no UI
+            /* The document's ladder is the only selector; there is no UI
              * override and no debug intent that changes the order. */
             item(key = "rootManager") {
                 Card {

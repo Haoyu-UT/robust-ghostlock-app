@@ -113,7 +113,7 @@ class RouteCandidatesTest {
     }
 
     @Test
-    fun `dirtyfrag is offered only with both pipeline entries and self-heals`() = runBlocking {
+    fun `dirtyfrag is offered only with both ladder engines and self-heals`() = runBlocking {
         val ditingRelease = "5.10.236-android12-9-00003-gfb24cf99ad97-ab14313284"
         val controller = controllerFor("$ditingRelease.conf", "diting", "route-carriers-df")
         val config = controller.load(ditingRelease)

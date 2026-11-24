@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Output rendering for the 98260 extractor: the human report, the
-//! `timer_98260` HOCON block, and the store-superset JSON object.
+//! Output rendering for the 98260 extractor: the human report, the cleaned
+//! `timer` fragment, and the timer evidence object.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -628,7 +628,7 @@ pub fn render_document(analysis: &Analysis, endgame: Endgame) -> Result<Value> {
     }))
 }
 
-/// The `timer_98260` object for the store's options superset.
+/// The timer evidence object for the store's options superset.
 pub fn render_superset(analysis: &Analysis) -> Value {
     let real = analysis.check_real_path();
     let fake = analysis.check_fake_path();

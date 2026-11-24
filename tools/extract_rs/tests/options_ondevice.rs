@@ -17,7 +17,7 @@
 
 mod common;
 
-use common::{blocks, collect_all, options_path, par_for_each, run_no_disasm, run_options};
+use common::{collect_all, options_path, par_for_each, run_no_disasm, run_options};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

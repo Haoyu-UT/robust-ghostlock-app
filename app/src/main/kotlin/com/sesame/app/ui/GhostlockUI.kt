@@ -167,7 +167,6 @@ internal fun GhostlockApp(
                                 }
                             }
 
-                            overlay.overwriteVisible -> overlayActions.onOverwriteDismiss()
                             overlay.dialog != null -> overlayActions.onDialogDismiss()
                             else -> {
                                 if (nav.canPop) {
@@ -218,7 +217,6 @@ internal fun GhostlockApp(
                     }
                 }
                 GhostlockDialog(state = session, overlay = overlay, actions = overlayActions)
-                GhostlockOverwriteDialog(overlay = overlay, actions = overlayActions)
                 RunLogPickerDialog(report = report, actions = reportActions)
                 StridePickerDialog(overlay = overlay, actions = overlayActions)
                 GhostlockExecutionSheet(state = session, report = report, actions = reportActions)
@@ -1261,37 +1259,6 @@ private fun strideReasonText(reason: StrideReason): String = when (reason) {
     StrideReason.Tie -> stringResource(R.string.stride_reason_tie)
     is StrideReason.Single -> stringResource(
         if (reason.samples > 0) R.string.stride_reason_single else R.string.stride_reason_none,
-    )
-}
-
-/** `20261009-212803 · Shizuku · interrupted · 42 KB` */
-
-@Composable
-private fun GhostlockOverwriteDialog(
-    overlay: OverlayState,
-    actions: OverlayActions,
-) {
-    OverlayDialog(
-        show = overlay.overwriteVisible,
-        title = stringResource(R.string.overwrite_title),
-        summary = stringResource(R.string.overwrite_message, overlay.overwriteMessage),
-        onDismissRequest = actions::onOverwriteDismiss,
-        content = {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                TextButton(
-                    modifier = Modifier.weight(1f),
-                    text = stringResource(R.string.cancel),
-                    onClick = actions::onOverwriteDismiss,
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                TextButton(
-                    modifier = Modifier.weight(1f),
-                    text = stringResource(R.string.overwrite_yes),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    onClick = actions::onOverwriteConfirm,
-                )
-            }
-        },
     )
 }
 

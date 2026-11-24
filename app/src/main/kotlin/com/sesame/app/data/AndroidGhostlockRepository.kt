@@ -1,14 +1,12 @@
 package com.sesame.app.data
 
 import android.annotation.SuppressLint
-import android.content.ContentValues
 import android.content.Context
 import android.net.IpSecAlgorithm
 import android.net.IpSecManager
 import android.net.IpSecTransform
 import android.os.Build
 import android.os.SystemClock
-import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.system.Os
 import android.util.Log
@@ -24,14 +22,12 @@ import com.sesame.app.domain.model.physSourceFromLines
 import com.sesame.app.domain.model.MeasuredFactInfo
 import com.sesame.app.domain.model.MeasuredKernelInfo
 import com.sesame.app.domain.model.MeasurementMergeRow
-import com.sesame.app.domain.model.OffsetCandidate
 import com.sesame.app.data.ota.OtaPayloadExtractor
 import com.sesame.app.data.profile.OverlayFact
 import com.sesame.app.data.profile.OverlayRecord
 import com.sesame.app.data.profile.ProfileResolver
 import com.sesame.app.data.profile.PerDevicePhys
 import com.sesame.app.data.profile.Timer98260
-import com.sesame.app.domain.model.OffsetImportResult
 import com.sesame.app.domain.model.ParseResult
 import com.sesame.app.domain.model.PreflightFailure
 import com.sesame.app.domain.model.PreflightResult
@@ -422,7 +418,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         uefiPath: String?,
         vendorBootPath: String?,
         dtboPath: String?,
-        overwrite: Boolean,
         route: String?,
         onLog: (String) -> Unit,
     ): ParseResult {
@@ -456,11 +451,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             parsedFile.delete()
             feasibleFile.delete()
             optionsFile.delete()
-            /* The profile is generated for this phone. The v2 map key is the
-             * first non-generic identity (Build.DEVICE, then the vendor, then
-             * the boot image). When every identity is a mainline/vendor
-             * placeholder there is no unique codename: write the legacy v1
-             * all-device form instead of inventing a device key. */
+            /* The profile is generated for this phone. The `devices` map key is
+             * the first non-generic identity (Build.DEVICE, then the vendor,
+             * then the boot image). When every identity is a mainline/vendor
+             * placeholder there is no unique codename: write a device-less
+             * document (`devices = null`) instead of inventing a device key. */
             val deviceKey = DeviceIdentity.uniqueProfileKey()
             val deviceCandidates =
                 DeviceIdentity.candidates(Build.DEVICE, DeviceIdentity.aliases())
@@ -468,7 +463,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 onLog(
                     "identity: all candidates are generic " +
                         "(${deviceCandidates.joinToString(", ")}); " +
-                        "writing a v1 all-device profile",
+                        "writing a device-less document (devices = null)",
                 )
             }
             val args = buildList {
@@ -494,8 +489,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     add(deviceKey)
                 }
                 /* --format conf: the extractor output is already the flattened
-                 * profile (no includes, credential template inlined), so the
-                 * stored document needs no legacy conversion. */
+                 * v3 document (no includes, credential template inlined), so
+                 * no conversion is needed. */
                 /* --anchor: the diting 5.10 line gets its lock-anchor triple
                  * derived from the image; other families warn and ignore it. */
                 /* --feasible-out: written before an ambiguity exit, so the app
@@ -1038,8 +1033,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             }
             writeSidecar("timer-profile.json", document.toByteArray(StandardCharsets.UTF_8))
             /* The run log carries both: the exact runtime document the tool
-             * consumed, and the resolved profile source (the superset context
-             * — every route block, the `routes` order and the provenance). */
+             * consumed, and the resolved v3 document (every route block and the
+             * provenance). */
             runCatching { profileController.renderResolvedForDebug(release) }
                 .getOrNull()
                 ?.let { writeSidecar("profile.conf", it.toByteArray(StandardCharsets.UTF_8)) }
@@ -1102,8 +1097,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             archivedLog("<s> resolving profile")
             val release = System.getProperty("os.version", "").orEmpty()
             /* The Shizuku path runs GhostLock only (the order check below
-             * refuses a list without it); the wire carries that resolution so
-             * the native's cross-check covers this invocation too. */
+             * refuses a list without it); the document's `mode` carries that
+             * resolution so the native's cross-check covers this invocation too. */
             val render = profileController.nativeDocumentWithOverlay(
                 config,
                 "ghostlock",
@@ -1328,12 +1323,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private fun logProfileLayers(log: (String) -> Unit, config: ProfileConfig) {
         val layers = config.layers ?: return
         log("<k> profile layers: ${layers.describe()}")
-        if (layers.uncarriedKeys.isNotEmpty()) {
-            log(
-                "<k> warning: profile carries keys no wire section declares: " +
-                    layers.uncarriedKeys.joinToString(),
-            )
-        }
     }
 
     /**
@@ -1633,16 +1622,16 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                         config.invalidPaths.take(6).joinToString(),
                 )
             }
-            /* The profile carries an ordered pipeline list; resolve it before
-             * W1. GhostLock is viable on its static verdict (the profile
-             * validator refuses a KDP list containing it). DirtyFrag needs the
-             * ROM preflight and the primitive probe (or a matching measured-DB
-             * record). No fallback after W1; a failed stage is restore/reboot. */
+            /* The document's ladder is resolved before W1. GhostLock is viable
+             * on its static verdict (the validator refuses a KDP document whose
+             * ladder contains it). DirtyFrag needs the ROM preflight and the
+             * primitive probe (or a matching measured-DB record). No fallback
+             * after W1; a failed stage is restore/reboot. */
             var moduleRun: ModuleRun? = null
             val pipeline = run {
                 val order = config.pipelineOrder
-                /* The DirtyFrag box: off trims the profile's ordered pipeline
-                 * to GhostLock for this run; the profile keeps the capability. */
+                /* The DirtyFrag box: off trims the derived ladder to GhostLock
+                 * for this run; the document keeps the capability. */
                 val effectiveOrder = if (config.dirtyFragSelectable && !config.dirtyFragOn) {
                     onLog("<k> pipeline: dirtyfrag off (GhostLock only)")
                     order.filter { it != "dirtyfrag" }.ifEmpty { listOf("ghostlock") }

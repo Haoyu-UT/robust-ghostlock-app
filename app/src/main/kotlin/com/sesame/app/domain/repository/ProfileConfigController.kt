@@ -26,13 +26,14 @@ interface ProfileConfigController {
 
     /**
      * Stores the carrier choice for one native route. Returns false when the
-     * carrier is not in that branch's `carriers`; the stale choice is cleared.
+     * carrier is not among that branch's stated carrier blocks; the stale
+     * choice is cleared.
      */
     fun selectCarrier(release: String, route: String, carrier: String): Boolean
 
     /**
-     * Stores the DirtyFrag on/off choice. Returns false when the profile's
-     * pipeline does not offer the choice (it must list both entries).
+     * Stores the DirtyFrag on/off choice. Returns false when the document's
+     * ladder does not offer the choice (both DirtyFrag and GhostLock).
      */
     fun selectDirtyFrag(release: String, on: Boolean): Boolean
 

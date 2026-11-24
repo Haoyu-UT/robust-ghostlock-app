@@ -15,7 +15,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * The editor export must keep a schema-v2 physical map: the running device's
+ * The editor export must keep a schema-v3 physical map: the running device's
  * entry takes the edited value, every other device entry survives, and a
  * load-only source (the diting `uefi` case) keeps its `null` offset.
  */

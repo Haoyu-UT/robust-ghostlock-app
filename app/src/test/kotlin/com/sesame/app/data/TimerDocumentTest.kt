@@ -16,7 +16,7 @@ import org.robolectric.annotation.Config
 
 /**
  * The timer tool's input is the canonical backend document (W2 §1.5). The
- * entry's applicability fact is the presence of the `timer_98260` block; the
+ * entry's applicability fact is the presence of the `timer` block; the
  * renderer must emit it under its top-level key with the running release.
  */
 @RunWith(RobolectricTestRunner::class)

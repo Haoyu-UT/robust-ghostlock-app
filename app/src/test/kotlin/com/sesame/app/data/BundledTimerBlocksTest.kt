@@ -11,7 +11,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * Every bundled `timer_98260` block must parse through the app's own timer
+ * Every bundled `timer` block must parse through the app's own timer
  * parser, and a block that carries the fake group must be a complete way-2
  * block.
  *

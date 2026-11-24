@@ -123,7 +123,6 @@ sealed interface GhostlockEffect {
     data class OpenManager(val packageName: String) : GhostlockEffect
 }
 
-private const val OverwriteSummaryLimit = 12
 /** How often the report sheet re-reads the Shizuku verdict while it is open. */
 private const val CrashVerdictPollMs = 1_500L
 
@@ -163,7 +162,6 @@ private data class ParseRequest(
     val uefiPath: String? = null,
     val vendorBootPath: String? = null,
     val dtboPath: String? = null,
-    val overwrite: Boolean = false,
 )
 
 /**
@@ -183,7 +181,6 @@ private sealed interface ParseStep {
     ) : ParseStep
 
     data class Lock(val parse: ParseResult.Parsed) : ParseStep
-    data class Overwrite(val request: ParseRequest, val releases: List<String>) : ParseStep
 }
 
 /** The native tone tag (`<b> `, `<k> `, …) in a stored log line. */
@@ -327,8 +324,6 @@ class GhostlockViewModel(
         override fun onStrideUse() = this@GhostlockViewModel.onStrideUse()
         override fun onStrideSkip() = this@GhostlockViewModel.onStrideSkip()
         override fun onStridePickerDismiss() = this@GhostlockViewModel.onStridePickerDismiss()
-        override fun onOverwriteConfirm() = this@GhostlockViewModel.onOverwriteConfirm()
-        override fun onOverwriteDismiss() = this@GhostlockViewModel.onOverwriteDismiss()
     }
 
     private val generationActionsImpl = object : GenerationActions {
@@ -2171,7 +2166,7 @@ class GhostlockViewModel(
                 }
             }
 
-            ParseStep.Idle, is ParseStep.Overwrite -> Unit
+            ParseStep.Idle -> Unit
         }
     }
 
@@ -2562,14 +2557,9 @@ class GhostlockViewModel(
                 val result = parseSourceUseCase(
                     request.input, request.xblPath, request.uefiPath,
                     request.vendorBootPath, request.dtboPath,
-                    request.overwrite, null, ::appendLog,
+                    null, ::appendLog,
                 )
             ) {
-                is ParseResult.RequiresOverwrite -> {
-                    parseStep = ParseStep.Overwrite(request, result.releases)
-                    showOverwriteDialog(result.releases)
-                }
-
                 is ParseResult.Ambiguous -> {
                     val feasible = result.routes.filter { it.verdict == "feasible" }
                     appendLog(
@@ -2591,7 +2581,7 @@ class GhostlockViewModel(
                 is ParseResult.Parsed -> advancePhys(result)
 
                 ParseResult.AlreadyPresent -> {
-                    appendLog("result: offsets already present")
+                    appendLog("result: no profile entry for this kernel")
                     showNotice(R.string.parse_result_title, R.string.offsets_already_exist)
                     markGenerationFailed()
                 }
@@ -2964,48 +2954,6 @@ class GhostlockViewModel(
                     "attach the platform image or fill the fields manually",
             )
         }
-    }
-
-    fun onOverwriteConfirm() {
-        mutableState.update { it.copy(overlay = it.overlay.copy(overwriteVisible = false, overwriteMessage = "")) }
-        confirmPendingOperation()
-    }
-
-    fun onOverwriteDismiss() {
-        parseStep = ParseStep.Idle
-        running = false
-        appendLog("result: overwrite cancelled")
-        mutableState.update {
-            it.copy(
-                generation = it.generation.copy(step = GenerationStep.Idle),
-                overlay = it.overlay.copy(overwriteVisible = false, overwriteMessage = ""),
-                session = it.session.copy(run = it.session.run.copy(running = false, sheetDismissible = true)),
-            )
-        }
-    }
-
-    private fun confirmPendingOperation() {
-        val step = parseStep as? ParseStep.Overwrite ?: return
-        parseStep = ParseStep.Idle
-        pendingParse = step.request.copy(overwrite = true)
-        launchParse()
-    }
-
-    private fun showOverwriteDialog(releases: List<String>) {
-        mutableState.update {
-            it.copy(
-                generation = it.generation.copy(step = GenerationStep.Confirm),
-                overlay = it.overlay.copy(overwriteVisible = true, overwriteMessage = overwriteSummary(releases)),
-                session = it.session.copy(run = it.session.run.copy(sheetVisible = false)),
-            )
-        }
-    }
-
-    /** Keeps the confirmation readable when a document carries many releases. */
-    private fun overwriteSummary(releases: List<String>): String {
-        val head = releases.take(OverwriteSummaryLimit).joinToString("\n")
-        val rest = releases.size - OverwriteSummaryLimit
-        return if (rest > 0) "$head\n… (+$rest)" else head
     }
 
     private fun dismissDialog() {

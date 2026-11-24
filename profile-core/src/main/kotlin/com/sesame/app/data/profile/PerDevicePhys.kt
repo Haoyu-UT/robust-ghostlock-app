@@ -27,6 +27,7 @@ object PerDevicePhys {
         resolveFor(document, listOfNotNull(device)).document
 
     fun resolveNeutral(document: ValueMap): ValueMap {
+        requireSchema(document)
         val resolved = document.copyValue().asValueMap() ?: ValueMap()
         if (resolved.containsKey("devices")) resolved["devices"] = null
         return resolved
@@ -37,13 +38,7 @@ object PerDevicePhys {
         devices: List<String>,
         requireMatch: Boolean = true,
     ): PhysResolution {
-        val schema = (document["schema_version"] as? Number)?.toInt()
-        if (schema != ProfileResolver.ProfileSchemaVersion) {
-            throw IllegalArgumentException(
-                "unsupported profile schema ${schema ?: "absent"}; " +
-                    "this build reads schema ${ProfileResolver.ProfileSchemaVersion}",
-            )
-        }
+        requireSchema(document)
         val resolved = document.copyValue().asValueMap() ?: ValueMap()
         val raw = resolved["devices"] ?: return PhysResolution(resolved, null)
         val entries = raw.asValueMap()
@@ -67,5 +62,13 @@ object PerDevicePhys {
         val entry = entries[matched]
         resolved["devices"] = valueMapOf(matched to entry)
         return PhysResolution(resolved, matched)
+    }
+
+    /** Both entry points accept only the one document schema. */
+    private fun requireSchema(document: ValueMap) {
+        val schema = (document["schema_version"] as? Number)?.toInt()
+        if (schema != ProfileResolver.ProfileSchemaVersion) {
+            throw IllegalArgumentException(ProfileResolver.schemaErrorMessage(schema))
+        }
     }
 }

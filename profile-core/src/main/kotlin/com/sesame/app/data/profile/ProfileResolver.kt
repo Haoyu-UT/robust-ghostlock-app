@@ -1,20 +1,22 @@
 package com.sesame.app.data.profile
 
-import com.sesame.app.data.ValueMap
-import com.sesame.app.data.getValueAt
-
 /**
- * The cleaned profile schema (v3, pre-release) and its single validator.
+ * The cleaned profile schema (v3) and its single validator.
  *
  * The document is one tree: `devices`, `kernel`, one block per engine
  * (`ghostlock`, `timer`). Every declared key is present; a key with no value
- * is `null` (never omitted), and a block may itself be null. The firmware
- * validator refuses an unknown key in a block it owns, which is the same rule
- * the native mapper applies at the transport edge.
+ * is `null` (never omitted), and a block may itself be null. The validator
+ * refuses an unknown key in a block it owns, which is the same rule the native
+ * mapper applies at the transport edge.
  */
 object ProfileResolver {
     /** The one accepted document schema. */
     const val ProfileSchemaVersion = 3
+
+    /** The one refusal sentence for a non-v3 document (import and run paths). */
+    fun schemaErrorMessage(schema: Int?): String =
+        "unsupported profile schema ${schema ?: "absent"}; " +
+            "this build reads schema $ProfileSchemaVersion"
 
     /** The fixed syscall vocabulary, in the picker's display order. */
     val Syscalls = listOf("select_stack", "sigreturn", "multicast_waiter", "tcp_zerocopy")
@@ -27,7 +29,6 @@ object ProfileResolver {
     const val KernelKey = "kernel"
 
     val TopKeys = setOf("schema_version", "release", "devices", "kernel", "ghostlock", "timer")
-    private val TransportKeys = setOf("mode", "safe_mode")
 
     private val SymbolKeys = listOf(
         "init_task", "init_cred", "root_task_group", "empty_zero_page",
@@ -163,7 +164,7 @@ object ProfileResolver {
 
     private fun validateTop(document: Map<String, Any?>, errors: MutableList<ConfigError>) {
         for (key in document.keys) {
-            if (key !in TopKeys && key !in TransportKeys) {
+            if (key !in TopKeys) {
                 errors += ConfigError(key, "unknown top-level key")
             }
         }
@@ -174,11 +175,7 @@ object ProfileResolver {
         }
         val schema = (document["schema_version"] as? Number)?.toInt()
         if (schema != ProfileSchemaVersion) {
-            errors += ConfigError(
-                "schema_version",
-                "profile schema ${schema ?: "absent"} is not supported; " +
-                    "this build reads schema $ProfileSchemaVersion",
-            )
+            errors += ConfigError("schema_version", schemaErrorMessage(schema))
         }
         val release = document["release"]
         if (release !is String || release.isBlank()) {
@@ -836,8 +833,6 @@ object ProfileResolver {
             name to carriersOf(branch)
         }
     }
-
-    fun timerViable(timer: Map<*, *>?): Boolean = timer != null
 
     /** The resolved device's physical pair (after [PerDevicePhys.resolveFor]). */
     fun physOf(document: Map<String, Any?>): Pair<Long?, Long?> {

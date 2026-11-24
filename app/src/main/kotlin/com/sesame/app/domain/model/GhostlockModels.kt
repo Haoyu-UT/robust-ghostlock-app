@@ -48,8 +48,6 @@ enum class LogTone { Default, Error, Success, Warning, Progress, Kotlin, Shizuku
 
 data class LogEntry(val text: String, val tone: LogTone)
 
-data class OffsetCandidate(val release: String, val document: String)
-
 /** One root-measured fact, as the read-only measurements screen shows it. */
 data class MeasuredFactInfo(
     /** Dotted profile path (`kernel.heap.stride`). */
@@ -172,17 +170,14 @@ data class ProfileLayers(
     /** Release the builtin layer resolved through; null when nothing matched. */
     val builtinRelease: String? = null,
     /**
-     * True when the builtin layer is the **bundled** asset for the device's own
-     * release — the case where the bundled profile is authoritative and a
-     * shadowing import is not applied.
+     * True when the selection is the **bundled** asset for the device's own
+     * release (no external selection or built-in pick above it).
      */
     val bundledAuthoritative: Boolean = false,
     /** True when a builtin release was selected by hand instead of auto-matched. */
     val builtinSelected: Boolean = false,
     /** Build identity of the running app (`BuildConfig.GIT_SHA`). */
     val build: String = "",
-    /** Keys the resolved profile carries that no wire section declares. */
-    val uncarriedKeys: List<String> = emptyList(),
     /** The imported copy applied to this resolution. */
     val externalApplied: Boolean = false,
     /** Why the imported copy could not be used. */
@@ -269,7 +264,7 @@ data class ProfileConfig(
     val roots: List<ProfileFieldNode> = emptyList(),
     /** General (execution tuning) subset exposed by the parameters screen. */
     val general: List<ExecutionFieldValue> = emptyList(),
-    /** Explicit route from the profile; null means geometry inference. */
+    /** The picker's resolved route; null when none is viable. */
     val route: String? = null,
     /**
      * The routes this profile can run on the device, in the profile's order.
@@ -289,26 +284,26 @@ data class ProfileConfig(
      */
     val carrierCandidates: List<String> = emptyList(),
     val selectedCarrier: String? = null,
-    /** True when the profile's pipeline names both DirtyFrag and GhostLock. */
+    /** True when the document's ladder offers both DirtyFrag and GhostLock. */
     val dirtyFragSelectable: Boolean = false,
     /** The remembered DirtyFrag choice; false = GhostLock only for this run. */
     val dirtyFragOn: Boolean = false,
-    /** The profile's ordered pipeline preference (the document's derived ladder). */
+    /** The document's derived ladder. */
     val pipelineOrder: List<String> = emptyList(),
-    /** The module chain's pair manifest, when the pipeline selects `module`. */
+    /** The module chain's pair manifest, when the ladder selects `module`. */
     val module: ModuleConfig? = null,
     /** Dotted paths whose resolved value violates the geometry rules. */
     val invalidPaths: Set<String> = emptySet(),
 ) {
     companion object {
-        /** Routes a profile may declare ("" is the inference fallback). */
+        /** The native syscall vocabulary. */
         val Routes = listOf("tcp_zerocopy", "select_stack", "multicast_waiter", "sigreturn")
 
         /**
          * Route-independent execution tuning paths the general editor always
          * exposes. Route-specific tuning is appended dynamically from the
-         * resolved profile for the active route (plus its fallback), so a
-         * profile never shows another route's knobs.
+         * resolved document for the active route, so a profile never shows
+         * another route's knobs.
          */
         val GeneralPaths = listOf(
             "execution.heap.prepare_max_attempts",
@@ -333,21 +328,6 @@ data class ProfileConfig(
             "execution.handoff.enforce_poll_interval_ms",
         )
     }
-}
-
-data class KernelOffsets(
-    val release: String,
-    val scalars: Map<String, Long?>,
-    val symbols: Map<String, Long?>,
-    val structFields: Map<String, Long?>,
-)
-
-sealed interface OffsetImportResult {
-    data class Imported(val releases: List<String>) : OffsetImportResult
-    data class RequiresOverwrite(val releases: List<String>) : OffsetImportResult
-    data object AlreadyPresent : OffsetImportResult
-    data class MissingIncludes(val files: List<String>) : OffsetImportResult
-    data class Failed(val reason: String) : OffsetImportResult
 }
 
 /** One route verdict from the extractor's `--feasible-out` report. */
@@ -427,11 +407,6 @@ sealed interface ParseResult {
         val routes: List<RouteVerdict>,
         /** The option superset, when the extractor wrote one. */
         val options: OptionSuperset? = null,
-    ) : ParseResult
-
-    data class RequiresOverwrite(
-        val releases: List<String>,
-        val missing: Set<String> = emptySet(),
     ) : ParseResult
 
     data object AlreadyPresent : ParseResult

@@ -1,7 +1,7 @@
 /* The `mode` cross-check.
  *
- * The app resolves the profile's ordered pipeline list to one entry before W1
- * and writes it into the JSON document as `mode`. The native must be invoked
+ * The app resolves the document's ladder to one engine before W1 and writes it
+ * into the JSON document as `mode`. The native must be invoked
  * in the matching mode: a resolved DirtyFrag run is the `--w1-only`
  * invocation (the DirtyFrag stage follows as its own process), and a resolved
  * GhostLock run is the full chain. A mismatch means the two sides disagree

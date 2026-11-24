@@ -49,17 +49,17 @@ pub struct Superset {
     pub image_base: Option<u64>,
     pub routes: Vec<RouteOption>,
     /// The image-side pipeline facts. They are recorded here and never written
-    /// into the profile; the profile carries the chosen `pipeline`.
+    /// into the document; the document's ladder is derived from
+    /// `kernel.dirtyfrag` / `kernel.kdp`.
     #[serde(default)]
     pub pipeline_facts: PipelineFacts,
-    /// `ghostlock` and `dirtyfrag`, in stable order. No `chosen_pipeline`:
-    /// the choice belongs to the profile author, not the extractor.
+    /// `ghostlock` and `dirtyfrag`, in stable order. No `chosen` key: the run's
+    /// engine is the document's derived ladder, not the extractor's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pipelines: Vec<PipelineOption>,
     /// The default pipeline order (highest precedence first), derived from
-    /// `pipelines[]` or the operator's `--pipeline-order` override. The cut
-    /// writes it into the profile's `pipeline` list; the app resolves it
-    /// before W1.
+    /// `pipelines[]` or the operator's `--pipeline-order` override. It ranks
+    /// the envelope's verdicts; the document carries no chain list.
     #[serde(default)]
     pub pipeline_order: Vec<String>,
     /// The cleaned v3 profile document for this image: the route-superset form

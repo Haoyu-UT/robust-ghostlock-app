@@ -32,7 +32,7 @@ class NativeDocumentEquivalenceTest {
 
         val root = Files.createTempDirectory("native-doc-equivalence").toFile()
         try {
-            /* The migrated profiles carry their physical pair in a per-device
+            /* The bundled profiles carry their physical pair in a per-device
              * map and their timing null. Resolve each with its authoring device
              * so the frozen bytes still describe the shipped no-op on that
              * device; a device-neutral resolution is covered by

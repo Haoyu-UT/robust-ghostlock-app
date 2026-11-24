@@ -6,8 +6,6 @@ import com.sesame.app.domain.model.ImportedEvidence
 import com.sesame.app.domain.model.KernelSnapshot
 import com.sesame.app.domain.model.MeasuredKernelInfo
 import com.sesame.app.domain.model.MeasurementMergeRow
-import com.sesame.app.domain.model.OffsetCandidate
-import com.sesame.app.domain.model.OffsetImportResult
 import com.sesame.app.domain.model.ParseResult
 import com.sesame.app.domain.model.PreflightResult
 import com.sesame.app.domain.model.ProfileConfig
@@ -63,7 +61,6 @@ interface GhostlockRepository {
         /** dtbo.img (MediaTek only): the DTB fallback when vendor_boot carries
          * no usable /memory (`dtb_size = 0` or no root memory node). */
         dtboPath: String? = null,
-        overwrite: Boolean = false,
         /** Selects one route explicitly; null lets the extractor decide and
          * returns [ParseResult.Ambiguous] when more than one is Feasible. */
         route: String? = null,

@@ -51,13 +51,13 @@ data class SessionState(
         /** The active native route's carriers, and the remembered choice. */
         val carrierCandidates: List<String> = emptyList(),
         val selectedCarrier: String? = null,
-        /** DirtyFrag is a choice when the profile's pipeline lists both entries. */
+        /** DirtyFrag is a choice when the document's ladder offers both engines. */
         val dirtyFragSelectable: Boolean = false,
         val dirtyFragOn: Boolean = false,
-        /** The profile's ordered pipeline (the DirtyFrag list's capability source). */
+        /** The document's derived ladder (the DirtyFrag capability source). */
         val pipelineOrder: List<String> = emptyList(),
         /**
-         * The module chain's pair manifest, when `pipeline` selects `module`.
+         * The module chain's pair manifest, when the ladder selects `module`.
          * The chain has no route to pick, so the home and the parameters screen
          * present this block instead of a route line.
          */

@@ -17,8 +17,8 @@ import java.nio.file.Files
 /**
  * Black-box end-to-end test over every bundled profile: resolve it through the
  * controller, require a clean document, and verify the route-scoped UI
- * projection and the v2 round trip. This is the test that catches "a builtin
- * profile no longer loads after a schema/format change".
+ * projection and the external-document round trip. This is the test that
+ * catches "a builtin profile no longer loads after a schema/format change".
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -43,8 +43,9 @@ class BuiltinProfilesTest {
 
     /**
      * A controller whose device identity is one the profile's own physical map
-     * names — a v2 map that names no identity of the running device is refused
-     * by PerDevicePhys. A profile without a map resolves device-neutrally.
+     * names — a `devices` map that names no identity of the running device is
+     * refused by PerDevicePhys. A profile without a map resolves
+     * device-neutrally.
      */
     private fun controllerFor(file: String): AndroidProfileConfigController {
         val document = HoconSupport.parseValue(

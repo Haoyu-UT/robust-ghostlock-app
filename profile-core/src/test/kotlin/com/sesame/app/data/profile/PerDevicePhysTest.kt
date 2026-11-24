@@ -89,6 +89,14 @@ class PerDevicePhysTest {
     @Test
     fun `an old schema version is refused`() {
         val bad = document().apply { put("schema_version", 2L) }
-        assertTrue(runCatching { PerDevicePhys.resolveFor(bad, listOf("diting")) }.isFailure)
+        val error = runCatching { PerDevicePhys.resolveFor(bad, listOf("diting")) }.exceptionOrNull()
+        assertEquals(ProfileResolver.schemaErrorMessage(2), error?.message)
+    }
+
+    @Test
+    fun `the device-neutral path refuses an old schema too`() {
+        val bad = document().apply { put("schema_version", 2L) }
+        val error = runCatching { PerDevicePhys.resolveNeutral(bad) }.exceptionOrNull()
+        assertEquals(ProfileResolver.schemaErrorMessage(2), error?.message)
     }
 }

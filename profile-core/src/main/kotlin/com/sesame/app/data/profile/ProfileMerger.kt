@@ -71,11 +71,19 @@ object ProfileMerger {
         ghostlock["execution"] = execution
     }
 
-    /** A layer must already be the cleaned document. */
+    /**
+     * A layer must already be the cleaned document. The schema is checked here,
+     * not by the caller or by the schema stamp on the merged output, so the
+     * export/device-neutral path cannot relabel an older schema as v3.
+     */
     private fun cleaned(layer: ValueMap?): ValueMap? {
         if (layer == null) return null
         require(ProfileResolver.isCleanedShape(layer)) {
             "the profile is not the cleaned v3 layout; regenerate it with this build"
+        }
+        val schema = (layer["schema_version"] as? Number)?.toInt()
+        require(schema == ProfileResolver.ProfileSchemaVersion) {
+            ProfileResolver.schemaErrorMessage(schema)
         }
         return layer.copyValue().asValueMap()
     }

@@ -182,8 +182,8 @@ fn push_fact<T: std::fmt::Display>(out: &mut Vec<String>, key: &str, fact: &Fact
     ));
 }
 
-/// Extra `offset.*` keys the extractor resolves outside the `off_*` symbol
-/// table (kallsyms-only symbols). Kept in its bundled-profile position.
+/// Extra symbol values the extractor resolves outside the `off_*` table
+/// (kallsyms-only symbols), kept in their bundled-profile position.
 #[derive(Debug, Clone, Default)]
 pub struct ConfExtraOffsets {
     pub empty_zero_page: Option<u64>,
@@ -372,7 +372,7 @@ pub fn conf_route_geometry_with_sigreturn(
     }
 }
 
-/// `offset` keys in the bundled profiles' order; `empty_zero_page` comes from
+/// Symbol keys in the bundled profiles' order; `empty_zero_page` comes from
 /// kallsyms instead of an `off_*` symbol.
 pub(crate) fn conf_offsets(
     symbols: &BTreeMap<String, Option<u64>>,
@@ -420,11 +420,12 @@ pub struct ConfInputs<'a> {
     pub image_base: Option<u64>,
     pub symbols: &'a BTreeMap<String, Option<u64>>,
     pub structs: &'a BTreeMap<String, Option<u32>>,
-    /// The ordered pipeline preference written into the profile. Omitted for
-    /// the route-less common profile: the superset carries the order instead.
+    /// The ordered pipeline preference recorded in the analysis envelope.
+    /// Omitted for the route-less common profile; the document's ladder derives
+    /// from the facts.
     pub pipeline_order: &'a [String],
-    /// The KDP fact. `Some(true)` emits `kdp = 1`; the app's KDP guard pairs
-    /// it with an explicit pipeline, and a non-KDP profile is unchanged.
+    /// The KDP fact. `Some(true)` emits `kdp = true`; the app's KDP guard pairs
+    /// it with the DirtyFrag ladder, and a non-KDP document is unchanged.
     pub kdp: Option<bool>,
     pub route: Option<&'a str>,
     pub route_geometry: &'a [(&'static str, i64)],
@@ -1260,7 +1261,7 @@ mod tests {
     }
 
     #[test]
-    fn unverified_release_omits_kernelsnitch_defaults() {
+    fn unverified_release_omits_heap_defaults() {
         let (symbols, structs) = conf_fixture();
         let out = render_conf(&ConfInputs {
             pipeline_order: &[],

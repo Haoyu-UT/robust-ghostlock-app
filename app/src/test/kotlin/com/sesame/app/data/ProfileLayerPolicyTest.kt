@@ -3,6 +3,7 @@ package com.sesame.app.data
 import android.app.Application
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.sesame.app.data.profile.ProfileResolver
 import com.sesame.app.domain.model.ProfileConfig
 import com.sesame.app.domain.model.ProfileImportResult
 import com.sesame.app.domain.repository.ProfileConfigController
@@ -312,17 +313,23 @@ class ProfileLayerPolicyTest {
     fun `an older schema is refused, not upgraded`() = runBlocking {
         val text = document(bundledRelease, routeWaitMs = 4242)
         val variants = listOf(
-            text.replace("schema_version = 3", "schema_version = 2"),
-            text.replace("schema_version = 3", "schema_version = 1"),
-            text.replace(Regex("(?m)^schema_version = 3\n"), ""),
+            text.replace("schema_version = 3", "schema_version = 2") to
+                ProfileResolver.schemaErrorMessage(2),
+            text.replace("schema_version = 3", "schema_version = 1") to
+                ProfileResolver.schemaErrorMessage(1),
+            text.replace(Regex("(?m)^schema_version = 3\n"), "") to
+                ProfileResolver.schemaErrorMessage(null),
+            /* A list-form document must be gated exactly like a single object. */
+            "[ { ${text.replace("schema_version = 3", "schema_version = 2")} } ]" to
+                ProfileResolver.schemaErrorMessage(2),
         )
-        for (old in variants) {
+        for ((old, expected) in variants) {
             val uri = external.add("content://profiles/old-schema.conf", old)
             val result = controller.selectExternalProfile(uri, bundledRelease)
+            assertTrue(result.toString(), result is ProfileImportResult.Rejected)
             assertTrue(
                 result.toString(),
-                result is ProfileImportResult.Rejected &&
-                    result.errors.any { it.contains("schema") },
+                (result as ProfileImportResult.Rejected).errors.any { it == expected },
             )
             assertFalse(controller.importedProfileExists())
         }

@@ -44,21 +44,11 @@ DEFAULT_STORE = os.path.join(ROOT, "external", "test-kernels")
 DEFAULT_ASSETS = os.path.join(APP, "app", "src", "main", "assets", "kernel_profiles")
 
 SKIP_CORPUS = {"btf-only", "codegen", "excluded"}
-# The measured order (2026-11-14 A/B): select > tcp > multicast > sigreturn.
-ROUTE_PRIORITY = ["select_stack", "tcp_zerocopy", "multicast_waiter", "sigreturn"]
 # The AArch32 compat select carrier's route block and geometry are the
 # extractor's own now (analysis::apply_compat_select + report::
 # conf_compat_route_geometry): a 5.10 pre-136 image whose 64-bit select is
 # infeasible reports select_stack feasible with the measured family geometry,
 # and the tool just renders the chosen route.
-# Same order as the Rust store harness (tests/common/mod.rs sidecar_args).
-SIDECARS = [
-    ("vendor_boot.img", "--vendor-boot"),
-    ("xbl_config.img", "--xbl-config"),
-    ("xbl_config.elf", "--xbl-config"),
-    ("uefi.img", "--uefi"),
-    ("dtbo.img", "--dtbo"),
-]
 
 
 class NotShippable(Exception):
@@ -105,21 +95,13 @@ def read_options(directory):
         return json.load(handle)
 
 
-def choose_route(options):
-    feasible = [
-        route.get("route")
-        for route in options.get("routes", [])
-        if route.get("verdict") == "feasible"
-    ]
-    if not feasible:
+def require_feasible_route(options):
+    """A store entry must have at least one feasible route; the document
+    already states which one the run uses."""
+    if not any(
+        route.get("verdict") == "feasible" for route in options.get("routes", [])
+    ):
         raise NotShippable("no feasible route")
-    chosen = options.get("chosen")
-    if chosen in feasible:
-        return chosen
-    for route in ROUTE_PRIORITY:
-        if route in feasible:
-            return route
-    return feasible[0]
 
 
 PIPELINES = ["ghostlock", "dirtyfrag"]
@@ -366,11 +348,10 @@ def validate(entry):
     devices = entry_devices(entry["meta"], entry["directory"])
     if not devices:
         raise NotShippable("no device sidecar set")
+    require_feasible_route(options)
     entry.update(
         options=options,
         devices=devices,
-        primary=devices[0],
-        route=choose_route(options),
         routes=feasible_route_names(options),
         stride=mm_struct_stride(entry["directory"], entry["meta"]),
     )

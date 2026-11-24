@@ -14,7 +14,7 @@ class Sog10ProfileCoreRegressionTest {
     private val release = "5.15.189-android13-8-00004-g1c3825f8ac0a-ab14110541"
 
     @Test
-    fun `SOG10 profile converts, merges and validates`() {
+    fun `SOG10 profile merges and validates`() {
         val profiles = File(repoRoot(), "app/src/main/assets/kernel_profiles")
         val source = File(profiles, "$release.conf")
         /* The r8 bundle cut (38ef1bdc) dropped this candidate from the assets;

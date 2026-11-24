@@ -1,3 +1,5 @@
+package com.sesame.app.data.profile
+
 /**
  * The canonical document writer: the resolved profile tree as self-contained
  * JSON — quoted keys and strings, numbers, objects and arrays, no

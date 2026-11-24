@@ -164,8 +164,8 @@ class OptionSupersetTest {
         assertEquals("bm_pmd", plans.safeOptions[1].label)
         assertNotNull(plans.anchorOnly)
         assertEquals("__dump_skip.zeroes", plans.anchorOnly?.anchorName)
-        assertTrue(plans.safeOptions[1].scratch?.inAnchor == true)
-        assertFalse(plans.safeOptions[0].scratch?.inAnchor ?: true)
+        assertEquals(ScratchInAnchor, plans.safeOptions[1].scratchSource)
+        assertFalse(plans.safeOptions[0].scratchSource == ScratchInAnchor)
         val tcp = requireNotNull(superset.plansFor("tcp_zerocopy"))
         assertTrue(tcp.safeOptions.isEmpty())
         assertNull(tcp.anchorOnly)
@@ -210,7 +210,6 @@ class OptionSupersetTest {
         assertEquals("native", route.carrier)
         val compat = route.alternatives.single()
         assertEquals("compat", compat.carrier)
-        assertEquals(1L, compat.geometry["compat_carrier"])
         val plan = superset.plansFor("select_stack")!!.safeOptions[0]
         val native = requireNotNull(superset.cut("select_stack", plan))
         assertTrue(native.contains("carrier = \"native\""))

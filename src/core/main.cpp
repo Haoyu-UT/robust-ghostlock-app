@@ -126,13 +126,13 @@ int main(int argc, char **argv) {
             throw FatalError{};
         }
 
-        /* The app resolved the profile's ordered pipeline list to one entry and
-         * wrote it into the wire; the invocation must match. A mismatch means
-         * the two sides disagree about the run's shape: a resolved DirtyFrag run
-         * started as the full chain would run the wrong stage, and a GhostLock
-         * run stopped after W1 would leave SELinux permissive with no stage to
-         * continue. Absent (a document that predates the cross-check) keeps the
-         * legacy behaviour. */
+        /* The app resolved the document's ladder to one engine and wrote it as
+         * `mode`; the invocation must match. A mismatch means the two sides
+         * disagree about the run's shape: a resolved DirtyFrag run started as
+         * the full chain would run the wrong stage, and a GhostLock run stopped
+         * after W1 would leave SELinux permissive with no stage to continue.
+         * Absent (a parse/preview document carries no `mode`) keeps the
+         * previous behaviour. */
         switch (profile::check_pipeline(decoded.meta.pipeline, w1_only)) {
             case profile::PipelineCheck::NotDeclared:
                 break;

@@ -138,7 +138,7 @@ internal class AndroidProfileConfigController(
             physLoad = physLoad,
             physOffset = physOffset,
             anchor = anchor,
-            layers = resolution.layers.copy(uncarriedKeys = emptyList()),
+            layers = resolution.layers,
             roots = roots,
             general = generalFields(full, baseline, route),
             route = route,
@@ -488,25 +488,20 @@ internal class AndroidProfileConfigController(
     ): ProfileImportResult {
         val text = externalProfiles.read(uri)
             ?: return ProfileImportResult.Rejected(listOf("the file cannot be read"))
-        ProfileDocumentParser.entryForRelease(text, deviceRelease, ::loadBundledInclude)
+        val entries = ProfileDocumentParser.entries(text, ::loadBundledInclude)
+            ?: return ProfileImportResult.Rejected(listOf("the file cannot be read"))
+        val entry = entries.firstOrNull { it["release"] == deviceRelease }
             ?: return ProfileImportResult.Rejected(
                 listOf("the file carries no profile for $deviceRelease"),
             )
-        /* An external file must be the schema this build writes. A generated
-         * document is converted by the app before it is saved, so an older
-         * schema here is a file from another build: refuse it rather than
-         * guessing what its fields meant. */
-        val authored = runCatching { HoconSupport.parseValue(text).asValueMap() }.getOrNull()
-        if (authored != null) {
-            val schema = (authored["schema_version"] as? Number)?.toInt()
-            if (schema != ProfileResolver.ProfileSchemaVersion) {
-                return ProfileImportResult.Rejected(
-                    listOf(
-                        "schema ${schema ?: "missing"} is not supported; this build " +
-                            "reads schema ${ProfileResolver.ProfileSchemaVersion}",
-                    ),
-                )
-            }
+        /* An external file must be the schema this build writes. The check reads
+         * the selected entry, so a list-form document is gated exactly like a
+         * single object (parsing the raw text as one object would skip a list). */
+        val schema = (entry["schema_version"] as? Number)?.toInt()
+        if (schema != ProfileResolver.ProfileSchemaVersion) {
+            return ProfileImportResult.Rejected(
+                listOf(ProfileResolver.schemaErrorMessage(schema)),
+            )
         }
         val previous = externalProfiles.readImportedProfile()
         if (!externalProfiles.writeImportedProfile(text)) {
@@ -775,9 +770,8 @@ internal class AndroidProfileConfigController(
     }
 
     /**
-     * Native decodes one complete `execution.routes` object, while profiles only
-     * include the route they use (plus their fallback). Missing groups are
-     * filled from the shared `execution-<route>.conf` files.
+     * Native decodes one complete `execution.routes` object. Missing groups are
+     * filled from the shared `execution-<route>.conf` presets.
      */
     private fun fillRouteExecutionDefaults(profile: ValueMap) {
         val presets = ProfileConfig.Routes
@@ -792,7 +786,6 @@ internal class AndroidProfileConfigController(
         ).asValueMap()?.get("execution").asValueMap()?.get("routes").asValueMap()?.get(route).asValueMap()
     }.getOrNull()
 
-    /** The exported document keeps only the selected route's tuning (+ fallback). */
     private fun readIndex(): ValueMap? = runCatching {
         HoconSupport.parseValue(readAsset("$BuiltinDirectory/index.conf")).asValueMap()
             ?: error("index.conf is not an object")

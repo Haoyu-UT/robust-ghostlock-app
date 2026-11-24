@@ -18,26 +18,17 @@ data class OptionAnchor(
 
 data class OptionScratch(
     val image: Long,
-    val window: Long,
-    val reservedFirst: Long?,
-    val reservedLast: Long?,
-) {
-    /** The window lies inside the anchor region and reserves lock slots. */
-    val inAnchor: Boolean get() = reservedFirst != null
-}
+)
 
 /** The `scratchSource` spelling for a scratch inside the anchor's own region. */
 const val ScratchInAnchor = "in-anchor"
 
 data class OptionPlan(
-    val route: String,
     val anchor: OptionAnchor?,
     val scratch: OptionScratch?,
-    val pageFree: Boolean,
     val conditioned: Boolean,
     val anchorName: String?,
     val scratchSource: String?,
-    val reason: String,
 ) {
     /** A short technical label (logs and tests): the anchor region and, when it
      * is not in-anchor, the scratch region. */
@@ -49,20 +40,15 @@ data class OptionPlan(
         }
 }
 
-/** One non-primary carrier of a route, with its own geometry. */
+/** One non-primary carrier of a route. */
 data class OptionRouteVariant(
     val carrier: String,
     val verdict: String,
-    val reason: String,
-    val geometry: Map<String, Long>,
 )
 
 data class OptionRoute(
     val route: String,
     val verdict: String,
-    val reason: String,
-    val anchorCapable: Boolean,
-    val geometry: Map<String, Long>,
     /** The primary carrier: `native` or `compat`. */
     val carrier: String = "native",
     /** The route's other feasible carriers (the carrier × route matrix). */
@@ -70,13 +56,11 @@ data class OptionRoute(
 )
 
 /** One `device_analysis[]` record: the sidecar set the derivations were made
- * for and where its physical pair came from. The pair itself lives in the
- * document (`devices.<codename>.phys`), not here.
+ * for. The pair itself lives in the document (`devices.<codename>.phys`).
  */
 data class OptionDevice(
     /** Codename; null when the pass had no device sidecar set. */
     val device: String?,
-    val physSource: String,
 )
 
 data class RoutePlans(
@@ -117,7 +101,6 @@ fun RoutePlans.decision(): OptionDecision = when {
 
 data class OptionSuperset(
     val release: String,
-    val kernelMajor: Int?,
     val routes: List<OptionRoute>,
     val plans: List<RoutePlans>,
     /** The cleaned v3 profile document the extractor rendered for this image:
@@ -206,16 +189,11 @@ data class OptionSuperset(
                     OptionRouteVariant(
                         carrier = carrier,
                         verdict = altMap["verdict"] as? String ?: "",
-                        reason = altMap["reason"] as? String ?: "",
-                        geometry = geometryOf(altMap["geometry"]),
                     )
                 }
                 OptionRoute(
                     route = route,
                     verdict = map["verdict"] as? String ?: "",
-                    reason = map["reason"] as? String ?: "",
-                    anchorCapable = map["anchor_capable"] as? Boolean ?: false,
-                    geometry = geometryOf(map["geometry"]),
                     carrier = map["carrier"] as? String ?: "native",
                     alternatives = alternatives,
                 )
@@ -240,14 +218,10 @@ data class OptionSuperset(
                     )
                 }
             val devices = analysis.map { map ->
-                OptionDevice(
-                    device = map["device"] as? String,
-                    physSource = map["phys_source"] as? String ?: "unset",
-                )
+                OptionDevice(device = map["device"] as? String)
             }
             OptionSuperset(
                 release = root["release"] as? String ?: return@runCatching null,
-                kernelMajor = (root["kernel_major"] as? Number)?.toInt(),
                 routes = routes,
                 plans = plans,
                 document = document,
@@ -255,15 +229,9 @@ data class OptionSuperset(
             )
         }.getOrNull()
 
-        private fun geometryOf(value: Any?): Map<String, Long> =
-            value.asValueMap().orEmpty()
-                .mapNotNull { (key, item) -> (item as? Number)?.let { key to it.toLong() } }
-                .toMap()
-
         private fun plan(value: Any?): OptionPlan? {
             val map = value.asValueMap() ?: return null
             return OptionPlan(
-                route = map["route"] as? String ?: return null,
                 anchor = map["anchor"].asValueMap()?.let { anchor ->
                     OptionAnchor(
                         image = (anchor["image"] as? Number)?.toLong() ?: return@let null,
@@ -274,16 +242,11 @@ data class OptionSuperset(
                 scratch = map["scratch"].asValueMap()?.let { scratch ->
                     OptionScratch(
                         image = (scratch["image"] as? Number)?.toLong() ?: return@let null,
-                        window = (scratch["window"] as? Number)?.toLong() ?: 0,
-                        reservedFirst = (scratch["reserved_first"] as? Number)?.toLong(),
-                        reservedLast = (scratch["reserved_last"] as? Number)?.toLong(),
                     )
                 },
-                pageFree = map["page_free"] as? Boolean ?: false,
                 conditioned = map["conditioned"] as? Boolean ?: false,
                 anchorName = map["anchor_name"] as? String,
                 scratchSource = map["scratch_source"] as? String,
-                reason = map["reason"] as? String ?: "",
             )
         }
 

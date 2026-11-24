@@ -116,4 +116,19 @@ class ProfileMergerTest {
         assertEquals(device, resolved["release"])
         assertEquals(21L, ((resolved["timer"] as ValueMap)["match_bits"] as Number).toLong())
     }
+
+    @Test
+    fun `an older schema layer is refused before the merge stamps v3`() {
+        val old = document(device).apply { put("schema_version", 2L) }
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            ProfileMerger.resolveMerged(
+                deviceRelease = device,
+                builtin = old,
+                imported = null,
+                tuningExecution = null,
+                routePresets = emptyMap(),
+            )
+        }
+        assertEquals(ProfileResolver.schemaErrorMessage(2), error.message)
+    }
 }

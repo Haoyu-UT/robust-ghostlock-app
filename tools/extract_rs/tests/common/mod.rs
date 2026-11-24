@@ -8,7 +8,6 @@
 
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::Ordering;
@@ -26,11 +25,6 @@ pub struct Meta {
     /// Empty on a legacy root-sidecar entry.
     pub devices: Vec<String>,
     pub image: Option<PathBuf>,
-    /// The entry's recorded pipeline choice (`meta.txt` `pipeline = ...`).
-    /// The extractor requires `--pipeline` when both are feasible, so every
-    /// maximal invocation passes the entry's own choice, as the ship script
-    /// does.
-    pub pipeline: Option<String>,
 }
 
 impl Meta {
@@ -60,7 +54,6 @@ pub fn parse_meta(dir: &Path) -> Option<Meta> {
     let mut device = None;
     let mut devices: Vec<String> = Vec::new();
     let mut image = None;
-    let mut pipeline = None;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -73,7 +66,6 @@ pub fn parse_meta(dir: &Path) -> Option<Meta> {
         match key.trim() {
             "release" => release = Some(value.trim_matches('"').to_string()),
             "corpus" => corpus = Some(value.to_string()),
-            "pipeline" => pipeline = Some(value.trim_matches('"').to_string()),
             "phys" => phys = parse_phys(value),
             "device" => device = Some(value.trim_matches('"').to_string()),
             "devices" => devices.extend(
@@ -133,7 +125,6 @@ pub fn parse_meta(dir: &Path) -> Option<Meta> {
         device,
         devices,
         image,
-        pipeline,
     })
 }
 
@@ -376,42 +367,6 @@ fn run_options_one(bin: &str, meta: &Meta, sidecars: &Path, device: Option<&str>
     }
 }
 
-/// The CLI's default conf render for a route: `--anchor` with no operator
-/// flags, which follows the same auto plan as the cut.
-pub fn run_auto_conf(bin: &str, meta: &Meta, route: &str) -> Run {
-    let device = meta.device.clone().or_else(|| meta.devices.first().cloned());
-    run_auto_conf_for(bin, meta, route, device.as_deref())
-}
-
-/// The CLI's default conf render for one explicit device sidecar set.
-pub fn run_auto_conf_for(bin: &str, meta: &Meta, route: &str, device: Option<&str>) -> Run {
-    let dir = sidecar_dir_for(meta, device);
-    let mut command = build_command(bin, meta, &dir);
-    command
-        .arg("--format")
-        .arg("conf")
-        .arg("--route")
-        .arg(route)
-        .arg("--anchor");
-    if let Some(pipeline) = &meta.pipeline {
-        command.arg("--pipeline").arg(pipeline);
-    }
-    if let Some(device) = device {
-        command.arg("--device").arg(device);
-    }
-    let args: Vec<String> = command
-        .get_args()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect();
-    let output = command.output().expect("run extractor");
-    Run {
-        exit: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        args,
-    }
-}
-
 /// The no-disassembly control for one route (negative test for a foreign
 /// family constant leaking into another family's profile).
 pub fn run_no_disasm(bin: &str, meta: &Meta, route: &str) -> Run {
@@ -434,35 +389,6 @@ pub fn run_no_disasm(bin: &str, meta: &Meta, route: &str) -> Run {
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         args,
     }
-}
-
-/// Strip comments and split a profile into top-level blocks (by name).
-pub fn blocks(text: &str) -> BTreeMap<String, BTreeSet<String>> {
-    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut current: Option<String> = None;
-    for raw in text.lines() {
-        let line = raw.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Some(name) = &current {
-            out.entry(name.clone())
-                .or_default()
-                .insert(line.to_string());
-            if line == "}" {
-                current = None;
-            }
-        } else if let Some(rest) = line.strip_suffix('{') {
-            current = Some(rest.trim().to_string());
-        } else if line == "}" {
-            // unbalanced; ignore
-        } else {
-            out.entry(String::new())
-                .or_default()
-                .insert(line.to_string());
-        }
-    }
-    out
 }
 
 /// Run `f` over `items` on a small worker pool. Each entry's extractor

@@ -120,7 +120,7 @@ struct Cli {
     #[arg(long)]
     explain: bool,
     /// scan .bss for a usable lock-anchor region and report the
-    /// route.select_stack.lock_anchor_* triple instead of offsets
+    /// `ghostlock.anchor` triple (image/bytes/stride) instead of offsets
     #[arg(long)]
     anchor_scan: bool,
     /// minimum symbol extent considered by --anchor-scan
@@ -2018,14 +2018,12 @@ register provenance across branches; supply it in the profile (see the design do
         match anchor::profile_triple(&a) {
             Some((image, bytes, stride)) => {
                 out.push_str(&format!(
-                    "  => lock_anchor_image = {}   (place under the selected route)\n",
-                    image
+                    "  => ghostlock.anchor {{ image = {}, bytes = {}, stride = {} }}\n",
+                    image, bytes, stride
                 ));
                 out.push_str(&format!(
-                    "     lock_anchor_bytes = {}   (safe prefix 0x{:x} rounded down)\n",
-                    bytes, a.safe_len
+                    "     (bytes is the safe prefix 0x{:x} rounded down)\n\n", a.safe_len
                 ));
-                out.push_str(&format!("     lock_anchor_stride = {}\n\n", stride));
             }
             None => {
                 out.push_str("  => no triple: the safe prefix is shorter than one lock slot\n\n")
