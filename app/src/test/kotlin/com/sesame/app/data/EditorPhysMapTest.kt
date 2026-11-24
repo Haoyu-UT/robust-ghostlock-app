@@ -67,10 +67,11 @@ class EditorPhysMapTest {
 
         val document = entry(controller.renderResolved(release) ?: error("no render"))
         assertEquals(3, (document["schema_version"] as Number).toInt())
-        assertTrue(document["kernel_phys_load"] is Map<*, *>)
-        assertNull(document["kernel_phys_offset"])
-        val diting = PerDevicePhys.resolveFor(document, listOf("diting")).document
-        assertEquals(2818572288L, diting["kernel_phys_load"])
-        assertNull(diting["kernel_phys_offset"])
+        assertTrue(document["devices"] is Map<*, *>)
+        val (load, offset) = com.sesame.app.data.profile.ProfileResolver.physOf(
+            PerDevicePhys.resolveFor(document, listOf("diting")).document,
+        )
+        assertEquals(2818572288L, load)
+        assertNull(offset)
     }
 }

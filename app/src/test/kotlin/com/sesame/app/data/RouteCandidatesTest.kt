@@ -140,7 +140,7 @@ class RouteCandidatesTest {
         val config = controller("route-candidates-a").load(release)
         assertEquals(
             listOf(
-                "multicast_waiter", "select_stack", "sigreturn", "tcp_zerocopy", "timer_98260",
+                "multicast_waiter", "select_stack", "sigreturn", "tcp_zerocopy", "timer",
             ),
             config.routeCandidates.map { it.name },
         )
@@ -154,9 +154,9 @@ class RouteCandidatesTest {
     @Test
     fun `the timer choice is remembered and the editor keeps the native route`() = runBlocking {
         val controller = controller("route-candidates-b")
-        assertTrue(controller.selectRoute(release, "timer_98260"))
+        assertTrue(controller.selectRoute(release, "timer"))
         val config = controller.load(release)
-        assertEquals("timer_98260", config.selectedRoute)
+        assertEquals("timer", config.selectedRoute)
         assertEquals("multicast_waiter", config.route)
     }
 
@@ -174,14 +174,14 @@ class RouteCandidatesTest {
     fun `a non-viable selection is refused and cleared`() = runBlocking {
         val controller = controller("route-candidates-d")
         assertFalse(controller.selectRoute(release, "bogus_route"))
-        assertTrue(controller.selectRoute(release, "timer_98260"))
+        assertTrue(controller.selectRoute(release, "timer"))
     }
 
     @Test
     fun `the export keeps the timer block and the native route`() = runBlocking {
         val text = controller("route-candidates-e").renderResolved(release)
         assertNotNull(text)
-        assertTrue(text!!.contains("timer_98260"))
+        assertTrue(text!!.contains("timer"))
         assertTrue(text.contains("select_stack"))
     }
 }

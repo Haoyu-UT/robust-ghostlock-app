@@ -57,8 +57,8 @@ class TimerOnlyDocumentTest {
         val text = document!!
         val flat = text.replace(Regex("\\s+"), " ")
         assertTrue(text, text.contains("release = \"$release\""))
-        assertTrue(flat, flat.contains("pipeline = [ \"timer\" ]"))
-        assertTrue(text, text.contains("timer_98260"))
+        assertTrue(text, text.contains("timer {"))
+        assertTrue(flat, flat.contains("ghostlock = null"))
         assertTrue(flat, flat.contains("schema_version = 3"))
         assertFalse(text, text.contains("task_struct"))
         assertFalse(text, text.contains("kernel_phys_load"))
@@ -74,8 +74,8 @@ class TimerOnlyDocumentTest {
         val model: ProfileConfig = controller.load(release)
         assertTrue(model.hasProfile)
         assertTrue("invalid fields ${model.invalidPaths}", model.invalidPaths.isEmpty())
-        assertEquals(listOf("timer_98260"), model.routeCandidates.map { it.name })
-        assertEquals("timer_98260", model.selectedRoute)
+        assertEquals(listOf("timer"), model.routeCandidates.map { it.name })
+        assertEquals("timer", model.selectedRoute)
         assertEquals(null, model.route)
     }
 

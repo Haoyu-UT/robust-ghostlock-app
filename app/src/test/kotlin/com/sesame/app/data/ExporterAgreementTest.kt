@@ -24,9 +24,15 @@ class ExporterAgreementTest {
     private val context: Application = RuntimeEnvironment.getApplication()
 
     private fun isModuleOnly(file: String): Boolean {
-        val document = HoconSupport.parseValue(
+        val authored = HoconSupport.parseValue(
             AssetConfigLoader(context).load("kernel_profiles/$file"),
         ).asValueMap() ?: return false
+        val document = if (com.sesame.app.data.profile.ProfileResolver.isCleanedShape(authored)) {
+            authored
+        } else {
+            com.sesame.app.data.profile.LegacyProfileShape.convert(authored)
+                ?.asValueMap() ?: return false
+        }
         val order = com.sesame.app.data.profile.ProfileResolver.pipelineOrder(document)
         return "module" in order &&
             !com.sesame.app.data.profile.ProfileResolver.requiresW1(order)

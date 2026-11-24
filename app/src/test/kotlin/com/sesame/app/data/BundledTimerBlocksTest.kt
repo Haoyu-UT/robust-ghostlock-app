@@ -41,16 +41,19 @@ class BundledTimerBlocksTest {
         var blocks = 0
         var way2 = 0
         for ((release, file) in entries) {
-            val document = HoconSupport.parseValue(loader.load("kernel_profiles/$file"))
+            val authored = HoconSupport.parseValue(loader.load("kernel_profiles/$file"))
                 .asValueMap() ?: continue
-            val raw = document["timer_98260"] ?: continue
+            val document = if (com.sesame.app.data.profile.ProfileResolver.isCleanedShape(authored)) {
+                authored
+            } else {
+                com.sesame.app.data.profile.LegacyProfileShape.convert(authored) ?: continue
+            }
+            val raw = document["timer"] ?: continue
             blocks++
             val (config, errors) = Timer98260.parse(raw)
             assertTrue("$release: $errors", errors.isEmpty())
-            val parsed = requireNotNull(config) { "$release: timer block did not parse" }
-            val label = if (parsed.fakeSupported) "real,fake" else "real"
-            assertEquals("$release: endgame label", label, parsed.endgameLabel)
-            if (parsed.fakeSupported) way2++
+            requireNotNull(config) { "$release: timer block did not parse" }
+            if (Timer98260.fakeSupported(document)) way2++
         }
 
         assertTrue("no bundled timer blocks parsed", blocks > 0)

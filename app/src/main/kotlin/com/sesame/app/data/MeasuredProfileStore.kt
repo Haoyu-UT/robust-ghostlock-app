@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets
 
 /** One root-measured or app-probed fact about one kernel. */
 internal data class MeasuredFact(
-    /** Dotted profile path the fact belongs to (`kernelsnitch.mm_struct_sz`). */
+    /** Dotted profile path the fact belongs to (`kernel.heap.stride`). */
     val key: String,
     val value: Long,
     /** Who measured it: [MeasuredProfileStore.SourceRootSlabinfo] or
@@ -60,7 +60,7 @@ internal class MeasuredProfileStore(private val file: File) {
         const val SchemaVersion = 1L
         const val SourceRootSlabinfo = "root-slabinfo"
         const val SourceDirtyfragProbe = "dirtyfrag-probe"
-        const val KeyMmStructSz = "kernelsnitch.mm_struct_sz"
+        const val KeyMmStructSz = "kernel.heap.stride"
         const val KeyDirtyfragProbe = "dirtyfrag.probe"
         const val KeyDirtyfragProbeRom = "dirtyfrag.probe_rom"
         const val KeyDirtyfragProbeProtocol = "dirtyfrag.probe_protocol"

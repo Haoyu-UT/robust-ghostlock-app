@@ -53,6 +53,19 @@ class OptionSupersetDeviceCutTest {
     private fun cutDocument(text: String): ValueMap =
         HoconSupport.parseValue(text).asValueMap() ?: error("cut is not an object")
 
+    private fun cleaned(document: ValueMap): ValueMap =
+        if (com.sesame.app.data.profile.ProfileResolver.isCleanedShape(document)) {
+            document
+        } else {
+            com.sesame.app.data.profile.LegacyProfileShape.convert(document)
+                ?.asValueMap() ?: error("the cut did not convert")
+        }
+
+    private fun pair(document: ValueMap, device: String): Pair<Long?, Long?> =
+        com.sesame.app.data.profile.ProfileResolver.physOf(
+            PerDevicePhys.resolveFor(cleaned(document), listOf(device)).document,
+        )
+
     @Test
     fun `the cut selects the device pair and emits a v3 map`() {
         val superset = superset()
@@ -60,9 +73,7 @@ class OptionSupersetDeviceCutTest {
         val plans = superset.plansFor("select_stack") ?: error("no plans")
         val document = cutDocument(superset.cut("select_stack", plans.page)!!)
         assertEquals(3, (document["schema_version"] as Number).toInt())
-        val resolved = PerDevicePhys.resolveFor(document, listOf("diting")).document
-        assertEquals(2818572288L, resolved["kernel_phys_load"])
-        assertNull(resolved["kernel_phys_offset"])
+        assertEquals(2818572288L to null, pair(document, "diting"))
     }
 
     @Test
@@ -70,19 +81,20 @@ class OptionSupersetDeviceCutTest {
         val superset = superset()
         val plans = superset.plansFor("select_stack") ?: error("no plans")
         val document = cutDocument(superset.cut("select_stack", plans.page, "yunluo")!!)
-        val resolved = PerDevicePhys.resolveFor(document, listOf("yunluo")).document
-        assertEquals(1073741824L, resolved["kernel_phys_load"])
-        assertEquals(1073741824L, resolved["kernel_phys_offset"])
+        assertEquals(1073741824L to 1073741824L, pair(document, "yunluo"))
     }
 
     @Test
-    fun `a legacy superset without devices keeps the scalar`() {
+    fun `a legacy superset without devices carries no pair`() {
+        /* The cleaned document has no global physical pair: it is a per-device
+         * entry. A cut with no device list keeps the native defaults, and a
+         * platform that needs the pair refuses it at import (fail-closed). */
         val superset = superset().copy(devices = emptyList())
         val plans = superset.plansFor("select_stack") ?: error("no plans")
         val document = cutDocument(superset.cut("select_stack", plans.page)!!)
         assertEquals(3, (document["schema_version"] as Number).toInt())
-        val resolved = PerDevicePhys.resolveFor(document, listOf("diting")).document
-        assertEquals(2818572288L, resolved["kernel_phys_load"])
-        assertNull(resolved["kernel_phys_offset"])
+        val cleanedDocument = cleaned(document)
+        assertEquals(null to null,
+            com.sesame.app.data.profile.ProfileResolver.physOf(cleanedDocument))
     }
 }

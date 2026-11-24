@@ -80,7 +80,6 @@ class ProfileLayerPolicyTest {
         assertNotNull(controller.selectExternalProfile(uri, bundledRelease))
 
         val config = controller.load(bundledRelease)
-
         assertTrue(config.hasProfile)
         assertEquals(4242L, generalValue(config, routeWaitPath))
         val layers = checkNotNull(config.layers)
@@ -324,7 +323,9 @@ class ProfileLayerPolicyTest {
 
         assertTrue(config.hasProfile)
         assertTrue(config.invalidPaths.isEmpty())
-        assertTrue(config.pipelineOrder.isEmpty())
+        /* No pipeline list: the document's own verdict derives the fixed
+         * ladder (this fixture states no DirtyFrag verdict, so GhostLock). */
+        assertEquals(listOf("ghostlock"), config.pipelineOrder)
     }
 
     @Test
@@ -350,7 +351,7 @@ class ProfileLayerPolicyTest {
         assertTrue(
             result.toString(),
             result is ProfileImportResult.Rejected &&
-                result.errors.any { it.startsWith("offset.init_task") },
+                result.errors.any { it.startsWith("kernel.symbols.init_task") },
         )
         /* The rejected copy is not kept: the bundled profile applies again. */
         assertTrue(controller.load(bundledRelease).hasProfile)
@@ -430,7 +431,7 @@ class ProfileLayerPolicyTest {
             result.toString(),
             result is ProfileImportResult.Rejected &&
                 result.errors.any {
-                    it.startsWith("route.multicast_waiter.compat_waiter_off")
+                    it.startsWith("ghostlock.syscalls.multicast_waiter.compat.waiter_off")
                 },
         )
     }

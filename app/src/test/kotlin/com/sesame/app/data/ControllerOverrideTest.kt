@@ -47,14 +47,14 @@ class ControllerOverrideTest {
     @Test
     fun `renderMerged applies a measured fact and refuses an implausible one`() = runBlocking {
         val text = requireNotNull(
-            controller.renderMerged(release, mapOf("kernelsnitch.mm_struct_sz" to 960L)),
+            controller.renderMerged(release, mapOf("kernel.heap.stride" to 960L)),
         )
         val parsed = checkNotNull(HoconSupport.parseValue(text).asValueMap())
-        val snitch = checkNotNull(parsed["kernelsnitch"].asValueMap())
-        assertEquals(960L, (snitch["mm_struct_sz"] as Number).toLong())
+        val heap = checkNotNull((parsed["kernel"] as ValueMap)["heap"].asValueMap())
+        assertEquals(960L, (heap["stride"] as Number).toLong())
 
         assertNull(
-            controller.renderMerged(release, mapOf("kernelsnitch.mm_struct_sz" to 7L)),
+            controller.renderMerged(release, mapOf("kernel.heap.stride" to 7L)),
         )
     }
 
@@ -69,7 +69,7 @@ class ControllerOverrideTest {
             updatedAt = 0L,
             facts = listOf(
                 MeasuredFact(
-                    "kernelsnitch.mm_struct_sz", 960L, "root-slabinfo", "mm_struct …", 0L,
+                    "kernel.heap.stride", 960L, "root-slabinfo", "mm_struct …", 0L,
                 ),
                 MeasuredFact(
                     MeasuredProfileStore.KeyDirtyfragProbe, 1L, "dirtyfrag-probe", "control=pass", 0L,
@@ -93,7 +93,7 @@ class ControllerOverrideTest {
             ),
         )
         val parsed = checkNotNull(HoconSupport.parseValue(text).asValueMap())
-        assertEquals(960L, parsed.getLongAt("kernelsnitch.mm_struct_sz"))
+        assertEquals(960L, parsed.getLongAt("kernel.heap.stride"))
         assertNull(parsed["dirtyfrag"])
     }
 

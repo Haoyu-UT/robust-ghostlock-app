@@ -64,7 +64,7 @@ class ProfileBranchValidationTest {
         val errors = (result as ProfileImportResult.Rejected).errors
         assertTrue(
             errors.toString(),
-            errors.any { it.startsWith("route.select_stack.waiter_shift") },
+            errors.any { it.startsWith("ghostlock.syscalls.select_stack.native.waiter_shift") },
         )
     }
 }

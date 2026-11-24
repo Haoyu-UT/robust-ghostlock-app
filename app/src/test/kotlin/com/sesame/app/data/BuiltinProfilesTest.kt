@@ -5,6 +5,7 @@ import androidx.core.content.edit
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -134,6 +135,9 @@ class BuiltinProfilesTest {
         }
     }
 
+    private fun flattenPaths(nodes: List<com.sesame.app.domain.model.ProfileFieldNode>): List<String> =
+        nodes.flatMap { node -> listOf(node.path) + flattenPaths(node.children) }
+
     private fun isModuleOnly(config: com.sesame.app.domain.model.ProfileConfig): Boolean =
         "module" in config.pipelineOrder &&
             !com.sesame.app.data.profile.ProfileResolver.requiresW1(config.pipelineOrder)
@@ -186,36 +190,58 @@ class BuiltinProfilesTest {
                  * profile carries no route geometry. */
                 if (isModuleOnly(config)) continue
                 val paths = leafPaths(config.roots)
-                assertTrue("${entry.release}: kernel_phys_load missing", "kernel_phys_load" in paths)
+                /* The physical pair is a per-device entry; the numeric tree
+                 * does not carry address strings, so the resolved pair is
+                 * checked on the config. A profile that leaves the pair null
+                 * keeps the native default. */
+                val raw = HoconSupport.parseValue(
+                    AssetConfigLoader(context).load("kernel_profiles/${entry.file}"),
+                ).asValueMap()
+                if (raw?.get("kernel_phys_load") is Map<*, *>) {
+                    assertNotNull("${entry.release}: physLoad unset for a mapped pair", config.physLoad)
+                } else {
+                    assertNull("${entry.release}: physLoad without a map", config.physLoad)
+                }
                 for (field in listOf(
                     "prio", "normal_prio", "sched_task_group", "pi_lock", "pi_waiters",
                     "pi_top_task", "pi_blocked_on", "pid", "tgid", "atomic_flags", "real_cred",
                     "cred", "comm", "tasks", "seccomp",
                 )) {
-                    assertTrue("${entry.release}: task_struct.$field missing", "task_struct.$field" in paths)
+                    assertTrue(
+                        "${entry.release}: kernel.struct.task.$field missing",
+                        "kernel.struct.task.$field" in paths,
+                    )
                 }
-                for (field in listOf("copy_size", "caps_count", "ref0_offset", "ref3_image")) {
-                    assertTrue("${entry.release}: cred.$field missing", "cred.$field" in paths)
+                for (field in listOf(
+                    "kernel.struct.cred.copy_size",
+                    "kernel.struct.cred.caps.count",
+                    "kernel.struct.cred.refs.user.offset",
+                    "kernel.struct.cred.refs.group_info.offset",
+                )) {
+                    assertTrue("${entry.release}: $field missing", field in paths)
                 }
                 for (field in listOf(
                     "init_task", "init_cred", "empty_zero_page", "root_task_group",
-                    "slide_nfulnl_logger", "slide_boot_id",
+                    "nf_logger", "boot_id",
                 )) {
-                    assertTrue("${entry.release}: offset.$field missing", "offset.$field" in paths)
+                    assertTrue(
+                        "${entry.release}: kernel.symbols.$field missing",
+                        "kernel.symbols.$field" in paths,
+                    )
                 }
-                assertTrue("${entry.release}: kernelsnitch.collisions missing",
-                    "kernelsnitch.collisions" in paths)
+                assertTrue("${entry.release}: kernel.heap.collisions missing",
+                    "kernel.heap.collisions" in paths)
                 /* The spray sizes from this value; a profile that silently
                  * drops the declared key falls back to the compiled 1280
                  * (25 objects/slab) without saying so. The bundled set must
                  * carry the family value (or an explicit null). */
-                assertTrue("${entry.release}: kernelsnitch.mm_struct_sz missing",
-                    "kernelsnitch.mm_struct_sz" in paths)
+                assertTrue("${entry.release}: kernel.heap.stride missing",
+                    "kernel.heap.stride" in paths)
                 assertTrue("${entry.release}: route branch missing",
-                    paths.any { it.startsWith("route.") })
+                    paths.any { it.startsWith("ghostlock.syscalls.") })
                 /* Execution tuning belongs to the general page, never here. */
                 assertTrue("${entry.release}: execution leaked into advanced tree",
-                    paths.none { it.startsWith("execution") })
+                    paths.none { it.startsWith("ghostlock.execution") })
             }
         } finally {
             root.deleteRecursively()

@@ -587,7 +587,7 @@ def ghostlock_block(document, all_branches, selected):
             "sha256": module.get("asset_sha256"),
             "vendor_files": module.get("vendor_files"),
         } if module else None,
-        "execution": None,
+        "execution": document.get("execution"),
     }
 
 

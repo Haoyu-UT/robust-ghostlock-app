@@ -23,6 +23,8 @@ import com.sesame.app.data.OptionSuperset
 import com.sesame.app.data.RoutePlans
 import com.sesame.app.data.ScratchInAnchor
 import com.sesame.app.data.TimerBlockText
+import com.sesame.app.data.HoconSupport
+import com.sesame.app.data.asValueMap
 import com.sesame.app.data.TimerOnlyDocument
 import com.sesame.app.data.decision
 import com.sesame.app.domain.model.RunLogState
@@ -2191,7 +2193,7 @@ class GhostlockViewModel(
         release: String,
         stride: Int?,
     ) {
-        val text = if (stride != null) {
+        val adjusted = if (stride != null) {
             repository.applyStrideToDocument(document, release, stride) ?: run {
                 appendLog("stride: could not update the generated document")
                 document
@@ -2199,7 +2201,21 @@ class GhostlockViewModel(
         } else {
             document
         }
-        if (stride != null) appendLog("stride: kernelsnitch.mm_struct_sz = $stride")
+        /* The generator still emits the pre-release layout; the app stores and
+         * exports the cleaned shape (the one-off asset migration and the
+         * extractor's own switch are separate workstreams). */
+        val text = runCatching {
+            val parsed = HoconSupport.parseValue(adjusted).asValueMap()
+            parsed?.let {
+                val cleaned = if (com.sesame.app.data.profile.ProfileResolver.isCleanedShape(it)) {
+                    it
+                } else {
+                    com.sesame.app.data.profile.LegacyProfileShape.convert(it)
+                }
+                cleaned?.let(HoconSupport::render)
+            }
+        }.getOrNull() ?: adjusted
+        if (stride != null) appendLog("stride: kernel.heap.stride = $stride")
         val suggested = name?.takeIf { it.endsWith(".conf") }
             ?: exportDocumentName(release)
         if (nav.current == Screen.Generation) {

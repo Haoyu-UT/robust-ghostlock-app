@@ -63,8 +63,8 @@ class ControllerInternalsTest {
             assertTrue(treePaths.none { it.startsWith("execution.selected_cpus.") })
 
             val generalPaths = config.general.map { it.path }
-            assertTrue(generalPaths.any { it.startsWith("execution.routes.tcp_zerocopy.") })
             assertTrue(generalPaths.any { it.startsWith("execution.routes.select_stack.") })
+            assertTrue(generalPaths.none { it.startsWith("execution.routes.sigreturn.") })
         }
 
     @Test
