@@ -77,7 +77,9 @@ class DeviceDefaultsTest {
             fun pair(device: String) = com.sesame.app.data.profile.ProfileResolver.physOf(
                 PerDevicePhys.resolve(cleaned, device),
             )
-            assertEquals(2818572288L to 2147483648L, pair("diting"))
+            /* The store states no DRAM base for the diting: the native's
+             * compiled default (0x80000000) applies. */
+            assertEquals(2818572288L to null, pair("diting"))
             assertEquals(1073741824L to 1073741824L, pair("yunluo"))
             assertEquals(1073741824L to 1073741824L, pair("rubens"))
             assertThrows(IllegalArgumentException::class.java) {

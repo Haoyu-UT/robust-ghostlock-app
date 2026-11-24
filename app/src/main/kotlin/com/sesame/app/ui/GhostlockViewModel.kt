@@ -22,7 +22,6 @@ import com.sesame.app.data.OptionPlan
 import com.sesame.app.data.OptionSuperset
 import com.sesame.app.data.RoutePlans
 import com.sesame.app.data.ScratchInAnchor
-import com.sesame.app.data.TimerBlockText
 import com.sesame.app.data.HoconSupport
 import com.sesame.app.data.asValueMap
 import com.sesame.app.data.TimerOnlyDocument
@@ -2859,13 +2858,9 @@ class GhostlockViewModel(
         /* The live stride probe only makes sense for the running kernel; a
          * profile generated for another image skips it. */
         val runningRelease = kernelSnapshot?.kernelRelease
-        /* The generated document may carry the optional timer block; a
-         * single-route cut rendered from the option superset does not. Carry
-         * the block into whatever this path exports (metadata only: the
-         * native wire never carries it). */
-        val exportDocument = result.documentText?.let { source ->
-            TimerBlockText.extract(source)?.let { TimerBlockText.append(document, it) }
-        } ?: document
+        /* The cut is a whole document cloned from the (timer-merged) option
+         * superset, so the timer block travels with it. */
+        val exportDocument = document
         val strideProbe = if (!skipStride && runningRelease != null &&
             runningRelease in result.releases
         ) {

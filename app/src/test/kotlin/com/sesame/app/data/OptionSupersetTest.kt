@@ -10,93 +10,155 @@ import org.junit.Test
 /**
  * The `--options-out` contract: the app reads every option and applies the
  * display rules itself (auto-take one safe option, offer several without page,
- * offer page only when nothing safe exists). The cut must materialize a
- * profile from the document without another extractor run.
+ * offer page only when nothing safe exists). The cut selects the route, carrier
+ * and plan inside the extractor's cleaned document; it assembles nothing.
  */
 class OptionSupersetTest {
-    private val sample = """
-        {
-          "schema_version": 1,
-          "release": "6.1.138-android14-11-g44bda9e8f6e9-ab13792638",
-          "kernel_major": 6,
-          "kernel_phys_load": 1073741824,
-          "kernel_phys_offset": 1073741824,
-          "phys_source": "vendor_boot DTB /memory",
-          "routes": [
-            { "route": "select_stack", "carrier": "native", "verdict": "feasible",
-              "reason": "pselect/futex geometry derived",
-              "anchor_capable": true,
-              "geometry": { "compact_waiter": 1, "waiter_shift": 1 },
-              "alternatives": [
-                { "carrier": "compat", "verdict": "feasible",
-                  "reason": "AArch32 compat carrier",
-                  "geometry": { "compat_carrier": 1, "waiter_home": 432,
-                                "select_dst_depth": 480, "compat_futex_abi": 0 } }
-              ] },
-            { "route": "tcp_zerocopy", "verdict": "feasible",
-              "reason": "cap 0x40", "anchor_capable": false, "geometry": { "compact_waiter": 1 } }
-          ],
-          "candidates": [],
-          "pipelines": [
-            { "pipeline": "ghostlock", "verdict": "feasible", "reason": "KDP is not enabled" },
-            { "pipeline": "dirtyfrag", "verdict": "feasible",
-              "reason": "the ESP fix is absent; send path ip_append_page" }
-          ],
-          "pipeline_order": ["dirtyfrag", "ghostlock"],
-          "plans": [
-            { "route": "select_stack",
-              "page": { "route": "select_stack", "anchor": null, "scratch": null,
-                        "page_free": false, "conditioned": false, "reason": "page" },
-              "anchor_only": { "route": "select_stack",
-                        "anchor": { "image": 35802320, "bytes": 4096, "stride": 32 },
-                        "scratch": null, "page_free": false, "conditioned": false,
-                        "anchor_name": "__dump_skip.zeroes", "reason": "anchor lock, page W1" },
-              "page_free": [
-                { "route": "select_stack",
-                  "anchor": { "image": 35802320, "bytes": 4096, "stride": 32 },
-                  "scratch": { "image": 35459072, "window": 0 },
-                  "page_free": true, "conditioned": false,
-                  "anchor_name": "__dump_skip.zeroes", "scratch_source": "bm_pmd",
-                  "reason": "unconditional page-free plan" },
-                { "route": "select_stack",
-                  "anchor": { "image": 35459072, "bytes": 4096, "stride": 32 },
-                  "scratch": { "image": 35459072, "window": 256,
-                               "reserved_first": 8, "reserved_last": 8 },
-                  "page_free": true, "conditioned": false,
-                  "anchor_name": "bm_pmd", "scratch_source": "in-anchor",
-                  "reason": "unconditional page-free plan" },
-                { "route": "select_stack",
-                  "anchor": { "image": 35947744, "bytes": 7392, "stride": 32 },
-                  "scratch": { "image": 35459072, "window": 0 },
-                  "page_free": true, "conditioned": true,
-                  "anchor_name": "s3c24xx_serial_ports", "scratch_source": "bm_pmd",
-                  "reason": "conditional page-free plan" }
-              ] },
-            { "route": "tcp_zerocopy",
-              "page": { "route": "tcp_zerocopy", "anchor": null, "scratch": null,
-                        "page_free": false, "conditioned": false, "reason": "page" },
-              "page_free": [] }
-          ],
-          "profile": {
-            "": { "release": "\"6.1.138-android14-11-g44bda9e8f6e9-ab13792638\"",
-                  "schema_version": "1", "kernel_major": "6",
-                  "kernel_phys_load": "1073741824",
-                  "kernel_phys_offset": "null" },
-            "fallback": { "to": "\"none\"" },
-            "selinux": { "enforcing": "0", "initialized": "2" },
-            "kernelsnitch": { "collisions": "4", "rt_mutex_size": "32" },
-            "task_struct": { "prio": "132", "comm": "2120" },
-            "cred": { "copy_size": "128", "caps_offset": "40" },
-            "offset": { "init_task": "33420800", "slide_loggers_0_1": "33368344" },
-            "waiter_layout": { "compact": "1", "pi_tree": "24" }
-          }
-        }
-    """.trimIndent()
+    private val release = "6.1.138-android14-11-g44bda9e8f6e9-ab13792638"
+
+    private fun plan(
+        route: String,
+        anchor: Long? = null,
+        scratch: Long? = null,
+        pageFree: Boolean = false,
+        conditioned: Boolean = false,
+        anchorName: String? = null,
+        scratchSource: String? = null,
+        inAnchor: Boolean = false,
+    ): ValueMap = valueMapOf(
+        "route" to route,
+        "anchor" to anchor?.let {
+            valueMapOf("image" to it, "bytes" to 4096L, "stride" to 32L)
+        },
+        "scratch" to scratch?.let {
+            valueMapOf(
+                "image" to it,
+                "window" to 0L,
+                "reserved_first" to if (inAnchor) 8L else null,
+                "reserved_last" to if (inAnchor) 8L else null,
+            )
+        },
+        "page_free" to pageFree,
+        "conditioned" to conditioned,
+        "anchor_name" to anchorName,
+        "scratch_source" to scratchSource,
+        "reason" to if (pageFree) "unconditional page-free plan" else "page",
+    )
+
+    private fun sample(): OptionSuperset {
+        val document = CleanedProfileFixture.document(release)
+        val kernel = document["kernel"].asValueMap()!!
+        kernel["dirtyfrag"] = "feasible"
+        val ghostlock = document["ghostlock"].asValueMap()!!
+        ghostlock["syscalls"] = valueMapOf(
+            "select_stack" to valueMapOf(
+                "native" to valueMapOf("waiter_shift" to 1L),
+                "compat" to valueMapOf(
+                    "waiter_home" to 432L,
+                    "dst_depth" to 480L,
+                    "futex_abi" to "time32",
+                ),
+            ),
+            "sigreturn" to null,
+            "multicast_waiter" to null,
+            "tcp_zerocopy" to valueMapOf(
+                "native" to valueMapOf(),
+                "compat" to null,
+            ),
+        )
+        val envelope = valueMapOf(
+            "schema_version" to 2L,
+            "release" to release,
+            "kernel_major" to 6L,
+            "kernel_phys_load" to 1073741824L,
+            "kernel_phys_offset" to 1073741824L,
+            "phys_source" to "vendor_boot DTB /memory",
+            "routes" to valueListOf(
+                valueMapOf(
+                    "route" to "select_stack",
+                    "carrier" to "native",
+                    "verdict" to "feasible",
+                    "reason" to "pselect/futex geometry derived",
+                    "anchor_capable" to true,
+                    "geometry" to valueMapOf("compact_waiter" to 1L, "waiter_shift" to 1L),
+                    "alternatives" to valueListOf(
+                        valueMapOf(
+                            "carrier" to "compat",
+                            "verdict" to "feasible",
+                            "reason" to "AArch32 compat carrier",
+                            "geometry" to valueMapOf(
+                                "compat_carrier" to 1L,
+                                "waiter_home" to 432L,
+                                "select_dst_depth" to 480L,
+                                "compat_futex_abi" to 0L,
+                            ),
+                        ),
+                    ),
+                ),
+                valueMapOf(
+                    "route" to "tcp_zerocopy",
+                    "carrier" to "native",
+                    "verdict" to "feasible",
+                    "reason" to "cap 0x40",
+                    "anchor_capable" to false,
+                    "geometry" to valueMapOf("compact_waiter" to 1L),
+                ),
+            ),
+            "pipelines" to valueListOf(
+                valueMapOf("pipeline" to "ghostlock", "verdict" to "feasible", "reason" to "KDP is not enabled"),
+                valueMapOf("pipeline" to "dirtyfrag", "verdict" to "feasible", "reason" to "the ESP fix is absent"),
+            ),
+            "pipeline_order" to valueListOf("dirtyfrag", "ghostlock"),
+            "plans" to valueListOf(
+                valueMapOf(
+                    "route" to "select_stack",
+                    "page" to plan("select_stack"),
+                    "anchor_only" to plan(
+                        "select_stack", anchor = 35802320L,
+                        anchorName = "__dump_skip.zeroes",
+                    ),
+                    "page_free" to valueListOf(
+                        plan(
+                            "select_stack", anchor = 35802320L, scratch = 35459072L,
+                            pageFree = true, anchorName = "__dump_skip.zeroes",
+                            scratchSource = "bm_pmd",
+                        ),
+                        plan(
+                            "select_stack", anchor = 35459072L, scratch = 35459072L,
+                            pageFree = true, anchorName = "bm_pmd",
+                            scratchSource = "in-anchor", inAnchor = true,
+                        ),
+                        plan(
+                            "select_stack", anchor = 35947744L, scratch = 35459072L,
+                            pageFree = true, conditioned = true,
+                            anchorName = "s3c24xx_serial_ports",
+                            scratchSource = "bm_pmd",
+                        ),
+                    ),
+                ),
+                valueMapOf(
+                    "route" to "tcp_zerocopy",
+                    "page" to plan("tcp_zerocopy"),
+                    "page_free" to valueListOf(),
+                ),
+            ),
+            "document" to document,
+            "devices" to valueListOf(
+                valueMapOf(
+                    "device" to "duchamp",
+                    "kernel_phys_load" to 1073741824L,
+                    "kernel_phys_offset" to 1073741824L,
+                    "phys_source" to "vendor_boot DTB /memory",
+                ),
+            ),
+        )
+        return requireNotNull(OptionSuperset.parse(HoconSupport.render(envelope)))
+    }
 
     @Test
     fun `all options are exposed and the UI filters them`() {
-        val superset = requireNotNull(OptionSuperset.parse(sample))
-        assertEquals("6.1.138-android14-11-g44bda9e8f6e9-ab13792638", superset.release)
+        val superset = sample()
+        assertEquals(release, superset.release)
         val plans = requireNotNull(superset.plansFor("select_stack"))
         assertEquals(2, plans.safeOptions.size)
         assertEquals(1, plans.conditionalOptions.size)
@@ -113,21 +175,17 @@ class OptionSupersetTest {
 
     @Test
     fun `the display rule follows the operator decision`() {
-        val superset = requireNotNull(OptionSuperset.parse(sample))
+        val superset = sample()
         val plans = requireNotNull(superset.plansFor("select_stack"))
         val decision = plans.decision()
         require(decision is OptionDecision.Offer)
         assertEquals(2, decision.options.size)
         assertFalse(decision.pageOffered)
 
-        val single = plans.copy(
-            pageFree = listOf(plans.safeOptions.first()),
-        )
+        val single = plans.copy(pageFree = listOf(plans.safeOptions.first()))
         require(single.decision() is OptionDecision.Auto)
 
-        val conditionalOnly = plans.copy(
-            pageFree = listOf(plans.conditionalOptions.first()),
-        )
+        val conditionalOnly = plans.copy(pageFree = listOf(plans.conditionalOptions.first()))
         val offer = conditionalOnly.decision()
         require(offer is OptionDecision.Offer)
         assertTrue(offer.pageOffered)
@@ -138,28 +196,21 @@ class OptionSupersetTest {
     }
 
     @Test
-    fun `both feasible pipelines are exposed and the cut carries the order`() {
-        val superset = requireNotNull(OptionSuperset.parse(sample))
+    fun `both feasible pipelines are exposed and the document carries the verdict`() {
+        val superset = sample()
         val feasible = superset.feasiblePipelines
         assertEquals(listOf("ghostlock", "dirtyfrag"), feasible.map { it.pipeline })
         assertEquals(listOf("dirtyfrag", "ghostlock"), superset.pipelineOrder)
         val plan = superset.plansFor("select_stack")!!.safeOptions[0]
-        /* The cut uses the superset's order by default... */
-        val chosen = requireNotNull(superset.cut("select_stack", plan))
-        /* The fixed ladder is derived from the verdict, not listed. */
-        assertTrue(chosen.contains("dirtyfrag = \"feasible\""))
-        /* An order without DirtyFrag leaves the verdict unknown. */
-        val override = requireNotNull(
-            superset.cut("select_stack", plan, pipelineOrder = listOf("ghostlock")),
-        )
-        assertTrue(override.contains("dirtyfrag = \"unknown\""))
-        val legacy = requireNotNull(superset.cut("select_stack", plan, pipelineOrder = emptyList()))
-        assertTrue(legacy.contains("dirtyfrag = \"unknown\""))
+        val cut = requireNotNull(superset.cut("select_stack", plan))
+        /* The fixed ladder is the document's own verdict, not a list. */
+        assertTrue(cut.contains("dirtyfrag = \"feasible\""))
+        assertFalse(cut.contains("pipeline ="))
     }
 
     @Test
-    fun `carrier alternatives are exposed and the cut renders the chosen one`() {
-        val superset = requireNotNull(OptionSuperset.parse(sample))
+    fun `carrier alternatives are exposed and the cut selects one`() {
+        val superset = sample()
         val route = requireNotNull(superset.route("select_stack"))
         assertEquals("native", route.carrier)
         val compat = route.alternatives.single()
@@ -167,32 +218,38 @@ class OptionSupersetTest {
         assertEquals(1L, compat.geometry["compat_carrier"])
         val plan = superset.plansFor("select_stack")!!.safeOptions[0]
         val native = requireNotNull(superset.cut("select_stack", plan))
-        assertTrue(native.contains("waiter_shift = 1"))
-        /* The profile form declares both carriers; the run picks one. */
+        assertTrue(native.contains("carrier = \"native\""))
+        /* The catalogue lists every carrier block; the run-time carrier picks. */
         assertTrue(native.contains("compat {"))
         val chosen = requireNotNull(superset.cut("select_stack", plan, carrier = "compat"))
-        assertTrue(chosen.contains("compat {"))
+        assertTrue(chosen.contains("carrier = \"compat\""))
         assertTrue(chosen.contains("waiter_home = 432"))
         assertTrue(chosen.contains("dst_depth = 480"))
         assertTrue(chosen.contains("futex_abi = \"time32\""))
-        assertFalse(chosen.contains("waiter_shift"))
         assertNull(superset.cut("select_stack", plan, carrier = "bogus"))
     }
 
     @Test
     fun `cut materializes the selected route and plan`() {
-        val superset = requireNotNull(OptionSuperset.parse(sample))
+        val superset = sample()
         val plan = superset.plansFor("select_stack")!!.safeOptions[0]
         val cut = requireNotNull(superset.cut("select_stack", plan))
-        assertTrue(cut.contains("release = \"6.1.138-android14-11-g44bda9e8f6e9-ab13792638\""))
+        assertTrue(cut.contains("release = \"$release\""))
         assertTrue(cut.contains("waiter_shift = 1"))
         assertTrue(cut.contains("shape = \"compact\""))
         assertTrue(cut.contains("image = \"0x2224cd0\""))
         assertTrue(cut.contains("scratch = \"0x21d1000\""))
         assertTrue(cut.contains("selinux_state {"))
-        assertTrue(cut.contains("prio = 132"))
+        assertTrue(cut.contains("prio = 1"))
         val page = requireNotNull(superset.cut("select_stack", superset.plansFor("select_stack")!!.page))
         assertTrue(page.contains("anchor = null"))
         assertNull(superset.cut("sigreturn", plan))
+    }
+
+    @Test
+    fun `a superset without a document cannot cut`() {
+        val superset = sample().copy(document = null)
+        val plan = superset.plansFor("select_stack")!!.safeOptions[0]
+        assertNull(superset.cut("select_stack", plan))
     }
 }

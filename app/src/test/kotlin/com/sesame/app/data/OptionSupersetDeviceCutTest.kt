@@ -2,63 +2,83 @@ package com.sesame.app.data
 
 import com.sesame.app.data.profile.PerDevicePhys
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
  * The on-device extractor records one full derivation per device sidecar set.
- * The ambiguous-route cut must select the running device's entry and emit a
- * schema-v3 map; a legacy superset without devices keeps the scalar.
+ * The cut selects the running device's entry and emits its pair; the document
+ * itself is device-neutral until the cut states one.
  */
 class OptionSupersetDeviceCutTest {
-    private val json = """
-        {
-          "release": "5.10.198-android12-9-00085-g226a9632f13d-ab11136126",
-          "kernel_major": 5,
-          "kernel_phys_load": 2818572288,
-          "kernel_phys_offset": null,
-          "phys_source": "uefi memory map",
-          "routes": [
-            {"route": "select_stack", "verdict": "feasible", "reason": "",
-             "anchor_capable": true, "geometry": {"waiter_shift": -2}}
-          ],
-          "plans": [
-            {"route": "select_stack",
-             "page": {"route": "select_stack", "page_free": false,
-                      "conditioned": false, "reason": "page"},
-             "page_free": []}
-          ],
-          "profile": {
-            "": {
-              "release": "5.10.198-android12-9-00085-g226a9632f13d-ab11136126",
-              "schema_version": "1",
-              "kernel_major": "5",
-              "kernel_phys_load": "2818572288",
-              "kernel_phys_offset": "null"
-            }
-          },
-          "devices": [
-            {"device": "diting", "kernel_phys_load": 2818572288,
-             "kernel_phys_offset": null, "phys_source": "uefi memory map"},
-            {"device": "yunluo", "kernel_phys_load": 1073741824,
-             "kernel_phys_offset": 1073741824,
-             "phys_source": "vendor_boot header (MediaTek)"}
-          ]
-        }
-    """.trimIndent()
+    private val release = "5.10.198-android12-9-00085-g226a9632f13d-ab11136126"
 
-    private fun superset(): OptionSuperset =
-        OptionSuperset.parse(json) ?: error("superset did not parse")
+    private fun superset(): OptionSuperset {
+        val document = CleanedProfileFixture.document(release)
+        val ghostlock = document["ghostlock"].asValueMap()!!
+        ghostlock["syscalls"] = valueMapOf(
+            "select_stack" to valueMapOf(
+                "native" to valueMapOf("waiter_shift" to -2L),
+                "compat" to null,
+            ),
+            "sigreturn" to null,
+            "multicast_waiter" to null,
+            "tcp_zerocopy" to null,
+        )
+        val envelope = valueMapOf(
+            "release" to release,
+            "kernel_major" to 5L,
+            "kernel_phys_load" to 2818572288L,
+            "kernel_phys_offset" to null,
+            "phys_source" to "uefi memory map",
+            "routes" to valueListOf(
+                valueMapOf(
+                    "route" to "select_stack",
+                    "carrier" to "native",
+                    "verdict" to "feasible",
+                    "reason" to "",
+                    "anchor_capable" to true,
+                    "geometry" to valueMapOf("waiter_shift" to -2L),
+                ),
+            ),
+            "plans" to valueListOf(
+                valueMapOf(
+                    "route" to "select_stack",
+                    "page" to valueMapOf(
+                        "route" to "select_stack",
+                        "anchor" to null,
+                        "scratch" to null,
+                        "page_free" to false,
+                        "conditioned" to false,
+                        "reason" to "page",
+                    ),
+                    "page_free" to valueListOf(),
+                ),
+            ),
+            "document" to document,
+            "devices" to valueListOf(
+                valueMapOf(
+                    "device" to "diting",
+                    "kernel_phys_load" to 2818572288L,
+                    "kernel_phys_offset" to null,
+                    "phys_source" to "uefi memory map",
+                ),
+                valueMapOf(
+                    "device" to "yunluo",
+                    "kernel_phys_load" to 1073741824L,
+                    "kernel_phys_offset" to 1073741824L,
+                    "phys_source" to "vendor_boot header (MediaTek)",
+                ),
+            ),
+        )
+        return requireNotNull(OptionSuperset.parse(HoconSupport.render(envelope)))
+    }
 
     private fun cutDocument(text: String): ValueMap =
         HoconSupport.parseValue(text).asValueMap() ?: error("cut is not an object")
 
-    private fun cleaned(document: ValueMap): ValueMap =
-        document
-
     private fun pair(document: ValueMap, device: String): Pair<Long?, Long?> =
         com.sesame.app.data.profile.ProfileResolver.physOf(
-            PerDevicePhys.resolveFor(cleaned(document), listOf(device)).document,
+            PerDevicePhys.resolveFor(document, listOf(device)).document,
         )
 
     @Test
@@ -80,7 +100,7 @@ class OptionSupersetDeviceCutTest {
     }
 
     @Test
-    fun `a legacy superset without devices carries no pair`() {
+    fun `a superset without devices carries no pair`() {
         /* The cleaned document has no global physical pair: it is a per-device
          * entry. A cut with no device list keeps the native defaults, and a
          * platform that needs the pair refuses it at import (fail-closed). */
@@ -88,8 +108,7 @@ class OptionSupersetDeviceCutTest {
         val plans = superset.plansFor("select_stack") ?: error("no plans")
         val document = cutDocument(superset.cut("select_stack", plans.page)!!)
         assertEquals(3, (document["schema_version"] as Number).toInt())
-        val cleanedDocument = cleaned(document)
         assertEquals(null to null,
-            com.sesame.app.data.profile.ProfileResolver.physOf(cleanedDocument))
+            com.sesame.app.data.profile.ProfileResolver.physOf(document))
     }
 }
