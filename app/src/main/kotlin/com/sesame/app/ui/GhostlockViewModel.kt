@@ -50,6 +50,7 @@ import com.sesame.app.domain.model.ShizukuStatus
 import com.sesame.app.data.profile.Timer98260
 import com.sesame.app.shizuku.TimerVerdict
 import com.sesame.app.domain.model.StrideProbe
+import com.sesame.app.domain.model.StrideProbeOutcome
 import com.sesame.app.domain.model.VrKoMode
 import com.sesame.app.domain.repository.GhostlockRepository
 import com.sesame.app.domain.repository.ProfileConfigController
@@ -327,8 +328,6 @@ class GhostlockViewModel(
             this@GhostlockViewModel.onStrideOptionSelected(value)
 
         override fun onStrideUse() = this@GhostlockViewModel.onStrideUse()
-        override fun onStrideSkip() = this@GhostlockViewModel.onStrideSkip()
-        override fun onStridePickerDismiss() = this@GhostlockViewModel.onStridePickerDismiss()
     }
 
     private val generationActionsImpl = object : GenerationActions {
@@ -2328,16 +2327,11 @@ class GhostlockViewModel(
         finishStride(value)
     }
 
-    fun onStrideSkip() = finishStride(null)
-
-    /** Dismissing the sheet means the same as Skip, with the same log line. */
-    fun onStridePickerDismiss() = finishStride(null)
-
     /**
      * Applies the chosen stride to the in-memory generated document and asks
      * where to export it — in the measured-db model the export is the save.
      */
-    private fun finishStride(value: Int?) {
+    private fun finishStride(value: Int) {
         val parse = pendingStrideParse
         val document = pendingStrideDocument
         val name = pendingStrideName
@@ -2350,25 +2344,6 @@ class GhostlockViewModel(
         pendingStrideRelease = null
         mutableState.update { it.copy(overlay = it.overlay.copy(stridePicker = null)) }
         if (document == null || release == null) return
-        if (value == null) {
-            appendLog("stride left unset (native default + stride-agnostic scan)")
-            if (repository.documentRequiresStride(document)) {
-                /* The exported file would be refused by import verification:
-                 * the chain needs W1 and the spray is sized by the stride. It
-                 * is still written so the fields can be filled by hand. */
-                appendLog(
-                    "warning: this chain needs W1; the exported profile will be refused " +
-                        "on import until the stride is set",
-                )
-                showNotice(
-                    titleRes = R.string.stride_required_title,
-                    messageRes = R.string.stride_required_message,
-                )
-            }
-            finishGeneratedProfile(document, name, release)
-            parse?.takeIf { it.missing.isNotEmpty() }?.let(::showMissingSidecarNotice)
-            return
-        }
         /* The export carries the value: a generated profile must not depend on
          * this device's measured database to find its slab stride. */
         val materialized = repository.materializeStride(document, value)
@@ -2793,6 +2768,7 @@ class GhostlockViewModel(
         if (document == null) {
             appendLog("result: the extractor produced no document")
             showNotice(R.string.parse_result_title, R.string.parse_failed)
+            markGenerationFailed()
             return
         }
         refreshSnapshot()
@@ -2942,8 +2918,9 @@ class GhostlockViewModel(
         /* The cut is a whole document cloned from the (timer-merged) option
          * superset, so the timer block travels with it. */
         val exportDocument = document
-        val strideProbe = if (!skipStride && runningRelease != null &&
-            runningRelease in result.releases
+        val outcome: StrideProbeOutcome? = if (!skipStride && runningRelease != null &&
+            runningRelease in result.releases &&
+            repository.documentRequiresStride(exportDocument)
         ) {
             appendLog("stride: probing the mm_struct slab on the running kernel")
             /* The probe blocks for seconds to minutes. This is the generation
@@ -2969,7 +2946,10 @@ class GhostlockViewModel(
             try {
                 runCatching {
                     repository.probeStride(runningRelease, exportDocument, ::appendLog)
-                }.getOrNull()
+                }.getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    StrideProbeOutcome.Failed(error.message ?: "probe error")
+                }
             } finally {
                 send(GhostlockEffect.KeepScreenAwake(false))
                 endOperation()
@@ -2984,40 +2964,60 @@ class GhostlockViewModel(
         } else {
             null
         }
-        if (strideProbe != null && runningRelease != null) {
-            pendingStrideParse = result
-            pendingStrideProbe = strideProbe
-            pendingStrideDocument = exportDocument
-            pendingStrideName = result.documentName
-            pendingStrideRelease = runningRelease
-            val recommendation = recommendStride(
-                strideProbe,
-                confirmedValue = rootMeasuredStride(runningRelease),
-            )
-            appendLog(
-                "stride: ${strideProbe.candidates.size} candidate(s), " +
-                    "gcd=0x${strideProbe.gcd.toString(16)}, " +
-                    "rounds=${strideProbe.rounds}, samples=${strideProbe.samples}",
-            )
-            mutableState.update {
-                it.copy(
-                    overlay = it.overlay.copy(stridePicker = StridePickerUiState(
-                        recommendation = recommendation,
-                        selectedValue = recommendation.recommendedValue,
-                        footerRes = R.string.stride_footer_export,
-                    )),
-                    session = it.session.copy(run = it.session.run.copy(sheetVisible = false)),
+        when (val step = strideStep(outcome)) {
+            is StrideStep.Picker -> {
+                val strideProbe = step.probe
+                /* Probed implies the probe ran, which implies runningRelease. */
+                val release = requireNotNull(runningRelease)
+                pendingStrideParse = result
+                pendingStrideProbe = strideProbe
+                pendingStrideDocument = exportDocument
+                pendingStrideName = result.documentName
+                pendingStrideRelease = release
+                val recommendation = recommendStride(
+                    strideProbe,
+                    confirmedValue = rootMeasuredStride(release),
+                )
+                appendLog(
+                    "stride: ${strideProbe.candidates.size} candidate(s), " +
+                        "gcd=0x${strideProbe.gcd.toString(16)}, " +
+                        "rounds=${strideProbe.rounds}, samples=${strideProbe.samples}",
+                )
+                mutableState.update {
+                    it.copy(
+                        overlay = it.overlay.copy(stridePicker = StridePickerUiState(
+                            recommendation = recommendation,
+                            selectedValue = recommendation.recommendedValue,
+                            footerRes = R.string.stride_footer_export,
+                        )),
+                        session = it.session.copy(run = it.session.run.copy(sheetVisible = false)),
+                    )
+                }
+            }
+
+            is StrideStep.Fail -> {
+                /* The probe ran (the document targets the running kernel) and
+                 * failed. A profile saved without its measured stride cannot be
+                 * imported or run, so end on the failed step — never the save
+                 * step, which would hand the user a dead profile. */
+                appendLog("result: stride probe failed: ${step.reason}; no profile generated")
+                mutableState.update {
+                    it.copy(session = it.session.copy(run = it.session.run.copy(sheetVisible = false)))
+                }
+                markGenerationFailed()
+                return
+            }
+
+            StrideStep.Save -> {
+                /* No stride picker: the save prompt takes over. Close the probe
+                 * sheet first so the SAF activity is not left behind a modal. */
+                mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(sheetVisible = false))) }
+                finishGeneratedProfile(
+                    exportDocument,
+                    result.documentName,
+                    runningRelease ?: result.releases.firstOrNull() ?: "profile",
                 )
             }
-        } else {
-            /* No stride picker: the save prompt takes over. Close the probe
-             * sheet first so the SAF activity is not left behind a modal. */
-            mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(sheetVisible = false))) }
-            finishGeneratedProfile(
-                exportDocument,
-                result.documentName,
-                runningRelease ?: result.releases.firstOrNull() ?: "profile",
-            )
         }
         if (result.missing.isNotEmpty()) {
             appendLog(

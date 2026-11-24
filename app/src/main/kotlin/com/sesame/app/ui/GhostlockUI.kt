@@ -1086,7 +1086,10 @@ private fun StridePickerDialog(
         show = true,
         title = stringResource(R.string.stride_title),
         summary = stringResource(R.string.stride_subtitle, recommendation.samples),
-        onDismissRequest = actions::onStridePickerDismiss,
+        /* The stride is mandatory for a W1-ladder profile: outside-tap and Back
+         * do nothing, so an accidental gesture cannot throw away the probe.
+         * The only exit is choosing a value and pressing Use. */
+        onDismissRequest = {},
         content = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -1203,25 +1206,15 @@ private fun StridePickerDialog(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                Row(
+                TextButton(
+                    text = picker.selectedValue
+                        ?.let { stringResource(R.string.stride_use, it) }
+                        ?: stringResource(R.string.stride_use_none),
+                    enabled = picker.selectedValue != null,
+                    onClick = actions::onStrideUse,
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    TextButton(
-                        text = picker.selectedValue
-                            ?.let { stringResource(R.string.stride_use, it) }
-                            ?: stringResource(R.string.stride_use_none),
-                        enabled = picker.selectedValue != null,
-                        onClick = actions::onStrideUse,
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        text = stringResource(R.string.stride_skip),
-                        onClick = actions::onStrideSkip,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                )
                 Text(
                     text = stringResource(picker.footerRes),
                     style = MiuixTheme.textStyles.body2,

@@ -40,6 +40,7 @@ import com.sesame.app.domain.model.RunLogState
 import com.sesame.app.domain.model.ShizukuStatus
 import com.sesame.app.domain.model.StrideCandidateOption
 import com.sesame.app.domain.model.StrideProbe
+import com.sesame.app.domain.model.StrideProbeOutcome
 import com.sesame.app.domain.model.VrKoMode
 import com.sesame.app.domain.repository.GhostlockRepository
 import com.sesame.app.domain.repository.ProfileConfigController
@@ -719,13 +720,13 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         release: String,
         documentText: String,
         onLog: (String) -> Unit,
-    ): StrideProbe? {
+    ): StrideProbeOutcome {
         /* The probe frame is the generated document, built in memory; nothing
          * is selected or stored (measured-db-plan §1). */
         val blob = profileController.nativeDocumentFor(documentText, release)
-            ?: return null
+            ?: return StrideProbeOutcome.Failed("the probe document could not be rendered")
         val binary = File(appContext.applicationInfo.nativeLibraryDir, NativeBinaryName)
-        if (!binary.isFile) return null
+        if (!binary.isFile) return StrideProbeOutcome.Failed("the native probe binary is missing")
         val lines = mutableListOf<String>()
         val exit = runProcess(
             /* --enable-status-record selects the length-prefixed stdin frame
@@ -760,10 +761,18 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             frameStdin = true,
         )
         onLog("stride: probe exit=$exit captured=${lines.size}")
-        if (exit != 0) return null
+        if (exit != 0) {
+            /* Any non-zero exit is a step failure, not a verdict: the probe is
+             * required whenever it runs (the W1 ladder is sized by the stride),
+             * so the caller must not fall through to the save step. */
+            return StrideProbeOutcome.Failed("the probe exited $exit")
+        }
         val probe = parseStrideProbe(lines)
-        if (probe == null) onLog("stride: no candidate table")
-        return probe
+        if (probe == null) {
+            onLog("stride: no candidate table")
+            return StrideProbeOutcome.Failed("the probe produced no candidate table")
+        }
+        return StrideProbeOutcome.Probed(probe)
     }
 
     override fun applyLockSourceToDocument(

@@ -96,8 +96,6 @@ interface OverlayActions {
     )
     fun onStrideOptionSelected(value: Int)
     fun onStrideUse()
-    fun onStrideSkip()
-    fun onStridePickerDismiss()
 }
 
 interface GenerationActions {

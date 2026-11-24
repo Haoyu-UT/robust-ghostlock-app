@@ -14,7 +14,7 @@ import com.sesame.app.domain.model.ProfileDiffRow
 import com.sesame.app.domain.model.RunLogEntry
 import com.sesame.app.domain.model.RootManagerCandidate
 import com.sesame.app.domain.model.ShizukuStatus
-import com.sesame.app.domain.model.StrideProbe
+import com.sesame.app.domain.model.StrideProbeOutcome
 import com.sesame.app.domain.model.VrKoMode
 
 interface GhostlockRepository {
@@ -69,14 +69,15 @@ interface GhostlockRepository {
 
     /**
      * Run the unprivileged mm_struct leak probe for an in-memory generated
-     * document and return its stride evidence table, or null when the probe
-     * cannot run. Only meaningful when [release] is the running kernel.
+     * document. Called only when [release] is the running kernel, so the result
+     * is either the evidence table or a failure — never "skipped"; the caller
+     * must not fall through to the save step on a failure.
      */
     suspend fun probeStride(
         release: String,
         documentText: String,
         onLog: (String) -> Unit = {},
-    ): StrideProbe?
+    ): StrideProbeOutcome
 
     /**
      * Records a generation probe's stride as the measured `kernel.heap.stride`

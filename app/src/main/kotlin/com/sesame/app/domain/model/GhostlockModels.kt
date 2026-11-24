@@ -363,6 +363,20 @@ data class StrideProbe(
     val decided: Boolean,
 )
 
+/**
+ * The stride probe's outcome. Applicability is the caller's decision (the probe
+ * runs only when the document targets the running kernel), so a probe that ran
+ * either produced a table or failed. A failure must not be mistaken for
+ * "skipped": a profile saved without its measured stride cannot be imported or
+ * run, so the generation flow ends in the failed step instead of the save step.
+ */
+sealed interface StrideProbeOutcome {
+    data class Probed(val probe: StrideProbe) : StrideProbeOutcome
+
+    /** The probe ran but produced no usable table (killed, non-zero, empty). */
+    data class Failed(val reason: String) : StrideProbeOutcome
+}
+
 sealed interface ParseResult {
     /** Fields only an xbl_config/uefi sidecar can supply (e.g.
      * `devices.<id>.phys.load`) that the parsed profile is still missing. */
