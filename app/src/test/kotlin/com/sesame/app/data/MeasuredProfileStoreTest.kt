@@ -205,6 +205,9 @@ class MeasuredProfileStoreTest {
         assertEquals(1280L, fact.value)
         assertEquals(MeasuredProfileStore.SourceGenerationProbe, fact.source)
         assertTrue(fact.evidence.contains("gcd"))
+        /* Weaker evidence: the generated profile carries the value itself, so
+         * the probe is never applied by the overlay nor merged into an export. */
+        assertTrue(newStore().kernel(release)!!.profileFacts().isEmpty())
     }
 
     @Test

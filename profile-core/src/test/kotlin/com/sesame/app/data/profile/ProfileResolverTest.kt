@@ -171,6 +171,50 @@ class ProfileResolverTest {
     }
 
     @Test
+    fun `a chain that needs W1 requires a measured stride`() {
+        val nullStride = document().apply {
+            (this["kernel"] as ValueMap)["heap"] =
+                valueMapOf("stride" to null, "collisions" to 4L)
+        }
+        assertTrue(pathErrors(nullStride, "kernel.heap.stride").isNotEmpty())
+
+        /* The DirtyFrag ladder (KDP included) also needs W1. */
+        val kdp = document().apply {
+            val kernel = this["kernel"] as ValueMap
+            kernel["kdp"] = true
+            kernel["heap"] = valueMapOf("stride" to null, "collisions" to 4L)
+        }
+        assertTrue(pathErrors(kdp, "kernel.heap.stride").isNotEmpty())
+
+        /* A value, not the native default, satisfies it. */
+        val measured = document().apply {
+            (this["kernel"] as ValueMap)["heap"] =
+                valueMapOf("stride" to 1280L, "collisions" to 4L)
+        }
+        assertEquals(emptyList<String>(), pathErrors(measured, "kernel.heap.stride"))
+    }
+
+    @Test
+    fun `module-only and timer-only documents may leave the stride null`() {
+        val moduleOnly = document().apply {
+            (this["kernel"] as ValueMap)["heap"] =
+                valueMapOf("stride" to null, "collisions" to 4L)
+            (this["ghostlock"] as ValueMap)["module"] = valueMapOf(
+                "asset" to "modules/example.ko",
+                "sha256" to "a".repeat(64),
+            )
+        }
+        assertEquals(emptyList<String>(), pathErrors(moduleOnly, "kernel.heap.stride"))
+
+        val timerOnly = document().apply {
+            put("ghostlock", null)
+            (this["kernel"] as ValueMap)["heap"] =
+                valueMapOf("stride" to null, "collisions" to 4L)
+        }
+        assertEquals(emptyList<String>(), pathErrors(timerOnly, "kernel.heap.stride"))
+    }
+
+    @Test
     fun `every declared key must be present, null or not`() {
         val missing = document().apply { remove("timer") }
         assertTrue(pathErrors(missing, "timer").isNotEmpty())

@@ -2178,12 +2178,7 @@ class GhostlockViewModel(
         }
     }
 
-    /**
-     * Asks the user where to export the generated document. The measured
-     * stride is not written into it: the choice was recorded in the measured
-     * database, and the run-time overlay applies it. Nothing is stored by the
-     * app; the export is the save.
-     */
+    /** Ends the stepped flow on its failed step. */
     private fun markGenerationFailed() {
         mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Failed)) }
     }
@@ -2295,8 +2290,28 @@ class GhostlockViewModel(
         if (document == null || release == null) return
         if (value == null) {
             appendLog("stride left unset (native default + stride-agnostic scan)")
+            if (repository.documentRequiresStride(document)) {
+                /* The exported file would be refused by import verification:
+                 * the chain needs W1 and the spray is sized by the stride. It
+                 * is still written so the fields can be filled by hand. */
+                appendLog(
+                    "warning: this chain needs W1; the exported profile will be refused " +
+                        "on import until the stride is set",
+                )
+                showNotice(
+                    titleRes = R.string.stride_required_title,
+                    messageRes = R.string.stride_required_message,
+                )
+            }
             finishGeneratedProfile(document, name, release)
             parse?.takeIf { it.missing.isNotEmpty() }?.let(::showMissingSidecarNotice)
+            return
+        }
+        /* The export carries the value: a generated profile must not depend on
+         * this device's measured database to find its slab stride. */
+        val materialized = repository.materializeStride(document, value)
+        if (materialized == null) {
+            appendLog("result: could not write the stride into the document; export cancelled")
             return
         }
         val evidence = probe?.let {
@@ -2308,12 +2323,12 @@ class GhostlockViewModel(
             }.getOrDefault(false)
             appendLog(
                 if (recorded) {
-                    "stride: $value recorded (applied by the run-time overlay)"
+                    "stride: $value written into the profile (recorded as evidence)"
                 } else {
-                    "stride: $value not recorded; a root measurement is already stored"
+                    "stride: $value written into the profile (a root measurement is already stored)"
                 },
             )
-            finishGeneratedProfile(document, name, release)
+            finishGeneratedProfile(materialized, name, release)
             parse?.takeIf { it.missing.isNotEmpty() }?.let(::showMissingSidecarNotice)
         }
     }

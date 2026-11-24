@@ -176,9 +176,12 @@ stamps the wrong strip; the resolver refuses `multicast_waiter`/`sigreturn` on a
 - `struct.rt_mutex.size` — the anchor stride's lower bound.
 - `struct.selinux_state.enforcing` / `.initialized` — the `selinux_state` field
   values W1 writes.
-- `heap.stride` — the measured `mm_struct` slab stride. It is filled by the
-  measured overlay (the on-device probe / `/proc/slabinfo`), never by the
-  extractor.
+- `heap.stride` — the measured `mm_struct` slab stride. It is never derived
+  from the image: a generated profile writes the probe's value in, a bundled
+  profile ships the store's measured value, a hand-filled template states it.
+  A chain that needs W1 (ghostlock or dirtyfrag) must carry a value; a null is
+  refused at import, run and export. Only a root `/proc/slabinfo` measurement
+  may override it at run time (the measured overlay).
 - `heap.collisions` — the KernelSnitch collision count (8 on 5.x, 4 on 6.x where
   the layout is verified, else `null`).
 - `dirtyfrag` — the static DirtyFrag verdict: `"feasible"`, `"infeasible"`, or

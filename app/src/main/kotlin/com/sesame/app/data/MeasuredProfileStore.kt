@@ -29,14 +29,20 @@ internal data class MeasuredKernel(
 
     /**
      * The facts a merge or the run-time overlay may apply: exactly the
-     * declared measurable set (`MeasuredOverlay.Paths`). The DirtyFrag probe
-     * trio is a runtime decision for the pipeline resolver and stays out; a
-     * fact under a retired key (e.g. `kernelsnitch.mm_struct_sz` written by an
-     * older build) stays out too — merging it would add an unknown top-level
-     * key and the validator would refuse the whole export.
+     * declared measurable set (`MeasuredOverlay.Paths`), and only from a root
+     * measurement. A generation probe is weaker evidence — the generated
+     * profile carries its value, so the probe is shown but never applied or
+     * merged. The DirtyFrag probe trio is a runtime decision for the pipeline
+     * resolver and stays out; a fact under a retired key (e.g.
+     * `kernelsnitch.mm_struct_sz` written by an older build) stays out too —
+     * merging it would add an unknown top-level key and the validator would
+     * refuse the whole export.
      */
     fun profileFacts(): List<MeasuredFact> =
-        facts.filter { it.key in MeasuredOverlay.Paths }
+        facts.filter {
+            it.key in MeasuredOverlay.Paths &&
+                it.source != MeasuredProfileStore.SourceGenerationProbe
+        }
 }
 
 /** The runtime decision facts: visible in the UI, never merged or overlaid. */
@@ -53,12 +59,14 @@ private val KnownFactKeys = MeasuredOverlay.Paths + ProbeFactKeys
  * The measured database: per-kernel ground truth and one controlled probe fact.
  *
  * Written from the root phase's `/proc/slabinfo` read (after a completed run),
- * from a **clear** DirtyFrag viability probe result (before W1), and — when no
- * root measurement exists — from the generation flow's stride probe. The run
- * path reads it twice: the probe fact gates the DirtyFrag ladder step, and the
- * stride fact is applied by the measured overlay to the resolved map at render
- * time (`MeasuredOverlay`), never written into the profile document. The merge
- * preview remains the way to materialize a fact into an exported document.
+ * from a **clear** DirtyFrag viability probe result (before W1), and — as
+ * weaker evidence only — from the generation flow's stride probe. The run path
+ * reads it twice: the DirtyFrag probe fact gates the ladder step, and the
+ * root-measured stride is applied by the measured overlay to the resolved map
+ * at render time (`MeasuredOverlay`), never written into the profile document.
+ * A generation probe is excluded from both the overlay and the merge; the
+ * generated profile carries that value itself. The merge preview remains the
+ * way to materialize a root fact into an exported document.
  * Format and rationale: `docs/analysis/measured-db-plan.md`.
  */
 internal class MeasuredProfileStore(private val file: File) {
@@ -142,8 +150,12 @@ internal class MeasuredProfileStore(private val file: File) {
     fun record(release: String, fact: MeasuredFact): Boolean = recordAll(release, listOf(fact))
 
     /**
-     * Records a generation probe's stride as the [KeyMmStructSz] fact.
+     * Records a generation probe's stride as the [KeyMmStructSz] fact, with
+     * the weaker [SourceGenerationProbe] source.
      *
+     * This is evidence, not authority: the generation flow writes the same
+     * value into the exported document, and `profileFacts()` excludes it, so
+     * it is never applied by the run-time overlay nor merged into an export.
      * The root phase's `/proc/slabinfo` measurement is ground truth: it is
      * never replaced by a probe, so choosing the same value in the picker is a
      * no-op and choosing a different one is refused. A probe may replace an

@@ -786,6 +786,14 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         keepAnchor: Boolean,
     ): String? = if (keepAnchor) documentText else stripLockAnchor(documentText)
 
+    override fun materializeStride(documentText: String, value: Int): String? =
+        materializeDocumentStride(documentText, value.toLong())
+
+    override fun documentRequiresStride(documentText: String): Boolean {
+        val document = HoconSupport.parseValue(documentText).asValueMap() ?: return false
+        return ProfileResolver.requiresW1(ProfileResolver.pipelineOrder(document))
+    }
+
     override suspend fun recordGenerationStride(
         release: String,
         value: Int,

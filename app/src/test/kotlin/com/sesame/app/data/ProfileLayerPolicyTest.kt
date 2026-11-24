@@ -361,6 +361,30 @@ class ProfileLayerPolicyTest {
     }
 
     @Test
+    fun `a copy without the measured stride is rejected`() = runBlocking {
+        /* The chain needs W1 and the spray is sized by the stride; the
+         * run-time overlay no longer supplies one, so an import without it is
+         * refused with the field path named. */
+        val parsed = HoconSupport.parseValue(document(bundledRelease, routeWaitMs = 4242))
+            .asValueMap()!!
+        (parsed["kernel"].asValueMap()!!["heap"].asValueMap()!!)["stride"] = null
+        val uri = external.add(
+            "content://profiles/no-stride.conf",
+            HoconSupport.render(parsed),
+        )
+
+        val result = controller.selectExternalProfile(uri, bundledRelease)
+        assertTrue(
+            result.toString(),
+            result is ProfileImportResult.Rejected &&
+                result.errors.any { it.startsWith("kernel.heap.stride") },
+        )
+        /* The rejected copy is not kept: the bundled profile applies again. */
+        assertTrue(controller.load(bundledRelease).hasProfile)
+        assertFalse(controller.importedProfileExists())
+    }
+
+    @Test
     fun `an older schema is refused, not upgraded`() = runBlocking {
         val text = document(bundledRelease, routeWaitMs = 4242)
         val variants = listOf(

@@ -100,6 +100,22 @@ interface GhostlockRepository {
         keepAnchor: Boolean,
     ): String?
 
+    /**
+     * Writes the generation flow's chosen slab stride into an in-memory
+     * generated document (`kernel.heap.stride`) so the exported profile
+     * carries it. The measured database keeps the probe as weaker evidence; a
+     * root `/proc/slabinfo` measurement still overrides the document at run
+     * time. Null when the document cannot be rewritten.
+     */
+    fun materializeStride(documentText: String, value: Int): String?
+
+    /**
+     * True when the document's ladder needs W1 (GhostLock or DirtyFrag), so
+     * its spray is sized by the stride and a null stride is not importable.
+     * Module-only and timer-only documents do not spray.
+     */
+    fun documentRequiresStride(documentText: String): Boolean
+
     /* ---- profile sources (import-copy storage model) ---- */
 
     /** True when the app-private imported copy exists (the external selection). */

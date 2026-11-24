@@ -132,6 +132,21 @@ object ProfileResolver {
                 )
             }
         }
+        /* A chain that needs W1 sprays mm_struct objects, and the spray is
+         * sized by the measured slab stride. The measured database no longer
+         * supplies one to a profile that lacks it (the generation flow writes
+         * it into the document; only a root measurement may override it), so a
+         * null stride is a refusal, not a fallback to the native default.
+         * Module-only and timer-only documents do not spray. */
+        val heap = kernel?.get("heap") as? Map<*, *>
+        if (heap != null && number(heap["stride"]) == null &&
+            requiresW1(pipelineOrder(document))
+        ) {
+            errors += ConfigError(
+                "kernel.heap.stride",
+                "missing: the chain needs W1, and the spray is sized by the measured stride",
+            )
+        }
         return errors
     }
 

@@ -124,7 +124,9 @@
     <string name="stride_details_candidate">%1$d bytes — %2$d/%3$d matches · %4$d objects/slab</string>
     <string name="stride_confirmed_line">✓ Root-measured: %1$d bytes</string>
     <string name="stride_footer_saved">The generated profile is saved and selected for this kernel.</string>
-    <string name="stride_footer_export">The chosen value is recorded for this kernel and applied to runs; exporting saves the profile.</string>
+    <string name="stride_footer_export">The chosen value is written into the exported profile and kept here as evidence; a root measurement takes precedence.</string>
+    <string name="stride_required_title">Stride is missing</string>
+    <string name="stride_required_message">This chain needs W1, and the spray is sized by the slab stride. The exported profile will be refused on import until kernel.heap.stride is set.</string>
     <string name="import_result_title">Import result</string>
     <string name="parse_timeout">Parse timed out</string>
     <string name="cancel">Cancel</string>

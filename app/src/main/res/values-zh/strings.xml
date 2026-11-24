@@ -124,7 +124,9 @@
     <string name="stride_details_candidate">%1$d 字节 — 匹配 %2$d/%3$d 次 · 每 slab %4$d 个对象</string>
     <string name="stride_confirmed_line">✓ root 实测：%1$d 字节</string>
     <string name="stride_footer_saved">生成的配置会保存并用于此内核。</string>
-    <string name="stride_footer_export">所选值会记录到该内核并在运行时生效；导出即保存配置。</string>
+    <string name="stride_footer_export">所选值会写入导出的配置，并在此作为依据保留；root 实测值优先。</string>
+    <string name="stride_required_title">缺少 stride</string>
+    <string name="stride_required_message">该链路需要 W1，喷射由 slab stride 决定大小。在 kernel.heap.stride 被设置之前，导出的配置会在导入时被拒绝。</string>
     <string name="import_result_title">导入结果</string>
     <string name="parse_timeout">解析超时</string>
     <string name="cancel">取消</string>

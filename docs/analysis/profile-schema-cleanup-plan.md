@@ -24,7 +24,7 @@ Implemented on `fix/ui-behaviour-2026-11-23` (commits `1a002862`..`38aaa949`):
 | Consumers | **done**: the ship composes the cleaned render with the store-only facts (devices, stride, timer block and its shared symbols, the credential sid); the app's `LegacyProfileShape` is deleted, a non-cleaned document is refused, the on-device cut and the timer composition emit the cleaned shape. |
 | Store + timer (decision 20) | **done**: the store entry carries `document` (the cleaned tree) instead of the old-keyed `profile` map; `report::render_facts`, `parse_conf_blocks`, `Superset.profile` and the legacy cut API are deleted; the timer analyzer emits the cleaned fragment (`kernel` facts + `timer`) and `tools/sweep_timer_store.py` merges it into every store entry (`timer_analysis` keeps the evidence); the ship renders each asset from the store document (no extractor re-run, no conversion), `--refresh-all` rewrote all 60 store-derived assets, `--check` reads 61 bundled / 0 missing / 0 mismatched / 12 exempt; the app's `OptionSuperset` clones the document and selects route/carrier/anchor/device, and its timer merge is a deep merge (`TimerBlockText` and the mapping deleted). The store was regenerated from the images (the corpus `options_ondevice`/`structs_ondevice`/`codegen_ondevice` tests are green). |
 | Docs | **done**: `PROFILE_SCHEMA.md` + `_ZH` rewritten to v3; the four docs templates and the four annotated asset templates rewritten; `defaults`, `README`, `MEDIATEK`, `BUNDLED_PROFILES` key references updated; `FieldLabels` maps the new dotted paths (53 new strings, EN+ZH). |
-| Measured overlay (decision 13) | **done**: `MeasuredOverlay` applies the declared set (`kernel.heap.stride`) to the resolved map, never the document; `nativeDocumentWithOverlay` renders it and both run paths log `overlay: <path> document=… effective=… (source)` and write the same provenance to the run-store meta. The generation flow no longer writes the stride into the document: it records the probe's value in the measured DB (`generation-probe`; a root `/proc/slabinfo` fact is ground truth and never replaced), and a store load drops retired keys (`kernelsnitch.mm_struct_sz`) so only the declared set is merged. Unit gates: overlay apply/ignore/immutability, the overlaid render, the probe-vs-root rule, the meta survival, the retired-key prune. |
+| Measured overlay (decision 13) | **done**: `MeasuredOverlay` applies the root-measured `kernel.heap.stride` to the resolved map, never the document; `nativeDocumentWithOverlay` renders it and both run paths log `overlay: <path> document=… effective=… (source)` and write the same provenance to the run-store meta. The generation flow **writes its accepted stride into the exported document** (`kernel.heap.stride`, so a generated profile is self-contained) and records the same value as weaker evidence (`generation-probe`, excluded from `profileFacts()`: never overlaid, never merged; a root `/proc/slabinfo` fact is ground truth and never replaced). A profile whose ladder needs W1 (ghostlock or dirtyfrag) must carry a non-null stride — the validator refuses a null at import, run and export; module-only and timer-only documents may leave it null. A store load drops retired keys (`kernelsnitch.mm_struct_sz`) so only the declared set is merged. Unit gates: overlay apply/ignore/immutability, the overlaid render, the probe-vs-root rule, the meta survival, the retired-key prune, generation materialization, the import refusal. |
 | Leftover cleanup | **done**: the generation path's old-key checks fixed; the v2 model island (`NativeProfile.kt` 959 lines, `Profile.kt`, the five route-config classes, the typed-slot models, the three wire tests), `completeProfileFields`, `uncarriedRouteKeys`, `OffsetMatching` and the dead `credential-*`/`kernelsnitch-6x` fragments deleted; stale comments/readmes corrected; the root harness/tooling reads `profile.json` and the v3 store. Tests 318/0. |
 | Device gate | **diting build 897 (overlay)**: fresh boot, run store `state=completed`, `overlay=kernel.heap.stride:960->960(root-slabinfo)` in the meta, the log line `overlay: kernel.heap.stride document=960 effective=960 (root-slabinfo)`, `dirtyfrag: T+2422ms RESULT=OK script=0 enforce=1`, and the measured DB pruned to the current keys; **build 899 (post-cleanup)**: fresh boot, `state=completed`, the same overlay meta, `guard_bad=0 guard_moved=0`. Build 893 proved the store-document assets (`resolved profile loaded`, `pipeline=dirtyfrag`, `state=completed`, the native default offset); build 887 the cleaned assets; build 875 the transport on the POCO 6.1.138 and OnePlus 6.6.66. |
 
@@ -179,13 +179,17 @@ schema error.
 
 ### 3.3 Measured facts (automatic overlay)
 
-Declared measurable set: `kernel.heap.stride` (`/proc/slabinfo` or the generation probe; match
-release); the DirtyFrag probe is the ladder's viability input (the measured-DB scoped exception),
-not a document value. A matching measurement replaces the document's value **in the resolved map**,
-never in the document; the run log and store meta record the effective value and its source; a
-static-vs-measured disagreement is logged as an extractor defect. The merge preview + export stays,
-as the way to materialize the effective facts into a self-contained document. Nothing outside the
-set can be overlaid.
+Declared measurable set: `kernel.heap.stride`, and only from a root `/proc/slabinfo` measurement
+(match release). The generation flow writes its chosen value into the exported document instead;
+its DB record (`generation-probe`) is weaker evidence, visible in the measurements screen, and is
+excluded from both the overlay and the merge. The DirtyFrag probe is the ladder's viability input
+(the measured-DB scoped exception), not a document value. A matching root measurement replaces the
+document's value **in the resolved map**, never in the document; the run log and store meta record
+the effective value and its source; a static-vs-measured disagreement is logged as an extractor
+defect. A document whose ladder needs W1 must carry a non-null stride; the validator refuses a
+null one at import, run and export (module-only and timer-only documents do not spray and may
+leave it null). The merge preview + export stays, as the way to materialize the effective facts
+into a self-contained document. Nothing outside the set can be overlaid.
 
 ## 4. Implementation
 
