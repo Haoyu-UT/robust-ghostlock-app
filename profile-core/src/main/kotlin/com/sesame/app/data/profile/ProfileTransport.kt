@@ -79,47 +79,6 @@ object ProfileTransport {
         )
     }
 
-    /**
-     * The *authored* cleaned document: the same shape without the run keys and
-     * with the per-device entries and the merged tuning left out (the app
-     * merges those at load time, exactly as the bundled assets do). Used by
-     * the one-shot migration of the bundled assets and by the exporter.
-     */
-    fun authoredDocument(raw: Map<String, Any?>): Map<String, Any?> {
-        val base = imageBase(raw)
-        val branches = branches(raw)
-        val selected = branches.keys.firstOrNull()
-        val module = raw[ModuleBlock.BLOCK_KEY].asValueMap()
-        val ghostlock = if (branches.isEmpty() && module == null) {
-            null
-        } else {
-            linkedMapOf<String, Any?>(
-                "syscall" to selected,
-                "carrier" to carrierFor(branches[selected], null),
-                "anchor" to selected?.let { anchor(branches[it], raw) },
-                "syscalls" to if (branches.isEmpty()) null else linkedMapOf<String, Any?>(
-                    *Syscalls.map { name -> name to branches[name]?.let { branchBlocks(name, it) } }
-                        .toTypedArray(),
-                ),
-                "module" to module?.let {
-                    mapOf(
-                        "asset" to it["asset"],
-                        "sha256" to it["asset_sha256"],
-                        "vendor_files" to it["vendor_files"],
-                    )
-                },
-                "execution" to null,
-            )
-        }
-        return linkedMapOf(
-            "schema_version" to ProfileResolver.ProfileSchemaVersion.toLong(),
-            "release" to raw["release"],
-            "devices" to authoredDevices(raw),
-            "kernel" to kernel(raw, base, branches[selected]),
-            "ghostlock" to ghostlock,
-            "timer" to timer(raw, base),
-        )
-    }
 
     // ---- kernel -----------------------------------------------------------
 
@@ -537,28 +496,6 @@ object ProfileTransport {
     }
 
     // ---- helpers ----------------------------------------------------------
-
-    /** The authored per-device entries, every identity preserved. */
-    private fun authoredDevices(raw: Map<String, Any?>): Map<String, Any?>? {
-        val load = raw["kernel_phys_load"].asValueMap()
-        val offset = raw["kernel_phys_offset"].asValueMap()
-        if (load == null && offset == null) return null
-        val ids = LinkedHashSet<String>()
-        load?.keys?.forEach { ids += it }
-        offset?.keys?.forEach { ids += it }
-        return ids.associateWith { id ->
-            fun entry(map: ValueMap?): String? {
-                val key = map?.keys?.firstOrNull { it.equals(id, ignoreCase = true) }
-                return unsignedHex((map?.get(key) as? Number)?.toLong())
-            }
-            mapOf(
-                "phys" to mapOf(
-                    "load" to entry(load),
-                    "offset" to entry(offset),
-                ),
-            )
-        }
-    }
 
     /** The authored route branches, plus a fallback target folded in as one. */
     private fun branches(resolved: Map<String, Any?>): LinkedHashMap<String, ValueMap> {

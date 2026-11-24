@@ -21,27 +21,6 @@ dependencies {
  * native side reads. The exporter runs the same [ProfileMerger] /
  * [ProfileResolver] / `NativeProfileDocument` code as the app.
  */
-/**
- * One-shot conversion of the bundled authored documents to the cleaned v3
- * shape. A verification aid: the store regeneration and the extractor remain
- * the producers of new assets. The output lands in build/profile-migration for
- * review against the current assets.
- */
-tasks.register<JavaExec>("migrateProfileShape") {
-    description = "Convert the bundled profiles to the cleaned v3 shape (verification aid)"
-    group = "build"
-    val profilesDir = rootProject.layout.projectDirectory.dir("app/src/main/assets/kernel_profiles")
-    val outputDir = rootProject.layout.buildDirectory.dir("profile-migration")
-    inputs.dir(profilesDir)
-    inputs.files(sourceSets["main"].runtimeClasspath)
-        .withPropertyName("migrationClasspath")
-        .withNormalizer(org.gradle.api.tasks.ClasspathNormalizer::class)
-    outputs.dir(outputDir)
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.sesame.app.data.profile.ProfileMigration")
-    args(profilesDir.asFile.absolutePath, outputDir.get().asFile.absolutePath)
-}
-
 tasks.register<JavaExec>("exportKernelProfiles") {
     description = "Serialize bundled HOCON kernel profiles into v2 .bin documents"
     group = "build"
