@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.os.Build
+import android.util.Log
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -188,6 +189,9 @@ private val ToneTag = Regex("<(b|k|s|-)> ")
 
 /** A stored log can be long; the sheet replays its tail. */
 private const val MaxReplayedLogLines = 4000
+
+/** Logcat tag for the debug-only derivation check (`derive_test`). */
+private const val DeriveTestTag = "GhostlockDerive"
 
 class GhostlockViewModel(
     private val repository: GhostlockRepository,
@@ -1959,6 +1963,59 @@ class GhostlockViewModel(
         resetParseSession()
         pendingGeneratedProfile = null
         mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Idle)) }
+    }
+
+    /**
+     * Debug-only derivation check (`am start --ez derive_test true --es
+     * derive_image <local image path>`): runs the real `parseSource` path on the
+     * image and records whether the timer analyzer's block survives into the
+     * generated document and — the fix's contract — into the options superset's
+     * `document`, which `OptionSuperset.cut` clones for the exported profile.
+     * Writes `files/derive-test.txt` and one `derive_test:` log line per fact, so
+     * a device check needs no UI and no SAF export.
+     */
+    fun runDeriveTest(imagePath: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val out = StringBuilder()
+            fun record(line: String) {
+                appendLog("derive_test: $line")
+                Log.i(DeriveTestTag, line)
+                out.appendLine(line)
+            }
+            try {
+                val result = parseSourceUseCase(imagePath, onLog = { Log.i(DeriveTestTag, it) })
+                val options = when (result) {
+                    is ParseResult.Parsed -> result.options
+                    is ParseResult.Ambiguous -> result.options
+                    else -> null
+                }
+                val generated = (result as? ParseResult.Parsed)?.documentText
+                val generatedMap = generated?.let { HoconSupport.parseValue(it).asValueMap() }
+                record(
+                    "generated present=${generatedMap != null} " +
+                        "timer=${generatedMap?.get(Timer98260.BLOCK_KEY) != null} " +
+                        "fakeSupported=${generatedMap?.let { Timer98260.fakeSupported(it) }}",
+                )
+                val optionsDoc = options?.document
+                record(
+                    "options.document present=${optionsDoc != null} " +
+                        "timer=${optionsDoc?.get(Timer98260.BLOCK_KEY) != null} " +
+                        "fakeSupported=${optionsDoc?.let { Timer98260.fakeSupported(it) }}",
+                )
+                record(
+                    "result=${result.javaClass.simpleName} " +
+                        "timerDerived=${(result as? ParseResult.Parsed)?.timerDerived ?: false}",
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                record("error=${error.message}")
+            } finally {
+                runCatching {
+                    application.filesDir.resolve("derive-test.txt").writeText(out.toString())
+                }
+            }
+        }
     }
 
     fun onCloseExecutionSheet() {

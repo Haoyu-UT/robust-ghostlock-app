@@ -583,7 +583,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
              * timer block. */
             val optionsText = optionsFile.takeIf { it.isFile }?.readText()
             val options = optionsText?.let { text ->
-                val merged = timerBlock?.let { mergeTimerBlock(text, it) } ?: text
+                val merged = timerBlock?.let { mergeTimerFragment(text, it) } ?: text
                 OptionSuperset.parse(merged)
             }
             if (code == 7) {
@@ -596,7 +596,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             if (code != 0 || !parsedFile.isFile) return ParseResult.Failed(code)
             val document = parsedFile.readText()
             val generated = timerBlock?.let { block ->
-                mergeTimerBlock(document, block) ?: document
+                mergeTimerFragment(document, block) ?: document
             } ?: document
             val fresh = parseEntries(document) ?: return ParseResult.Failed(code, "invalid extractor output")
             /* The document is returned, never stored: the app keeps no profile
@@ -785,26 +785,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         evidence: String,
     ): Boolean = withContext(Dispatchers.IO) {
         measuredProfiles.recordProbeStride(release, value.toLong(), evidence)
-    }
-
-    /**
-     * Merges the timer extractor's block into the cleaned document: the
-     * `timer` block plus the shared kernel facts it owns (the five symbols,
-     * the credential sid and its derived reference offsets). The store's
-     * block keeps its own spelling; the document is the cleaned shape.
-     */
-    /**
-     * Merges the timer analyzer's cleaned fragment into a document: the
-     * `timer` block and the shared kernel facts it owns. Both sides are the
-     * same schema, so this is a deep merge; a null in the fragment is "no
-     * opinion" and never overwrites.
-     */
-    private fun mergeTimerBlock(documentText: String, fragmentText: String): String? {
-        val document = HoconSupport.parseValue(documentText).asValueMap() ?: return null
-        val fragment = HoconSupport.parseValue(fragmentText).asValueMap() ?: return null
-        if (fragment[Timer98260.BLOCK_KEY] == null) return null
-        deepMergeValues(document, fragment)
-        return HoconSupport.render(document)
     }
 
     private fun parseStrideProbe(lines: List<String>): StrideProbe? {
