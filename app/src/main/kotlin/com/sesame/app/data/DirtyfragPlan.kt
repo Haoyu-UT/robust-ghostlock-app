@@ -12,8 +12,10 @@ import javax.crypto.spec.SecretKeySpec
  * blocks that restore them. Every IV is computed here — IV = AES_ECB_DEC(key,
  * current_block) XOR desired_block — so the native stage only splices and sends.
  *
- * The layout constants are those of assets/dirtyfrag_stub.bin (the prototype in
- * the private repo: stub.S, 420 bytes).
+ * The layout constants are those of assets/dirtyfrag_stub.bin, built from
+ * `tools/dirtyfrag_payload/stub.S`. The blob carries both the plain root-daemon
+ * path and the module-chain prologue (insmod as vendor_modprobe), so its size
+ * is what the cave check measures.
  */
 object DirtyfragPlan {
     internal const val BRIDGE_ASSET = "dirtyfrag_bridge.bin"
@@ -58,8 +60,10 @@ object DirtyfragPlan {
      * The pure cave/layout rules. The cave is the byte after the executable
      * segment's file data, inside that segment's **last 4 KiB page**: the
      * loader's executable mapping of that page is what runs the stub, so the
-     * blob must fit the page remainder (the 420 B stub against the stage-1
-     * 2520/640 B margins). The RW segment's bytes share the same page-cache
+     * blob must fit the page remainder (the diting's 2520 B margin fits the
+     * current blob; the OnePlus 6.6.66's 640 B margin no longer does since the
+     * module prologue grew the stub, so its DirtyFrag path refuses and the
+     * ladder falls back pre-W1). The RW segment's bytes share the same page-cache
      * page by design (its `.data.rel.ro` alias is COWed in live processes), so
      * a shared page is not an error; a cave at a page boundary has no
      * executable page and is rejected. Both branch displacements must fit the
