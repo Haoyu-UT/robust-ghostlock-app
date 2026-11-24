@@ -1727,9 +1727,13 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                                 "module pipeline is bundled-only " +
                                     "(the bundled profile is not authoritative)"
                             else -> {
+                                /* The module chain writes the larger stub (it
+                                 * carries the insmod prologue), so it is
+                                 * measured against that blob. */
                                 val rom = DirtyfragPlan.preflight(
                                     appContext,
                                     File("/system/lib64/libc++.so"),
+                                    moduleMode = true,
                                 )
                                 if (!rom.feasible) {
                                     "ROM preflight: " + rom.reasons.joinToString("; ")
