@@ -470,6 +470,137 @@ pub struct Stage1Conf {
 /// `include` lines, the shared 6.x credential and KernelSnitch constants
 /// inlined, keys and nesting matching `app/src/main/assets/kernel_profiles/`.
 /// Fields without a derived value are omitted rather than written as `null`.
+/// The old-shape fact blocks, for the option superset's `profile` map (the
+/// store document's internal representation). This is not a profile render:
+/// the shipped document is the cleaned shape above.
+pub fn render_facts(input: &ConfInputs<'_>) -> String {
+    let mut lines = vec![
+        format!("release = \"{}\"", input.release),
+        format!(
+            "kernel_major = {}",
+            input
+                .release
+                .split('.')
+                .next()
+                .and_then(|part| part.parse::<u32>().ok())
+                .unwrap_or(0)
+        ),
+    ];
+    let phys_line = |key: &str, value: Option<u64>| match value {
+        Some(value) => format!("{key} = {value}"),
+        None => format!("{key} = null"),
+    };
+    lines.push(phys_line("kernel_phys_load", input.phys));
+    lines.push(phys_line("kernel_phys_offset", input.phys_offset));
+    if input.kdp == Some(true) {
+        lines.push("kdp = 1".to_string());
+    }
+    let mut snitch: Vec<(String, String)> = Vec::new();
+    let major = input
+        .release
+        .split('.')
+        .next()
+        .and_then(|part| part.parse::<u32>().ok());
+    if kernel_layout_verified(Some(input.release)) || major == Some(5) {
+        match major {
+            Some(6) => snitch.push(("collisions".to_string(), "4".to_string())),
+            Some(5) => snitch.push(("collisions".to_string(), "8".to_string())),
+            _ => {}
+        }
+    }
+    if !snitch.iter().any(|(key, _)| key == "collisions") {
+        snitch.push(("collisions".to_string(), "null".to_string()));
+    }
+    if let Some(size) = input
+        .layouts
+        .and_then(|layouts| btf_u32(&layouts.rt_mutex_size))
+    {
+        snitch.push(("rt_mutex_size".to_string(), size));
+    }
+    push_conf_block(&mut lines, "kernelsnitch", &snitch);
+    let task: Vec<(String, String)> = CONF_TASK_FIELDS
+        .iter()
+        .map(|(macro_name, key)| {
+            (
+                (*key).to_string(),
+                input
+                    .structs
+                    .get(*macro_name)
+                    .copied()
+                    .flatten()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "null".to_string()),
+            )
+        })
+        .collect();
+    push_conf_block(&mut lines, "task_struct", &task);
+    let mut cred: Vec<(String, String)> = CONF_CRED_FIELDS
+        .iter()
+        .map(|key| ((*key).to_string(), conf_lookup(input.cred, key)))
+        .collect();
+    if let Some(layouts) = input.layouts {
+        for (key, fact) in [
+            ("usage_size", &layouts.cred_usage_size),
+            ("uid_offset", &layouts.cred_uid_offset),
+            ("security_offset", &layouts.cred_security_offset),
+        ] {
+            if let Some(value) = btf_decimal(fact) {
+                cred.push((key.to_string(), value));
+            }
+        }
+        if major != Some(5) {
+            for (key, fact) in [
+                ("caps_offset", &layouts.cred_caps_offset),
+                ("copy_size", &layouts.cred_copy_size),
+            ] {
+                if let Some(value) = btf_decimal(fact) {
+                    cred.push((key.to_string(), value));
+                }
+            }
+        }
+    }
+    push_conf_block(&mut lines, "cred", &cred);
+    if let Some(layouts) = input.layouts {
+        let mut waiter: Vec<(String, String)> = Vec::new();
+        if let Some(value) = btf_flag(&layouts.waiter_compact) {
+            waiter.push(("compact".to_string(), value));
+        }
+        for (key, fact) in [
+            ("pi_tree", &layouts.waiter_pi_tree),
+            ("task", &layouts.waiter_task),
+            ("lock", &layouts.waiter_lock),
+            ("wake_state", &layouts.waiter_wake_state),
+        ] {
+            if let Some(value) = btf_decimal(fact) {
+                waiter.push((key.to_string(), value));
+            }
+        }
+        if !waiter.is_empty() {
+            push_conf_block(&mut lines, "waiter_layout", &waiter);
+        }
+    }
+    if let Some(stage1) = input.stage1.as_ref() {
+        push_conf_block(
+            &mut lines,
+            "selinux",
+            &[
+                ("enforcing".to_string(), stage1.selinux_enforcing.to_string()),
+                (
+                    "initialized".to_string(),
+                    stage1.selinux_initialized.to_string(),
+                ),
+            ],
+        );
+    }
+    let offset_entries = conf_offsets(input.symbols, input.extra_offsets);
+    let offset: Vec<(String, String)> = CONF_OFFSET_FIELDS
+        .iter()
+        .map(|key| ((*key).to_string(), conf_lookup(&offset_entries, key)))
+        .collect();
+    push_conf_block(&mut lines, "offset", &offset);
+    lines.join("\n") + "\n"
+}
+
 pub fn render_conf(input: &ConfInputs<'_>) -> String {
     render_conf_with_device(input, None)
 }

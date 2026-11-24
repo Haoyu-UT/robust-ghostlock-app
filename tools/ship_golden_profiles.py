@@ -229,11 +229,13 @@ def _asset_document(path):
 
 
 def _cleaned_asset(path):
-    """The asset in the cleaned shape (converted when it is the old layout)."""
+    """The asset as the cleaned document (None when it is not one)."""
     document = _asset_document(path)
     if document is None or not isinstance(document.get("release"), str):
         return None
-    return migrate_profile_shape.convert(document)
+    if not isinstance(document.get("kernel"), dict):
+        return None
+    return document
 
 
 def asset_pipeline_order(path):
@@ -981,24 +983,108 @@ def render(extract, entry, out_path):
         raise RuntimeError("extractor wrote no profile")
 
 
+def _hex_literal(value):
+    return None if value is None else "0x" + format(int(value) & 0xFFFFFFFFFFFFFFFF, "x")
+
+
+def _address(text):
+    if text is None:
+        return None
+    text = str(text).strip()
+    if text == "null" or text == "":
+        return None
+    if text.lower().startswith("0x"):
+        return int(text, 16)
+    return int(text, 10)
+
+
+def cleaned_timer(block, kernel):
+    """The store's timer block as the cleaned `timer` block, plus the shared
+    kernel facts it owns (the five symbols and the credential sid)."""
+    base = _address(kernel.get("image_base"))
+    def relative(key):
+        value = _address(block.get(key))
+        if value is None or base is None or value < base:
+            return None
+        return value - base
+    def literal(value):
+        return None if value is None else _hex_literal(value)
+    site = _address(block.get("static_timer_site"))
+    site_offset = None if site is None else (site - base if base is not None and site >= base else site)
+    low = _address(block.get("task_alloc_site_lower_21bit"))
+    timer = {
+        "trigger": block.get("trigger") if block.get("trigger") in ("killable", "core_state") else "killable",
+        "match_bits": 21,
+        "sites": {
+            "timer": {"offset": literal(site_offset)},
+            "task_alloc": {"low_bits": literal(None if low is None else low & 0x1FFFFF)},
+        },
+        "object_size": _address(block.get("timer_object_size")),
+        "task_alloc_size": _address(block.get("task_alloc_size")),
+        "node_offset": _address(block.get("timer_node_offset")),
+        "cred": {
+            "request_size": _address(block.get("cred_request_size")),
+            "alloc_size": _address(block.get("cred_alloc_size")),
+        },
+        "trace": {
+            "gfp": {
+                "offset": _address(block.get("page_alloc_gfp_offset")),
+                "size": _address(block.get("page_alloc_gfp_size")),
+            },
+        },
+    }
+    symbols = kernel.setdefault("symbols", {})
+    for name in ("panic_on_warn", "root_user", "init_user_ns", "init_ucounts", "init_groups"):
+        value = relative(name)
+        if value is not None:
+            symbols[name] = literal(value)
+    structure = kernel.setdefault("struct", {})
+    cred = structure.setdefault("cred", {})
+    sid = _address(block.get("security_sid_offset"))
+    if sid is not None:
+        cred["security_sid"] = sid
+        if base is not None:
+            # The timer's overlay is the derived answer: state its layout in
+            # the shared credential block so both engines read one layout.
+            for key, path in (
+                ("cred_user_offset", ("refs", "user", "offset")),
+                ("cred_user_ns_offset", ("refs", "user_ns", "offset")),
+                ("cred_ucounts_offset", ("refs", "ucounts", "offset")),
+                ("cred_group_info_offset", ("refs", "group_info", "offset")),
+            ):
+                value = _address(block.get(key))
+                if value is not None:
+                    node = cred
+                    for part in path[:-1]:
+                        node = node.setdefault(part, {})
+                    node[path[-1]] = value
+    return timer
+
+
 def asset_text(entry, rendered):
-    text = rendered
-    if entry["maps"]:
-        text = replace_line(text, "kernel_phys_load", entry["maps"][0])
-        text = replace_line(text, "kernel_phys_offset", entry["maps"][1])
-    if entry.get("stride"):
-        text = set_mm_struct_stride(text, entry["stride"])
+    """The extractor's cleaned render with the store-only facts merged in."""
+    document = migrate_profile_shape.Parser(rendered, entry["release"]).document()
+    devices = {}
+    for device in entry["options"].get("devices") or []:
+        name = device.get("device")
+        if not name:
+            continue
+        devices[name] = {
+            "phys": {
+                "load": _hex_literal(device.get("kernel_phys_load")),
+                "offset": _hex_literal(device.get("kernel_phys_offset")),
+            },
+        }
+    if devices:
+        document["devices"] = devices
+    kernel = document.get("kernel")
+    if isinstance(kernel, dict):
+        heap = kernel.setdefault("heap", {})
+        if entry.get("stride"):
+            heap["stride"] = int(entry["stride"])
     block = timer_block(entry["options"])
-    if block is not None:
-        text = text.rstrip("\n") + "\n\n" + TIMER_COMMENT + render_timer_block(block) + "\n"
-    # The extractor still renders the pre-release layout; the shipped asset
-    # is the cleaned document. This conversion is the same one the one-off
-    # asset migration applies.
-    document = migrate_profile_shape.convert(
-        migrate_profile_shape.Parser(text, entry["release"]).document()
-    )
-    if document is None:
-        raise RuntimeError(f"{entry['release']}: the render did not convert")
+    if block is not None and isinstance(kernel, dict):
+        document["timer"] = cleaned_timer(block, kernel)
     body = migrate_profile_shape.render(document)
     route_label = ", ".join(entry["routes"])
     header = (

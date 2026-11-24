@@ -1734,7 +1734,7 @@ fn run(cli: &Cli) -> Result<i32> {
                     );
                 }
             }
-            let common_text = report::render_conf(&report::ConfInputs {
+            let common_text = report::render_facts(&report::ConfInputs {
                 release: release_text,
                 phys: kernel_phys_load,
                 phys_offset: kernel_phys_offset,

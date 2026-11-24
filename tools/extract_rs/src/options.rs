@@ -1052,11 +1052,19 @@ pub fn render_superset(
             (other.image, other.bytes, other.stride) == (anchor.image, anchor.bytes, anchor.stride)
         })
     });
-    let scratches: Vec<&ScratchPlacement> =
-        chosen.iter().filter_map(|(_, plan)| plan.scratch.as_ref()).collect();
-    let shared_scratch = scratches.first().copied().filter(|scratch| {
-        scratches.iter().all(|other| other.image == scratch.image)
-    });
+    /* The scratch is emitted only when every chosen route's plan uses the
+     * same region: a mixed set keeps the page path rather than claiming a
+     * slot that does not fit another route's anchor. */
+    let shared_scratch = chosen
+        .iter()
+        .map(|(_, plan)| plan.scratch.as_ref().map(|scratch| scratch.image))
+        .reduce(|left, right| if left == right { left } else { None })
+        .flatten()
+        .and_then(|image| {
+            chosen
+                .iter()
+                .find_map(|(_, plan)| plan.scratch.as_ref().filter(|s| s.image == image))
+        });
     match shared_anchor {
         Some(anchor) => {
             out.push("  anchor {".to_string());
