@@ -325,12 +325,14 @@ class ProfileLayerPolicyTest {
         assertTrue(config.invalidPaths.isEmpty())
         /* No pipeline list: the document's own verdict derives the fixed
          * ladder (this fixture states no DirtyFrag verdict, so GhostLock). */
-        assertEquals(listOf("ghostlock"), config.pipelineOrder)
+        assertEquals(listOf("dirtyfrag", "ghostlock"), config.pipelineOrder)
     }
 
     @Test
     fun `a copy without the required execution block gets the preset defaults`() = runBlocking {
-        val text = removeTopLevelBlock(document(bundledRelease, routeWaitMs = 4242), "execution")
+        /* The cleaned asset states `ghostlock.execution = null`: the presets
+         * fill it. */
+        val text = AssetConfigLoader(context).load("kernel_profiles/$bundledRelease.conf")
         val uri = external.add("content://profiles/no-execution.conf", text)
 
         assertNotNull(controller.selectExternalProfile(uri, bundledRelease))
@@ -397,8 +399,11 @@ class ProfileLayerPolicyTest {
         return if (replaced != relabelled) {
             replaced
         } else {
-            relabelled +
-                "\nexecution {\n  race {\n    route_wait_ms = $routeWaitMs\n  }\n}\n"
+            /* The cleaned document nests the tuning under the engine. */
+            relabelled.replace(
+                "  execution = null",
+                "  execution {\n    race {\n      route_wait_ms = $routeWaitMs\n    }\n  }",
+            )
         }
     }
 

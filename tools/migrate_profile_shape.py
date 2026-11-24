@@ -655,6 +655,9 @@ def devices_block(document):
 
 
 def convert(document):
+    """The cleaned document (idempotent: a cleaned input is returned as is)."""
+    if isinstance(document.get("kernel"), dict):
+        return document
     base = image_base(document)
     all_branches = branches(document)
     selected = min((name for name in SYSCALLS if name in all_branches), default=None)

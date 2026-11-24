@@ -150,11 +150,11 @@ class BuiltinProfilesTest {
         val document = HoconSupport.parseValue(
             AssetConfigLoader(context).load("kernel_profiles/${entry.file}"),
         ).asValueMap() ?: error("${entry.release}: unreadable profile")
-        val block = document["module"].asValueMap()
+        val block = (document["ghostlock"] as? Map<*, *>)?.get("module").asValueMap()
             ?: error("${entry.release}: module block missing")
         val asset = block["asset"] as? String
             ?: error("${entry.release}: module asset missing")
-        val expected = block["asset_sha256"] as? String
+        val expected = block["sha256"] as? String
             ?: error("${entry.release}: module hash missing")
         assertEquals(
             "${entry.release}: resolved module spec",

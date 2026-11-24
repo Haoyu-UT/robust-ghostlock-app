@@ -53,7 +53,12 @@ class EditorPhysMapTest {
         val release = "5.10.198-android12-9-00085-g226a9632f13d-ab11136126"
         val asset = AssetConfigLoader(context).load("kernel_profiles/$release.conf")
         val raw = HoconSupport.parseValue(asset).asValueMap() ?: error("no bundle")
-        raw["kernel_phys_offset"] = null
+        /* The 5.10.198 pair is mapped per device; clear the running device's
+         * offset so the export is the load-only case. */
+        val devices = raw["devices"].asValueMap()
+        val entry = devices?.values?.firstOrNull().asValueMap()
+        val phys = entry?.get("phys").asValueMap()
+        phys?.put("offset", null)
         val externalText = HoconSupport.render(raw)
         val external = FakeExternalProfileStore().also { it.writeImportedProfile(externalText) }
         val controller = AndroidProfileConfigController(

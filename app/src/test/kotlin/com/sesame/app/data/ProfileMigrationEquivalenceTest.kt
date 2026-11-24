@@ -124,12 +124,9 @@ class ProfileMigrationEquivalenceTest {
             .filterNot { it.release.endsWith("-template") }
     }
 
-    /** One map key from a v3 document, so the physical pair resolves. */
+    /** One device identity from the document, so the physical pair resolves. */
     private fun deviceKey(document: ValueMap): String? =
-        listOf("kernel_phys_load", "kernel_phys_offset")
-            .firstNotNullOfOrNull { key ->
-                (document[key] as? Map<*, *>)?.keys?.firstOrNull()?.toString()
-            }
+        (document["devices"] as? Map<*, *>)?.keys?.firstOrNull()?.toString()
 
     private fun controller(
         preferencesName: String,

@@ -36,6 +36,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import migrate_profile_shape
+
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.path.dirname(os.path.dirname(APP))  # <repo>/external/ghostlock-app -> <repo>
 DEFAULT_STORE = os.path.join(ROOT, "external", "test-kernels")
@@ -213,53 +216,63 @@ def choose_pipeline_order(options, meta):
     return order
 
 
-def asset_pipeline_order(path):
-    """The asset's `pipeline` order (list form, or a legacy scalar), or None."""
+def _asset_document(path):
+    """The asset parsed as a value tree (None when unreadable)."""
     try:
         text = open(path, encoding="utf-8").read()
     except OSError:
         return None
-    match = re.search(r'(?m)^\s*pipeline\s*=\s*\[([^\]]*)\]', text)
-    if match:
-        names = re.findall(r'"([^"]+)"', match.group(1))
-        return [name.strip().lower() for name in names] if names else None
-    match = re.search(r'(?m)^\s*pipeline\s*=\s*"?([A-Za-z0-9_-]+)"?', text)
-    return [match.group(1).strip().lower()] if match else None
+    try:
+        return migrate_profile_shape.Parser(text, path).document()
+    except migrate_profile_shape.ParseError:
+        return None
 
+
+def _cleaned_asset(path):
+    """The asset in the cleaned shape (converted when it is the old layout)."""
+    document = _asset_document(path)
+    if document is None or not isinstance(document.get("release"), str):
+        return None
+    return migrate_profile_shape.convert(document)
+
+
+def asset_pipeline_order(path):
+    """The fixed ladder the cleaned asset's verdict derives, or None."""
+    document = _cleaned_asset(path)
+    if document is None:
+        return None
+    ghostlock = document.get("ghostlock")
+    timer = document.get("timer")
+    kernel = document.get("kernel") or {}
+    if ghostlock is None:
+        return ["timer"] if timer is not None else None
+    if isinstance(ghostlock, dict) and ghostlock.get("module") is not None:
+        return ["module"]
+    if kernel.get("kdp") is True:
+        return ["dirtyfrag"]
+    if kernel.get("dirtyfrag") == "feasible":
+        return ["dirtyfrag", "ghostlock"]
+    return ["ghostlock"]
 
 def asset_has_stride(path):
-    """Whether the rendered asset carries a `kernelsnitch.mm_struct_sz` value.
-
-    Hand-finished assets are HOCON with `include "kernelsnitch-6x.conf"`, whose
-    block carries the 1280 stride; follow one level of include so the check
-    tests the effective document, not just the asset's own text.
-    """
-    try:
-        text = open(path, encoding="utf-8").read()
-    except OSError:
+    """Whether the cleaned asset states `kernel.heap.stride`."""
+    document = _cleaned_asset(path)
+    if document is None:
         return False
-    if "mm_struct_sz" in text:
-        return True
-    base = os.path.dirname(path)
-    for name in re.findall(r'(?m)^\s*include\s+"([^"]+)"', text):
-        try:
-            included = open(os.path.join(base, name), encoding="utf-8").read()
-        except OSError:
-            continue
-        if "mm_struct_sz" in included:
-            return True
-    return False
-
+    heap = (document.get("kernel") or {}).get("heap")
+    return isinstance(heap, dict) and heap.get("stride") is not None
 
 MISSING = object()
 
-# `kernel_phys_*` is the extractor's render-time output with the device sidecars
-# (the asset's per-device map); the store's scalar can lag that derivation, so it
-# is not a fact the asset is compared on.
-# `recommend_shizuku` is retired from the authored schema (2026-11-23): old
-# store supersets still carry it, but no shipped asset does, and the check must
-# not ask for it back.
-FACT_SKIP = {"schema_version", "kernel_phys_load", "kernel_phys_offset", "recommend_shizuku"}
+# `schema_version`/addresses are structural; `kernel_phys_*` is the extractor's
+# render-time output with the device sidecars, and `recommend_shizuku` is
+# retired from the authored schema, so none of them is compared as a fact.
+FACT_SKIP = {
+    "schema_version", "kernel_phys_load", "kernel_phys_offset", "recommend_shizuku",
+    # The engine selection is the app's default (the alphabetically first
+    # viable syscall), not a store fact.
+    "ghostlock.syscall", "ghostlock.carrier",
+}
 WAITER_LAYOUT_ORDER = ("compact", "pi_tree", "task", "lock", "wake_state")
 
 
@@ -474,23 +487,15 @@ def _asset_fact(actual, key, entry):
     return actual.get(key, MISSING)
 
 
-def fact_mismatches(entry, asset_path):
-    """The asset's derived facts that are absent or differ from the store's."""
-    expected = expected_facts(entry)
-    actual = flatten_facts(load_conf_facts(asset_path))
-    mismatched = []
-    for key in sorted(expected):
-        if key in FACT_SKIP:
-            continue
-        wanted = expected[key]
-        got = _asset_fact(actual, key, entry)
-        if wanted is None and got is MISSING:
-            continue
-        if got is MISSING:
-            mismatched.append((key, wanted, "<absent>"))
-        elif got != wanted:
-            mismatched.append((key, wanted, got))
-    return mismatched
+def _nested_from_flat(flat):
+    root = {}
+    for path, value in flat.items():
+        node = root
+        parts = path.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
+    return root
 
 
 TIMER_BLOCK = "timer_98260"
@@ -557,13 +562,66 @@ def timer_block_facts(block):
     return facts
 
 
-def timer_block_mismatches(entry, asset_path):
-    """The asset's timer_98260 fields that are absent or differ from the store."""
+
+
+def _expected_clean_document(entry):
+    """The store's derived document in the cleaned shape."""
+    flat = expected_facts(entry)
+    # The store states the physical pair as a scalar (or null); the cleaned
+    # document states it per device.
+    for key in ("kernel_phys_load", "kernel_phys_offset"):
+        if key in flat and not isinstance(flat[key], dict):
+            value = flat.pop(key)
+            flat[f"{key}.{entry['primary']}"] = value
+    nested = _nested_from_flat(flat)
+    # The store's profile section omits the pipeline and the timer block (the
+    # ship supplies both); add them so the conversion can derive the same
+    # verdict and the same shared symbols the asset states.
+    try:
+        nested["pipeline"] = choose_pipeline_order(entry["options"], entry["meta"])
+    except PipelineChoiceRequired:
+        pass
     block = timer_block(entry["options"])
-    if block is None:
+    if block is not None:
+        nested["timer_98260"] = block
+    return migrate_profile_shape.convert(nested)
+
+
+def fact_mismatches(entry, asset_path):
+    """The asset's derived facts that are absent or differ from the store's."""
+    expected_clean = _expected_clean_document(entry)
+    expected = flatten_facts(expected_clean) if expected_clean else {}
+    actual_document = _cleaned_asset(asset_path)
+    actual = flatten_facts(actual_document) if actual_document else {}
+    mismatched = []
+    for key in sorted(expected):
+        if key in FACT_SKIP:
+            continue
+        wanted = expected[key]
+        got = actual.get(key, MISSING)
+        if wanted == "<absent>":
+            wanted = None
+        # A null in the store's sparse profile is not an opinion; presence is
+        # the fact the store can assert.
+        if wanted is None:
+            continue
+        if got is MISSING:
+            mismatched.append((key, wanted, "<absent>"))
+        elif got != wanted:
+            mismatched.append((key, wanted, got))
+    return mismatched
+
+
+def timer_block_mismatches(entry, asset_path):
+    """The asset's timer facts that are absent or differ from the store's."""
+    expected_doc = _expected_clean_document(entry)
+    if expected_doc is None or expected_doc.get("timer") is None:
         return []
-    expected = timer_block_facts(block)
-    actual = flatten_facts(load_conf_facts(asset_path))
+    expected = flatten_facts({"timer": expected_doc["timer"]})
+    actual_doc = _cleaned_asset(asset_path)
+    if actual_doc is None or actual_doc.get("timer") is None:
+        return [("timer", "present", "<absent>")]
+    actual = flatten_facts({"timer": actual_doc["timer"]})
     mismatched = []
     for key in sorted(expected):
         wanted = expected[key]
@@ -847,32 +905,17 @@ def feasible_route_names(options):
 
 
 def asset_route_names(path):
-    """The route branch names inside the asset's `route { ... }` parent."""
-    names = []
-    in_route = False
-    depth = 0
-    for raw in open(path, encoding="utf-8", errors="replace"):
-        line = raw.split("#", 1)[0].rstrip()
-        if not line.strip():
-            continue
-        if not in_route:
-            if line.strip() == "route {":
-                in_route = True
-                depth = 0
-            continue
-        stripped = line.strip()
-        if stripped.endswith("{"):
-            if depth == 0:
-                names.append(stripped[:-1].strip())
-            depth += 1
-            continue
-        if stripped == "}":
-            if depth == 0:
-                in_route = False
-            else:
-                depth -= 1
-    return sorted(names)
-
+    """The syscall branches the cleaned asset declares (non-null blocks)."""
+    document = _cleaned_asset(path)
+    if document is None:
+        return []
+    ghostlock = document.get("ghostlock")
+    if not isinstance(ghostlock, dict):
+        return []
+    syscalls = ghostlock.get("syscalls")
+    if not isinstance(syscalls, dict):
+        return []
+    return [name for name, branch in syscalls.items() if branch is not None]
 
 def validate(entry):
     options = read_options(entry["directory"])
@@ -948,6 +991,15 @@ def asset_text(entry, rendered):
     block = timer_block(entry["options"])
     if block is not None:
         text = text.rstrip("\n") + "\n\n" + TIMER_COMMENT + render_timer_block(block) + "\n"
+    # The extractor still renders the pre-release layout; the shipped asset
+    # is the cleaned document. This conversion is the same one the one-off
+    # asset migration applies.
+    document = migrate_profile_shape.convert(
+        migrate_profile_shape.Parser(text, entry["release"]).document()
+    )
+    if document is None:
+        raise RuntimeError(f"{entry['release']}: the render did not convert")
+    body = migrate_profile_shape.render(document)
     route_label = ", ".join(entry["routes"])
     header = (
         "# SHIPPED GOLDEN -- test-kernels golden (QEMU tier); generated, do not edit.\n"
@@ -955,7 +1007,7 @@ def asset_text(entry, rendered):
         f"devices: {', '.join(entry['devices'])}\n"
         "# maintained by external/ghostlock-app/tools/ship_golden_profiles.py\n"
     )
-    return header + text
+    return header + body
 
 
 def main():
@@ -1082,7 +1134,8 @@ def main():
                 missing.append(entry)
                 continue
             asset_routes = asset_route_names(asset_path)
-            if asset_routes != entry["routes"]:
+            # The cleaned document has no route order: compare as a set.
+            if sorted(asset_routes) != sorted(entry["routes"]):
                 entry["reasons"] = [
                     f"asset routes {asset_routes} != derived {entry['routes']}"
                 ]
