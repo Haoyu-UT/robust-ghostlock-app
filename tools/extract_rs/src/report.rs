@@ -959,14 +959,14 @@ mod tests {
             layouts: Some(&layouts),
             stage1: None,
         });
-        /* The 5.x block is already per-image: its copy is sizeof(cred) (5.x
-         * keeps pointers and the rcu head after `security`) and its caps is
-         * the init_cred capability run. The 6.x prefix facts must not replace
-         * either; only the new usage/uid/security keys are added. */
+        /* A 5.x block keeps its copy size: `security + 8` is not sizeof(cred)
+         * there (the fields follow `security`). Its cap set is the image's
+         * BTF answer — 5.15 is 40 where the 6.x-shaped template says 48; the
+         * timer fragment supplies the count in the store document. */
         assert!(out.contains("copy_size = 176"));
-        assert!(out.contains("caps {\n        offset = 48"));
+        assert!(out.contains("caps {\n        offset = 40"));
         assert!(!out.contains("copy_size = 128"));
-        assert!(!out.contains("caps {\n        offset = 40"));
+        assert!(!out.contains("caps {\n        offset = 48"));
         assert!(out.contains("security = 120"));
     }
 
