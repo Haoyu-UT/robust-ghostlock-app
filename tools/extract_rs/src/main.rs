@@ -1658,6 +1658,7 @@ fn run(cli: &Cli) -> Result<i32> {
              * null so the native's compiled default applies. */
             phys_offset: kernel_phys_offset,
             phys_source,
+            image_base: Some(base),
             symbols: &symbol_offsets,
             structs: &struct_offsets,
             pipeline_order: &pipeline_order,
@@ -1738,6 +1739,7 @@ fn run(cli: &Cli) -> Result<i32> {
                 phys: kernel_phys_load,
                 phys_offset: kernel_phys_offset,
                 phys_source,
+                image_base: Some(base),
                 symbols: &symbol_offsets,
                 structs: &struct_offsets,
                 pipeline_order: &[],
@@ -1759,6 +1761,7 @@ fn run(cli: &Cli) -> Result<i32> {
                 phys_load: kernel_phys_load,
                 phys_offset: kernel_phys_offset,
                 phys_source,
+                image_base: Some(base),
                 device: cli.device.as_deref(),
                 verdicts: &route_verdicts,
                 pipeline_facts: &pipeline_facts,

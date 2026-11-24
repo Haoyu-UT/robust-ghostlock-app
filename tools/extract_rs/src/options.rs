@@ -54,6 +54,10 @@ pub struct Superset {
     /// The physical pair's source (`xbl_config FDT`, `uefi memory map`, …),
     /// so the app can show the same advice without a second run.
     pub phys_source: String,
+    /// The image's link-time base (`_text`), the anchor for every symbol VA
+    /// the timer engine states.
+    #[serde(default)]
+    pub image_base: Option<u64>,
     pub routes: Vec<RouteOption>,
     /// The image-side pipeline facts. They are recorded here and never written
     /// into the profile; the profile carries the chosen `pipeline`.
@@ -248,6 +252,8 @@ pub struct Input<'a> {
     pub phys_load: Option<u64>,
     pub phys_offset: Option<u64>,
     pub phys_source: &'a str,
+    /// The image's link-time base (`_text`).
+    pub image_base: Option<u64>,
     /// The device these sidecars belong to. When set, the superset records a
     /// [DeviceDerivation] entry (the CLI and the store harness run once per
     /// device and merge the entries).
@@ -345,6 +351,7 @@ pub fn build(input: &Input<'_>) -> Superset {
         kernel_phys_load: input.phys_load,
         kernel_phys_offset: input.phys_offset,
         phys_source: input.phys_source.to_string(),
+        image_base: input.image_base,
         routes,
         pipeline_facts: input.pipeline_facts.clone(),
         pipelines: input.pipelines.to_vec(),
@@ -797,200 +804,429 @@ pub fn render_superset(
     if chosen.is_empty() {
         return None;
     }
-    let top = superset.profile.get("").cloned().unwrap_or_default();
-    let value = |key: &str| top.get(key).cloned();
-    let phys = derivation.map(|entry| (entry.kernel_phys_load, entry.kernel_phys_offset));
-    let mut lines = vec![
-        format!(
-            "# GhostLock kernel profile: {} (HOCON, self-contained, route superset).",
-            superset.release
-        ),
-        "# The app's route picker reads this document; a run still cuts one route.".to_string(),
-    ];
-    for key in ["release", "kernel_major"] {
-        if let Some(value) = value(key) {
-            lines.push(format!("{key} = {value}"));
+
+    fn parse_u64(text: &str) -> Option<u64> {
+        let text = text.trim();
+        if text == "null" || text.is_empty() {
+            return None;
         }
+        text.parse::<i64>().ok().map(|v| v as u64)
+            .or_else(|| text.parse::<u64>().ok())
     }
-    let schema_version = 3;
-    lines.push(format!("schema_version = {schema_version}"));
-    let has_derivation = device.is_some() && phys.is_some();
-    let (load_override, offset_override) = match phys {
-        Some((load, offset)) if device.is_some() => (load, offset),
-        _ => (None, None),
+    fn hex_lit(value: u64) -> String {
+        format!("\"0x{value:x}\"")
+    }
+    fn lookup<'a>(
+        block: Option<&'a BTreeMap<String, String>>,
+        key: &str,
+    ) -> Option<&'a str> {
+        block.and_then(|map| map.get(key)).map(|value| value.as_str())
+    }
+    fn number_at(block: Option<&BTreeMap<String, String>>, key: &str) -> Option<i64> {
+        lookup(block, key).and_then(|value| value.trim().parse::<i64>().ok())
+    }
+    fn number_lit(block: Option<&BTreeMap<String, String>>, key: &str) -> String {
+        lookup(block, key)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string())
+    }
+    fn hex_at(block: Option<&BTreeMap<String, String>>, key: &str) -> String {
+        lookup(block, key)
+            .and_then(parse_u64)
+            .map(hex_lit)
+            .unwrap_or_else(|| "null".to_string())
+    }
+
+    let profile = &superset.profile;
+    let top = profile.get("");
+    let offset = profile.get("offset");
+    let task = profile.get("task_struct");
+    let cred = profile.get("cred");
+    let snitch = profile.get("kernelsnitch");
+    let selinux = profile.get("selinux");
+    let waiter_layout = profile.get("waiter_layout");
+    let kdp = lookup(top, "kdp").map(|value| value.trim() == "1").unwrap_or(false);
+    let dirtyfrag_verdict = if superset
+        .pipeline_order
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case("dirtyfrag"))
+    {
+        "feasible"
+    } else {
+        "unknown"
     };
-    let phys_line = |key: &str, override_value: Option<u64>| {
-        if has_derivation {
-            match (device, override_value) {
-                (Some(name), Some(value)) => format!("{key} = {{ {name} = {value} }}"),
-                _ => format!("{key} = null"),
-            }
-        } else {
-            match (device, value(key)) {
-                (Some(name), Some(value)) if value != "null" => {
-                    format!("{key} = {{ {name} = {value} }}")
-                }
-                (None, Some(value)) => format!("{key} = {value}"),
-                _ => format!("{key} = null"),
-            }
+
+    let mut out: Vec<String> = Vec::new();
+    out.push(format!(
+        "# GhostLock kernel profile: {} (HOCON, self-contained, route superset).",
+        superset.release
+    ));
+    out.push("# The app's route picker reads this document; a run still cuts one route.".to_string());
+    out.push(format!("schema_version = {}", 3));
+    out.push(format!("release = \"{}\"", superset.release));
+    match (device, derivation) {
+        (Some(name), Some(entry)) => {
+            out.push("devices {".to_string());
+            out.push(format!("  {name} {{"));
+            out.push("    phys {".to_string());
+            out.push(format!(
+                "      load = {}",
+                entry.kernel_phys_load.map(hex_lit).unwrap_or_else(|| "null".to_string())
+            ));
+            out.push(format!(
+                "      offset = {}",
+                entry.kernel_phys_offset.map(hex_lit).unwrap_or_else(|| "null".to_string())
+            ));
+            out.push("    }".to_string());
+            out.push("  }".to_string());
+            out.push("}".to_string());
         }
-    };
-    lines.push(phys_line("kernel_phys_load", load_override));
-    lines.push(phys_line("kernel_phys_offset", offset_override));
-    if !superset.pipeline_order.is_empty() {
-        let list = superset
-            .pipeline_order
-            .iter()
-            .map(|name| format!("\"{name}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
-        lines.push(format!("pipeline = [ {list} ]"));
+        _ => out.push("devices = null".to_string()),
     }
-    lines.push("route {".to_string());
-    for (option, plan) in &chosen {
-        lines.push(format!("  {} {{", option.route));
-        let mut geometry: BTreeMap<&str, &i64> = option
-            .geometry
-            .iter()
-            .map(|(key, value)| (key.as_str(), value))
-            .collect();
-        /* The route's selectable carriers, in the profile's order (primary
-         * first), as a list key like `pipeline`. The app renders one box for
-         * this list and injects the wire's `compat_carrier` from the choice;
-         * a block without `carriers` keeps the legacy flag semantics. */
-        let mut carriers: Vec<&str> = Vec::new();
-        if !option.carrier.is_empty() {
-            carriers.push(option.carrier.as_str());
-        }
-        for alt in &option.alternatives {
-            if alt.verdict == "feasible" && !carriers.contains(&alt.carrier.as_str()) {
-                carriers.push(alt.carrier.as_str());
-            }
-        }
-        if !carriers.is_empty() {
-            let list = carriers
-                .iter()
-                .map(|carrier| format!("\"{carrier}\""))
-                .collect::<Vec<_>>()
-                .join(", ");
-            lines.push(format!("    carriers = [ {list} ]"));
-        }
-        let mut emitted: BTreeMap<String, i64> = BTreeMap::new();
-        let mut wrote_compact = false;
-        if let Some(anchor) = &plan.anchor {
-            for key in ["waiter_shift", "compact_waiter"] {
-                if let Some(value) = geometry.remove(key) {
-                    lines.push(format!("    {key} = {value}"));
-                    emitted.insert(key.to_string(), *value);
-                    if key == "compact_waiter" {
-                        wrote_compact = true;
-                    }
-                }
-            }
-            for (key, value) in &geometry {
-                lines.push(format!("    {key} = {value}"));
-                emitted.insert((*key).to_string(), **value);
-            }
-            lines.push(format!("    lock_anchor_image = {}", anchor.image));
-            lines.push(format!("    lock_anchor_bytes = {}", anchor.bytes));
-            lines.push(format!("    lock_anchor_stride = {}", anchor.stride));
-            emitted.insert("lock_anchor_image".to_string(), anchor.image as i64);
-            emitted.insert("lock_anchor_bytes".to_string(), anchor.bytes as i64);
-            emitted.insert("lock_anchor_stride".to_string(), anchor.stride as i64);
-        } else {
-            for (key, value) in &geometry {
-                lines.push(format!("    {key} = {value}"));
-                emitted.insert((*key).to_string(), **value);
-                if *key == "compact_waiter" {
-                    wrote_compact = true;
-                }
-            }
-        }
-        /* The other feasible carriers' geometry joins the same block. The
-         * primary carrier's value wins on a shared key; with more than one
-         * carrier the legacy `compat_carrier` flag is omitted (the app sets
-         * the wire's flag from the chosen carrier). */
-        for alt in &option.alternatives {
-            if alt.verdict != "feasible" {
-                continue;
-            }
-            for (key, value) in &alt.geometry {
-                if key == "compat_carrier" && carriers.len() > 1 {
-                    continue;
-                }
-                if emitted.contains_key(key) {
-                    continue;
-                }
-                lines.push(format!("    {key} = {value}"));
-                emitted.insert(key.clone(), *value);
-            }
-        }
-        /* `tcp_zerocopy` has no per-route geometry of its own: its stamp-shape
-         * flag is the document-global waiter layout fact. An empty branch would
-         * carry no `compact_waiter`, which the app's validator requires, so the
-         * route would silently drop out of the picker (and out of a generated
-         * profile's round-trip). Emit the shared fact. */
-        if option.route == "tcp_zerocopy" && !wrote_compact {
-            if let Some(compact) = superset
-                .profile
-                .get("waiter_layout")
-                .and_then(|layout| layout.get("compact"))
-            {
-                lines.push(format!("    compact_waiter = {compact}"));
-            }
-        }
-        lines.push("  }".to_string());
-    }
-    lines.push("}".to_string());
-    if let Some(fallback) = superset.profile.get("fallback") {
-        lines.push("fallback {".to_string());
-        for (key, value) in fallback {
-            lines.push(format!("  {key} = {value}"));
-        }
-        lines.push("}".to_string());
-    }
-    if let Some(selinux) = superset.profile.get("selinux") {
-        lines.push("selinux {".to_string());
-        for (key, value) in selinux {
-            lines.push(format!("  {key} = {value}"));
-        }
-        lines.push("}".to_string());
-    }
-    /* The scratch is one top-level fact; emit it only when every route's
-     * chosen plan uses the same region. A mixed set omits it (the page path)
-     * rather than claiming a slot that does not fit another route's anchor. */
-    let shared_scratch = chosen
-        .first()
-        .and_then(|(_, plan)| plan.scratch.as_ref())
-        .filter(|scratch| {
-            chosen.iter().all(|(_, plan)| {
-                plan.scratch
-                    .as_ref()
-                    .map(|entry| entry.image)
-                    == Some(scratch.image)
-            })
-        });
-    if let Some(scratch) = shared_scratch {
-        lines.push("w1_scratch {".to_string());
-        lines.push(format!("  image = {}", scratch.image));
-        lines.push("}".to_string());
-    }
-    for block in [
-        "kernelsnitch",
-        "task_struct",
-        "cred",
-        "offset",
-        "waiter_layout",
+
+    out.push("kernel {".to_string());
+    out.push(format!(
+        "  image_base = {}",
+        superset.image_base.map(hex_lit).unwrap_or_else(|| "null".to_string())
+    ));
+    out.push("  symbols {".to_string());
+    for (key, source) in [
+        ("init_task", "init_task"),
+        ("init_cred", "init_cred"),
+        ("root_task_group", "root_task_group"),
+        ("empty_zero_page", "empty_zero_page"),
+        ("selinux_state", "selinux_enforcing"),
+        ("selinux_blob_sizes", "selinux_blob_sizes"),
+        ("security_hook_heads", "security_hook_heads"),
+        ("nf_logger", "slide_nfulnl_logger"),
+        ("loggers_0_1", "slide_loggers_0_1"),
+        ("boot_id", "slide_boot_id"),
     ] {
-        if let Some(entries) = superset.profile.get(block) {
-            lines.push(format!("{block} {{"));
-            for (key, value) in entries {
-                lines.push(format!("  {key} = {value}"));
-            }
-            lines.push("}".to_string());
-        }
+        out.push(format!("    {key} = {}", hex_at(offset, source)));
     }
-    Some(lines.join("\n") + "\n")
+    /* The timer engine's symbol kit lives in the store's timer block; the
+     * producer that merges it (ship_golden_profiles.py) fills these. */
+    for key in [
+        "panic_on_warn", "root_user", "init_user_ns", "init_ucounts", "init_groups",
+    ] {
+        out.push(format!("    {key} = null"));
+    }
+    out.push("  }".to_string());
+
+    out.push("  struct {".to_string());
+    out.push("    task {".to_string());
+    for (_, key) in crate::report::CONF_TASK_FIELDS {
+        out.push(format!("      {key} = {}", number_lit(task, key)));
+    }
+    out.push("    }".to_string());
+
+    out.push("    cred {".to_string());
+    out.push(format!("      copy_size = {}", number_lit(cred, "copy_size")));
+    out.push("      usage {".to_string());
+    out.push(format!("        offset = {}", number_lit(cred, "usage_offset")));
+    out.push(format!("        size = {}", number_lit(cred, "usage_size")));
+    out.push(format!("        value = {}", number_lit(cred, "usage_value")));
+    out.push("      }".to_string());
+    out.push(format!("      uid = {}", number_lit(cred, "uid_offset")));
+    out.push(format!("      security = {}", number_lit(cred, "security_offset")));
+    out.push("      security_sid = null".to_string());
+    out.push("      caps {".to_string());
+    out.push(format!("        offset = {}", number_lit(cred, "caps_offset")));
+    out.push(format!("        count = {}", number_lit(cred, "caps_count")));
+    out.push(format!("        mask = {}", hex_at(cred, "caps_value")));
+    out.push("      }".to_string());
+    out.push("      refs {".to_string());
+    for (name, index) in [
+        ("user", 0),
+        ("user_ns", 1),
+        ("ucounts", 2),
+        ("group_info", 3),
+    ] {
+        out.push(format!("        {name} {{"));
+        out.push(format!(
+            "          offset = {}",
+            number_lit(cred, &format!("ref{index}_offset"))
+        ));
+        out.push(format!(
+            "          image = {}",
+            hex_at(cred, &format!("ref{index}_image"))
+        ));
+        out.push("        }".to_string());
+    }
+    out.push("      }".to_string());
+    out.push("    }".to_string());
+
+    let compact = number_at(waiter_layout, "compact").or_else(|| {
+        chosen
+            .iter()
+            .find_map(|(option, _)| option.geometry.get("compact_waiter").copied())
+    });
+    let shape = match compact {
+        Some(1) => "\"compact\"",
+        Some(0) => "\"node\"",
+        _ => "null",
+    };
+    let waiter_task = number_lit(waiter_layout, "task");
+    let waiter_task = if waiter_task == "null" {
+        chosen
+            .iter()
+            .find_map(|(option, _)| option.geometry.get("task_offset").copied())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string())
+    } else {
+        waiter_task
+    };
+    let waiter_lock = number_lit(waiter_layout, "lock");
+    let waiter_lock = if waiter_lock == "null" {
+        chosen
+            .iter()
+            .find_map(|(option, _)| option.geometry.get("lock_offset").copied())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string())
+    } else {
+        waiter_lock
+    };
+    out.push("    waiter {".to_string());
+    out.push(format!("      shape = {shape}"));
+    out.push(format!("      pi_tree = {}", number_lit(waiter_layout, "pi_tree")));
+    out.push(format!("      task = {waiter_task}"));
+    out.push(format!("      lock = {waiter_lock}"));
+    out.push(format!("      wake_state = {}", number_lit(waiter_layout, "wake_state")));
+    out.push("    }".to_string());
+    out.push("    rt_mutex {".to_string());
+    out.push(format!("      size = {}", number_lit(snitch, "rt_mutex_size")));
+    out.push("    }".to_string());
+    out.push("    selinux_state {".to_string());
+    out.push(format!("      enforcing = {}", number_lit(selinux, "enforcing")));
+    out.push(format!("      initialized = {}", number_lit(selinux, "initialized")));
+    out.push("    }".to_string());
+    out.push("  }".to_string());
+
+    out.push("  heap {".to_string());
+    out.push("    stride = null".to_string());
+    out.push(format!("    collisions = {}", number_lit(snitch, "collisions")));
+    out.push("  }".to_string());
+    out.push(format!("  dirtyfrag = \"{dirtyfrag_verdict}\""));
+    out.push(format!("  kdp = {}", if kdp { "true" } else { "false" }));
+    out.push("}".to_string());
+
+    /* The ghostlock engine: the four-branch catalogue with nulls for the
+     * routes this image cannot run, and every declared carrier block. */
+    fn carriers_of(option: &RouteOption) -> Vec<String> {
+        let mut carriers = Vec::new();
+        if !option.carrier.is_empty() {
+            carriers.push(option.carrier.clone());
+        }
+        for alt in &option.alternatives {
+            if alt.verdict == "feasible" && !carriers.contains(&alt.carrier) {
+                carriers.push(alt.carrier.clone());
+            }
+        }
+        carriers
+    }
+    let route_names = ["select_stack", "sigreturn", "multicast_waiter", "tcp_zerocopy"];
+    let first = chosen
+        .iter()
+        .map(|(option, _)| option.route.as_str())
+        .min()
+        .unwrap_or(route_names[0]);
+    let first_option = chosen
+        .iter()
+        .find(|(option, _)| option.route == first)
+        .map(|(option, _)| *option);
+    let first_carriers = first_option.map(carriers_of).unwrap_or_default();
+    let carrier_line = match (first_carriers.contains(&"native".to_string()), first_carriers.contains(&"compat".to_string())) {
+        (true, false) | (false, false) => "null".to_string(),
+        (false, true) => "\"compat\"".to_string(),
+        (true, true) => "\"native\"".to_string(),
+    };
+    out.push("ghostlock {".to_string());
+    out.push(format!("  syscall = \"{first}\""));
+    out.push(format!("  carrier = {carrier_line}"));
+    /* A page-based route carries no anchor and ignores the shared one; the
+     * document states the anchor every anchored branch agrees on. */
+    let anchors: Vec<&AnchorTriple> =
+        chosen.iter().filter_map(|(_, plan)| plan.anchor.as_ref()).collect();
+    let shared_anchor = anchors.first().copied().filter(|anchor| {
+        anchors.iter().all(|other| {
+            (other.image, other.bytes, other.stride) == (anchor.image, anchor.bytes, anchor.stride)
+        })
+    });
+    let scratches: Vec<&ScratchPlacement> =
+        chosen.iter().filter_map(|(_, plan)| plan.scratch.as_ref()).collect();
+    let shared_scratch = scratches.first().copied().filter(|scratch| {
+        scratches.iter().all(|other| other.image == scratch.image)
+    });
+    match shared_anchor {
+        Some(anchor) => {
+            out.push("  anchor {".to_string());
+            out.push(format!("    image = {}", hex_lit(anchor.image)));
+            out.push(format!("    bytes = {}", anchor.bytes));
+            out.push(format!("    stride = {}", anchor.stride));
+            out.push(format!(
+                "    scratch = {}",
+                shared_scratch
+                    .map(|scratch| hex_lit(scratch.image))
+                    .unwrap_or_else(|| "null".to_string())
+            ));
+            out.push("  }".to_string());
+        }
+        None => out.push("  anchor = null".to_string()),
+    }
+    out.push("  syscalls {".to_string());
+    for name in route_names {
+        let found = chosen.iter().find(|(option, _)| option.route == name);
+        let Some((option, _)) = found else {
+            out.push(format!("    {name} = null"));
+            continue;
+        };
+        let carriers = carriers_of(option);
+        out.push(format!("    {name} {{"));
+        let mut write_block = |carrier: &str, body: &[(&str, String)]| {
+            if !carriers.contains(&carrier.to_string()) {
+                out.push(format!("      {carrier} = null"));
+                return;
+            }
+            if body.is_empty() {
+                out.push(format!("      {carrier} {{}}"));
+                return;
+            }
+            out.push(format!("      {carrier} {{"));
+            for (key, value) in body {
+                out.push(format!("        {key} = {value}"));
+            }
+            out.push("      }".to_string());
+        };
+        let geometry_of = |carrier: &str| -> BTreeMap<String, i64> {
+            if carrier == option.carrier {
+                option.geometry.clone()
+            } else {
+                option
+                    .alternatives
+                    .iter()
+                    .find(|alt| alt.carrier == carrier && alt.verdict == "feasible")
+                    .map(|alt| alt.geometry.clone())
+                    .unwrap_or_default()
+            }
+        };
+        match name {
+            "select_stack" => {
+                let native = geometry_of("native");
+                write_block(
+                    "native",
+                    &[(
+                        "waiter_shift",
+                        native
+                            .get("waiter_shift")
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "null".to_string()),
+                    )],
+                );
+                let compat = geometry_of("compat");
+                let abi = if compat.get("compat_futex_abi").copied().unwrap_or(0) == 1 {
+                    "\"time64\""
+                } else {
+                    "\"time32\""
+                };
+                write_block(
+                    "compat",
+                    &[
+                        (
+                            "waiter_home",
+                            compat
+                                .get("waiter_home")
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "null".to_string()),
+                        ),
+                        (
+                            "dst_depth",
+                            compat
+                                .get("select_dst_depth")
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "null".to_string()),
+                        ),
+                        ("futex_abi", abi.to_string()),
+                    ],
+                );
+            }
+            "multicast_waiter" => {
+                let native = geometry_of("native");
+                write_block(
+                    "native",
+                    &[
+                        (
+                            "waiter_off",
+                            native
+                                .get("waiter_off")
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "null".to_string()),
+                        ),
+                        (
+                            "buffer_size",
+                            native
+                                .get("buffer_size")
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "null".to_string()),
+                        ),
+                    ],
+                );
+                let compat = geometry_of("compat");
+                let off = compat
+                    .get("compat_waiter_off")
+                    .or_else(|| compat.get("waiter_off"))
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "null".to_string());
+                let size = compat
+                    .get("compat_buffer_size")
+                    .or_else(|| compat.get("buffer_size"))
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "null".to_string());
+                let abi = if compat.get("compat_futex_abi").copied().unwrap_or(0) == 1 {
+                    "\"time64\""
+                } else {
+                    "\"time32\""
+                };
+                write_block(
+                    "compat",
+                    &[
+                        ("waiter_off", off),
+                        ("buffer_size", size),
+                        ("futex_abi", abi.to_string()),
+                    ],
+                );
+            }
+            "sigreturn" => {
+                let native = geometry_of("native");
+                let plain = native
+                    .get("waiter_off_plain")
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "null".to_string());
+                let sve = native
+                    .get("waiter_off_sve")
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "null".to_string());
+                write_block(
+                    "native",
+                    &[(
+                        "waiter_off",
+                        format!("{{ plain = {plain}, sve = {sve} }}"),
+                    )],
+                );
+                out.push("      compat = null".to_string());
+            }
+            _ => {
+                write_block("native", &[]);
+                out.push("      compat = null".to_string());
+            }
+        }
+        out.push("    }".to_string());
+    }
+    out.push("  }".to_string());
+    out.push("  module = null".to_string());
+    out.push("  execution = null".to_string());
+    out.push("}".to_string());
+    out.push("timer = null".to_string());
+    Some(out.join("\n") + "\n")
 }
 
 #[cfg(test)]
@@ -1040,6 +1276,7 @@ mod tests {
             kernel_phys_load: None,
             kernel_phys_offset: None,
             phys_source: "unset".to_string(),
+            image_base: None,
             routes: vec![
                 option("tcp_zerocopy", BTreeMap::new(), vec![]),
                 option(
@@ -1086,28 +1323,20 @@ mod tests {
         };
         let text = render_superset(&superset, PlanKind::Auto, None).expect("a superset");
         assert!(text.contains("tcp_zerocopy {"), "{text}");
-        /* The carrier choice is a list key inside the route block; the
-         * alternative's geometry joins the same block and the legacy
-         * `compat_carrier` flag is omitted while both carriers are listed. */
-        assert!(text.contains("carriers = [ \"native\" ]"), "{text}");
-        assert!(
-            text.contains("carriers = [ \"native\", \"compat\" ]"),
-            "{text}"
-        );
-        assert!(text.contains("waiter_home = 488"), "{text}");
-        assert!(text.contains("select_dst_depth = 496"), "{text}");
-        assert!(!text.contains("compat_carrier"), "{text}");
-        /* The tcp branch's stamp-shape flag is the shared waiter layout; an
-         * empty branch would drop the route on the app side. */
-        assert!(
-            text.contains("tcp_zerocopy {\n    carriers = [ \"native\" ]\n    compact_waiter = 1"),
-            "{text}"
-        );
+        /* The four-branch catalogue carries every carrier's own block. */
         assert!(text.contains("select_stack {"), "{text}");
+        assert!(text.contains("compat {"), "{text}");
+        assert!(text.contains("waiter_home = 488"), "{text}");
+        assert!(text.contains("dst_depth = 496"), "{text}");
+        assert!(text.contains("futex_abi = \"time64\""), "{text}");
+        assert!(!text.contains("compat_carrier"), "{text}");
+        assert!(text.contains("tcp_zerocopy {\n      native {}"), "{text}");
+        assert!(text.contains("syscall = \"select_stack\""), "{text}");
         assert!(!text.contains("routes = "), "no route order is written\n{text}");
-        assert!(text.contains("pipeline = [ \"ghostlock\" ]"), "{text}");
-        assert!(text.contains("lock_anchor_image = 4096"), "{text}");
-        assert!(text.contains("w1_scratch {"), "{text}");
+        assert!(text.contains("ghostlock {"), "{text}");
+        assert!(text.contains("anchor {"), "{text}");
+        assert!(text.contains("image = \"0x1000\""), "{text}");
+        assert!(text.contains("scratch = \"0x2000\""), "{text}");
     }
 
     fn placement(image: u64, inside: bool) -> ScratchPlacement {
@@ -1296,6 +1525,7 @@ mod tests {
             kernel_phys_load: Some(123),
             kernel_phys_offset: None,
             phys_source: "unset".to_string(),
+            image_base: None,
             routes: vec![RouteOption {
                 route: "select_stack".to_string(),
                 carrier: "native".to_string(),

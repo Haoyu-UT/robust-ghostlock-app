@@ -545,6 +545,7 @@ mod tests {
         extra: &'a ConfExtraOffsets,
     ) -> ConfInputs<'a> {
         ConfInputs {
+            image_base: None,
             pipeline_order: &[],
             kdp: None,
             release: "6.1.25",
