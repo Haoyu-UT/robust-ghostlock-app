@@ -188,6 +188,8 @@
     <string name="kernel_profile_required">需要加载配置</string>
     <string name="kernel_profile_ready">配置已就绪</string>
     <string name="kernel_profile_required_summary">加载配置后可继续</string>
+    <string name="imported_profile_unusable">导入配置不可用</string>
+    <string name="imported_profile_unusable_summary">已选的导入配置不再适用，点击以解除导入</string>
     <string name="profile_external_unusable">该外部配置当前不可用，请重新导入或取消选择。</string>
     <string name="external_reason_schema">本版本仅支持 schema %2$s 的配置（当前配置为 schema %1$s）。</string>
     <string name="external_reason_no_entry">该配置中没有内核 %1$s 的条目。</string>
@@ -393,6 +395,7 @@
     <string name="home_action_shizuku">配置 Shizuku</string>
     <string name="home_action_generate">去生成</string>
     <string name="home_action_auto_match">恢复自动匹配</string>
+    <string name="home_action_remove_import">解除导入</string>
     <string name="home_builtin_override_title">内置配置不适用于本机</string>
     <string name="home_builtin_override_summary">所选 %1$s 与本机内核 %2$s 不符，请恢复自动匹配。</string>
     <string name="builtin_not_applicable">不适用于本机内核</string>

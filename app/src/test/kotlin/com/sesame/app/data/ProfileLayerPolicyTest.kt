@@ -189,6 +189,54 @@ class ProfileLayerPolicyTest {
     }
 
     @Test
+    fun `a copy from an older schema is refused and removal restores the bundle`() = runBlocking {
+        /* The upgrade path: the copy was valid when it was imported, and this
+         * build reads only the current schema. The selection is kept and fails
+         * closed — never a silent bundle fallback — and removing it is the
+         * only way out. */
+        external.imported = document(bundledRelease, routeWaitMs = 4242)
+            .replace("schema_version = 3", "schema_version = 2")
+
+        val refused = controller.load(bundledRelease)
+
+        assertFalse(refused.hasProfile)
+        val layers = checkNotNull(refused.layers)
+        assertFalse(layers.externalApplied)
+        assertNotNull(layers.externalError)
+        assertTrue(layers.externalError!!.contains("unsupported profile schema 2"))
+        assertTrue(controller.importedProfileExists())
+
+        val after = controller.clearExternalProfile(bundledRelease)
+
+        assertFalse(controller.importedProfileExists())
+        assertTrue(after.hasProfile)
+        assertEquals(bundledRouteWaitMs, generalValue(after, routeWaitPath))
+        assertTrue(after.layers!!.bundledAuthoritative)
+    }
+
+    @Test
+    fun `a copy that only fails a newer rule is invalid until it is removed`() = runBlocking {
+        /* The stride requirement postdates the v3 import path: a copy imported
+         * before it still parses and merges, but the field is refused now —
+         * the same "saved selection is unusable" state, reached through
+         * invalidPaths instead of a null profile. */
+        external.imported = document(bundledRelease, routeWaitMs = 4242)
+            .replace("    stride = 960", "    stride = null")
+
+        val stale = controller.load(bundledRelease)
+
+        assertTrue(stale.hasProfile)
+        assertTrue(stale.invalidPaths.contains("kernel.heap.stride"))
+        assertEquals(4242L, generalValue(stale, routeWaitPath))
+
+        val after = controller.clearExternalProfile(bundledRelease)
+
+        assertTrue(after.hasProfile)
+        assertTrue(after.invalidPaths.isEmpty())
+        assertEquals(bundledRouteWaitMs, generalValue(after, routeWaitPath))
+    }
+
+    @Test
     fun `the same selection applies again once the document is readable`() = runBlocking {
         val uri = external.add(
             "content://profiles/wins.conf",

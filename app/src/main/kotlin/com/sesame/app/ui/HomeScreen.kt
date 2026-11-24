@@ -169,7 +169,7 @@ internal fun HomeScreen(
 
 private enum class StatusKind { Success, Pending, Action }
 
-private enum class BarAction { Run, Shizuku, Generate, AutoBuiltin }
+private enum class BarAction { Run, Shizuku, Generate, AutoBuiltin, RemoveImport }
 
 private data class StatusCopy(
     val kind: StatusKind,
@@ -248,6 +248,18 @@ private fun statusCopy(state: SessionState, status: SupportStatus): StatusCopy {
             detail = detail,
             barLabel = stringResource(R.string.home_action_shizuku),
             action = BarAction.Shizuku,
+        )
+
+        SupportStatus.SelectionUnusable -> StatusCopy(
+            /* The saved copy cannot be used, whatever the reason. There is one
+             * way out — remove the import — and the next step (use the bundle,
+             * generate, or re-import) is the user's choice from there. */
+            kind = StatusKind.Action,
+            title = stringResource(R.string.imported_profile_unusable),
+            summary = stringResource(R.string.imported_profile_unusable_summary),
+            detail = null,
+            barLabel = stringResource(R.string.home_action_remove_import),
+            action = BarAction.RemoveImport,
         )
 
         SupportStatus.Missing -> {
@@ -349,6 +361,7 @@ private fun dispatch(action: BarAction, actions: HomeActions) {
         BarAction.Shizuku -> actions.statusClick()
         BarAction.Generate -> actions.openGeneration()
         BarAction.AutoBuiltin -> actions.selectBuiltinAuto()
+        BarAction.RemoveImport -> actions.clearImport()
     }
 }
 

@@ -39,6 +39,8 @@ data class SessionState(
     @Stable
     data class SupportState(
         val hasProfile: Boolean = false,
+        /** The resolved document carries validation errors, so the run is blocked. */
+        val profileInvalid: Boolean = false,
         val release: String = "",
         val route: String? = null,
         val importedProfilePresent: Boolean = false,

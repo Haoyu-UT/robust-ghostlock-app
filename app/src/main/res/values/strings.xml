@@ -188,6 +188,8 @@
     <string name="kernel_profile_required">Profile required</string>
     <string name="kernel_profile_ready">Profile ready</string>
     <string name="kernel_profile_required_summary">Load a profile to continue</string>
+    <string name="imported_profile_unusable">Imported profile unusable</string>
+    <string name="imported_profile_unusable_summary">The imported profile no longer applies; tap to remove the import</string>
     <string name="profile_external_unusable">This external profile is currently unusable; re-import it or clear the selection.</string>
     <string name="external_reason_schema">This build supports schema %2$s only (this document is schema %1$s).</string>
     <string name="external_reason_no_entry">This document has no entry for kernel %1$s.</string>
@@ -394,6 +396,7 @@
     <string name="home_action_shizuku">Set up Shizuku</string>
     <string name="home_action_generate">Generate</string>
     <string name="home_action_auto_match">Restore auto-match</string>
+    <string name="home_action_remove_import">Remove import</string>
     <string name="home_builtin_override_title">Built-in profile does not match this device</string>
     <string name="home_builtin_override_summary">Selected %1$s does not match this kernel (%2$s); restore auto-match.</string>
     <string name="builtin_not_applicable">not for this kernel</string>

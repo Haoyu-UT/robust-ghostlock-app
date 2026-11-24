@@ -20,6 +20,9 @@ interface HomeActions {
 
     /** Drop a hand-picked builtin override and return to auto-match. */
     fun selectBuiltinAuto()
+
+    /** Remove an unusable imported copy; the bundle (or nothing) applies next. */
+    fun clearImport()
 }
 
 interface RunSettingsActions {

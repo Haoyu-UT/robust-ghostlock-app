@@ -247,6 +247,7 @@ class GhostlockViewModel(
         override fun selectProfileFile() = onSelectProfileFile()
         override fun openParameters() = onOpenParameters()
         override fun selectBuiltinAuto() = onSelectBuiltinProfile(null)
+        override fun clearImport() = onClearExternalProfile()
     }
 
     private val runSettingsActionsImpl = object : RunSettingsActions {
@@ -505,6 +506,7 @@ class GhostlockViewModel(
                     support = state.session.support.copy(
                         release = config.release,
                         hasProfile = config.hasProfile,
+                        profileInvalid = config.invalidPaths.isNotEmpty(),
                         route = config.route,
                         activeBuiltinProfile = profileController.activeBuiltinRelease(),
                         importedProfilePresent = profileController.importedProfileExists(),
@@ -1294,6 +1296,7 @@ class GhostlockViewModel(
                 session = state.session.copy(
                     support = state.session.support.copy(
                         route = config.route,
+                        profileInvalid = config.invalidPaths.isNotEmpty(),
                         activeBuiltinProfile = profileController.activeBuiltinRelease(),
                         importedProfilePresent = profileController.importedProfileExists(),
                         layers = config.layers,
@@ -1435,7 +1438,13 @@ class GhostlockViewModel(
         val snapshot = kernelSnapshot ?: return
         val config = resolvedProfile
         if (config == null || !config.hasProfile) {
-            appendLog("result: no profile is loaded; import or generate one")
+            appendLog(
+                if (state.value.session.support.importedProfilePresent) {
+                    "result: the imported profile is unusable; remove the import first"
+                } else {
+                    "result: no profile is loaded; import or generate one"
+                },
+            )
             return
         }
         /* The timer route is Shizuku-only, independent of the native toggle:
@@ -1639,7 +1648,11 @@ class GhostlockViewModel(
                 appendLog(
                     when {
                         config == null || !config.hasProfile ->
-                            "result: no profile is loaded; import or generate one"
+                            if (state.value.session.support.importedProfilePresent) {
+                                "result: the imported profile is unusable; remove the import first"
+                            } else {
+                                "result: no profile is loaded; import or generate one"
+                            }
 
                         else ->
                             "result: the loaded profile has ${config.invalidPaths.size} invalid field(s)"
@@ -2380,6 +2393,7 @@ class GhostlockViewModel(
                     ),
                     support = it.session.support.copy(
                         hasProfile = loaded?.hasProfile ?: false,
+                        profileInvalid = loaded?.invalidPaths?.isNotEmpty() ?: false,
                         route = loaded?.route,
                         layers = loaded?.layers,
                         importedProfilePresent = profileController.importedProfileExists(),
