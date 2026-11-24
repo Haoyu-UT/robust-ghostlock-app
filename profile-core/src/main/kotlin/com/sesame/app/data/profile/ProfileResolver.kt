@@ -109,7 +109,18 @@ object ProfileResolver {
 
     // ---- validation -------------------------------------------------------
 
-    fun validateMerged(document: Map<String, Any?>): List<ConfigError> {
+    /**
+     * Validates one cleaned document.
+     *
+     * [requireStride] is false only for the generation flow's **probe frame**:
+     * the frame is the measurement request itself, so the stride it is meant
+     * to measure is legitimately absent (the run/import/export callers keep
+     * the default).
+     */
+    fun validateMerged(
+        document: Map<String, Any?>,
+        requireStride: Boolean = true,
+    ): List<ConfigError> {
         val errors = mutableListOf<ConfigError>()
         validateTop(document, errors)
         if (errors.isNotEmpty()) return errors
@@ -139,7 +150,7 @@ object ProfileResolver {
          * null stride is a refusal, not a fallback to the native default.
          * Module-only and timer-only documents do not spray. */
         val heap = kernel?.get("heap") as? Map<*, *>
-        if (heap != null && number(heap["stride"]) == null &&
+        if (requireStride && heap != null && number(heap["stride"]) == null &&
             requiresW1(pipelineOrder(document))
         ) {
             errors += ConfigError(

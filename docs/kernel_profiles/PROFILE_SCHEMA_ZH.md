@@ -166,8 +166,9 @@ struct.waiter {
 - `struct.selinux_state.enforcing` / `.initialized`——W1 写入的 `selinux_state` 字段值。
 - `heap.stride`——实测 `mm_struct` slab 步长。提取器从不生成：生成的配置写入探测值，
   内置配置携带 store 的实测值，手填模板由填写者给出。需要 W1 的链路（ghostlock 或
-  dirtyfrag）必须带值；`null` 在导入、运行和导出时都会被拒绝。只有 root 的
-  `/proc/slabinfo` 实测（实测 overlay）可在运行时覆盖它。
+  dirtyfrag）必须带值；`null` 在导入、运行和导出时都会被拒绝。唯一的例外是生成流程
+  的内存探测帧：它本身就是测量请求，因此可以不带值（该文档不会被导出或直接运行）。
+  只有 root 的 `/proc/slabinfo` 实测（实测 overlay）可在运行时覆盖它。
 - `heap.collisions`——KernelSnitch 碰撞数（5.x 为 8；6.x 布局已验证时为 4，否则 `null`）。
 - `dirtyfrag`——DirtyFrag 静态判决：`"feasible"`、`"infeasible"` 或 `"unknown"`（未测）。
 - `kdp`——Samsung RKP/KDP 事实；`true` 强制只走 DirtyFrag。

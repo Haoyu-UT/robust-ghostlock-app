@@ -180,8 +180,11 @@ stamps the wrong strip; the resolver refuses `multicast_waiter`/`sigreturn` on a
   from the image: a generated profile writes the probe's value in, a bundled
   profile ships the store's measured value, a hand-filled template states it.
   A chain that needs W1 (ghostlock or dirtyfrag) must carry a value; a null is
-  refused at import, run and export. Only a root `/proc/slabinfo` measurement
-  may override it at run time (the measured overlay).
+  refused at import, run and export. The one exception is the generation
+  flow's in-memory probe frame: it is the measurement request itself, so it
+  may omit the value (that document is never exported or run as is). Only a
+  root `/proc/slabinfo` measurement may override the value at run time (the
+  measured overlay).
 - `heap.collisions` — the KernelSnitch collision count (8 on 5.x, 4 on 6.x where
   the layout is verified, else `null`).
 - `dirtyfrag` — the static DirtyFrag verdict: `"feasible"`, `"infeasible"`, or

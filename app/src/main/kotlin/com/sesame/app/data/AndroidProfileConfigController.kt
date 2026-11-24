@@ -450,7 +450,11 @@ internal class AndroidProfileConfigController(
         val entry = ProfileDocumentParser.entryForRelease(text, release, ::loadBundledInclude)
             ?: return null
         val merged = runCatching { merge(release, entry) }.getOrNull() ?: return null
-        if (ProfileResolver.validateMerged(merged).isNotEmpty()) return null
+        /* This is the generation flow's probe frame: the stride is the fact the
+         * probe measures, so its absence is expected here (every run, import
+         * and export path keeps the default and refuses a null stride on a W1
+         * chain). */
+        if (ProfileResolver.validateMerged(merged, requireStride = false).isNotEmpty()) return null
         return ProfileTransport.render(
             merged,
             route = routeNameOf(merged),

@@ -177,6 +177,13 @@ class ProfileResolverTest {
                 valueMapOf("stride" to null, "collisions" to 4L)
         }
         assertTrue(pathErrors(nullStride, "kernel.heap.stride").isNotEmpty())
+        /* The generation flow's probe frame is the one document that may carry
+         * the null: it is the measurement request. */
+        assertTrue(
+            ProfileResolver.validateMerged(nullStride, requireStride = false)
+                .filter { it.fieldPath == "kernel.heap.stride" }
+                .isEmpty(),
+        )
 
         /* The DirtyFrag ladder (KDP included) also needs W1. */
         val kdp = document().apply {
