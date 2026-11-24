@@ -284,13 +284,15 @@ timer {
 ## 8. Store 与工具
 
 - `external/test-kernels/<release>/options-<release>.json`——提取器的分析信封
-  （`routes`、`plans`、`candidates`、`devices[]`、`pipelines`、`pipeline_facts`、
-  `pipeline_order`）与 cleaned `document`。`timer_analysis` 保留定时器分析器的证据
-  与其合并的片段。
+  （schema 3）：cleaned `document`（每个设备对都在
+  `devices.<codename>.phys`）、镜像级的 `routes`、`pipelines`、
+  `pipeline_facts`、`pipeline_order`、`image_base`，以及 `device_analysis[]`
+  （按 codename：设备对的 `phys_source`、锚点 `candidates` 与路由 `plans`；
+  设备对不重复存放）。`timer_analysis` 保留定时器分析器的证据与其合并的片段。
 - `tools/extract_rs`——`ghostlock-extract`（文档构建器）。
 - `tools/timer_extract`——`timer-extract`（定时器片段）。
 - `tools/sweep_timer_store.py`——把定时器片段合并进每个 store 文档。
-- `tools/ship_golden_profiles.py`——从 store 文档渲染每个内置资产（全部设备对 +
+- `tools/ship_golden_profiles.py`——从 store 文档渲染每个内置资产（文档内的设备对 +
   实测步长 + 头注释），并维护 `index.conf`。`--check` 比对事实；
   `--apply` / `--refresh-all` 只重写生成的资产。
 

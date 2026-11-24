@@ -47,6 +47,12 @@ class OptionSupersetTest {
 
     private fun sample(): OptionSuperset {
         val document = CleanedProfileFixture.document(release)
+        /* The pair's one home: the schema-shaped device map. */
+        document["devices"] = valueMapOf(
+            "duchamp" to valueMapOf(
+                "phys" to valueMapOf("load" to "0x40000000", "offset" to "0x40000000"),
+            ),
+        )
         val kernel = document["kernel"].asValueMap()!!
         kernel["dirtyfrag"] = "feasible"
         val ghostlock = document["ghostlock"].asValueMap()!!
@@ -66,13 +72,43 @@ class OptionSupersetTest {
                 "compat" to null,
             ),
         )
+        val plans = valueListOf(
+            valueMapOf(
+                "route" to "select_stack",
+                "page" to plan("select_stack"),
+                "anchor_only" to plan(
+                    "select_stack", anchor = 35802320L,
+                    anchorName = "__dump_skip.zeroes",
+                ),
+                "page_free" to valueListOf(
+                    plan(
+                        "select_stack", anchor = 35802320L, scratch = 35459072L,
+                        pageFree = true, anchorName = "__dump_skip.zeroes",
+                        scratchSource = "bm_pmd",
+                    ),
+                    plan(
+                        "select_stack", anchor = 35459072L, scratch = 35459072L,
+                        pageFree = true, anchorName = "bm_pmd",
+                        scratchSource = "in-anchor", inAnchor = true,
+                    ),
+                    plan(
+                        "select_stack", anchor = 35947744L, scratch = 35459072L,
+                        pageFree = true, conditioned = true,
+                        anchorName = "s3c24xx_serial_ports",
+                        scratchSource = "bm_pmd",
+                    ),
+                ),
+            ),
+            valueMapOf(
+                "route" to "tcp_zerocopy",
+                "page" to plan("tcp_zerocopy"),
+                "page_free" to valueListOf(),
+            ),
+        )
         val envelope = valueMapOf(
-            "schema_version" to 2L,
+            "schema_version" to 3L,
             "release" to release,
             "kernel_major" to 6L,
-            "kernel_phys_load" to 1073741824L,
-            "kernel_phys_offset" to 1073741824L,
-            "phys_source" to "vendor_boot DTB /memory",
             "routes" to valueListOf(
                 valueMapOf(
                     "route" to "select_stack",
@@ -109,46 +145,13 @@ class OptionSupersetTest {
                 valueMapOf("pipeline" to "dirtyfrag", "verdict" to "feasible", "reason" to "the ESP fix is absent"),
             ),
             "pipeline_order" to valueListOf("dirtyfrag", "ghostlock"),
-            "plans" to valueListOf(
-                valueMapOf(
-                    "route" to "select_stack",
-                    "page" to plan("select_stack"),
-                    "anchor_only" to plan(
-                        "select_stack", anchor = 35802320L,
-                        anchorName = "__dump_skip.zeroes",
-                    ),
-                    "page_free" to valueListOf(
-                        plan(
-                            "select_stack", anchor = 35802320L, scratch = 35459072L,
-                            pageFree = true, anchorName = "__dump_skip.zeroes",
-                            scratchSource = "bm_pmd",
-                        ),
-                        plan(
-                            "select_stack", anchor = 35459072L, scratch = 35459072L,
-                            pageFree = true, anchorName = "bm_pmd",
-                            scratchSource = "in-anchor", inAnchor = true,
-                        ),
-                        plan(
-                            "select_stack", anchor = 35947744L, scratch = 35459072L,
-                            pageFree = true, conditioned = true,
-                            anchorName = "s3c24xx_serial_ports",
-                            scratchSource = "bm_pmd",
-                        ),
-                    ),
-                ),
-                valueMapOf(
-                    "route" to "tcp_zerocopy",
-                    "page" to plan("tcp_zerocopy"),
-                    "page_free" to valueListOf(),
-                ),
-            ),
             "document" to document,
-            "devices" to valueListOf(
+            "device_analysis" to valueListOf(
                 valueMapOf(
                     "device" to "duchamp",
-                    "kernel_phys_load" to 1073741824L,
-                    "kernel_phys_offset" to 1073741824L,
                     "phys_source" to "vendor_boot DTB /memory",
+                    "candidates" to valueListOf(),
+                    "plans" to plans,
                 ),
             ),
         )

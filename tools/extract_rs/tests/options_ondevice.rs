@@ -68,9 +68,9 @@ fn check_entry(binary: &str, meta: &common::Meta, checked: &AtomicUsize) {
     }
 
     /* Section-first so a failure names the part that moved. */
-    for key in ["schema_version", "release", "kernel_major", "kernel_phys_load",
-                "kernel_phys_offset", "routes", "pipeline_facts", "pipelines", "candidates",
-                "plans", "document", "devices"] {
+    for key in ["schema_version", "release", "kernel_major", "image_base", "routes",
+                "pipeline_facts", "pipelines", "pipeline_order", "document",
+                "device_analysis"] {
         assert_eq!(
             want.get(key),
             got.get(key),

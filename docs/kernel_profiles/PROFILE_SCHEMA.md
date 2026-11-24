@@ -311,16 +311,18 @@ time.
 ## 8. The store and the tools
 
 - `external/test-kernels/<release>/options-<release>.json` — the extractor's
-  analysis envelope (`routes`, `plans`, `candidates`, `devices[]`,
-  `pipelines`, `pipeline_facts`, `pipeline_order`) and the cleaned `document`.
-  `timer_analysis` keeps the timer analyzer's evidence and the fragment it
-  merged.
+  analysis envelope (schema 3): the cleaned `document` (every device pair in
+  `devices.<codename>.phys`), the image-level `routes`, `pipelines`,
+  `pipeline_facts`, `pipeline_order` and `image_base`, and `device_analysis[]`
+  (per codename: the pair's `phys_source`, the anchor `candidates` and the
+  route `plans`; the pair is not repeated). `timer_analysis` keeps the timer
+  analyzer's evidence and the fragment it merged.
 - `tools/extract_rs` — `ghostlock-extract` (the document builder).
 - `tools/timer_extract` — `timer-extract` (the timer fragment).
 - `tools/sweep_timer_store.py` — merges the timer fragment into every store
   document.
 - `tools/ship_golden_profiles.py` — renders each bundled asset from the store
-  document (all device pairs + the measured stride + the header) and keeps
+  document (its device pairs + the measured stride + the header) and keeps
   `index.conf` in step. `--check` compares facts; `--apply` / `--refresh-all`
   rewrite generated assets only.
 

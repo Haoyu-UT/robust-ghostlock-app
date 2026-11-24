@@ -23,7 +23,7 @@
 | `struct.waiter.shape/pi_tree/task/lock/wake_state` | stamp 编码器使用的 waiter 布局 |
 | `struct.rt_mutex.size` | 锚点 stride 下界 |
 | `struct.selinux_state.enforcing/initialized` | W1 写入的字段值 |
-| `heap.stride` | 实测 overlay（提取器不生成） |
+| `heap.stride` | 实测 slab 步长；需要 W1 的链路必填（生成的配置会写入文档） |
 | `heap.collisions` | KernelSnitch 计数（5.x 为 8，已验证 6.x 为 4） |
 | `dirtyfrag` | `"feasible"` / `"infeasible"` / `"unknown"` |
 | `kdp` | RKP/KDP 镜像写 `true`（只走 DirtyFrag） |

@@ -2,18 +2,30 @@ package com.sesame.app.data
 
 import com.sesame.app.data.profile.PerDevicePhys
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * The on-device extractor records one full derivation per device sidecar set.
- * The cut selects the running device's entry and emits its pair; the document
- * itself is device-neutral until the cut states one.
+ * The store envelope keeps every device pair in the schema shape
+ * (`document.devices.<codename>.phys`) and only the evidence in
+ * `device_analysis[]`. The cut narrows the document to the chosen device; it
+ * never assembles a pair.
  */
 class OptionSupersetDeviceCutTest {
     private val release = "5.10.198-android12-9-00085-g226a9632f13d-ab11136126"
 
-    private fun superset(): OptionSuperset {
+    private val bothPairs: ValueMap = valueMapOf(
+        "diting" to valueMapOf(
+            "phys" to valueMapOf("load" to "0xa8000000", "offset" to null),
+        ),
+        "yunluo" to valueMapOf(
+            "phys" to valueMapOf("load" to "0x40000000", "offset" to "0x40000000"),
+        ),
+    )
+
+    private fun superset(documentDevices: Any? = bothPairs): OptionSuperset {
         val document = CleanedProfileFixture.document(release)
+        document["devices"] = documentDevices
         val ghostlock = document["ghostlock"].asValueMap()!!
         ghostlock["syscalls"] = valueMapOf(
             "select_stack" to valueMapOf(
@@ -24,12 +36,24 @@ class OptionSupersetDeviceCutTest {
             "multicast_waiter" to null,
             "tcp_zerocopy" to null,
         )
+        val plans = valueListOf(
+            valueMapOf(
+                "route" to "select_stack",
+                "page" to valueMapOf(
+                    "route" to "select_stack",
+                    "anchor" to null,
+                    "scratch" to null,
+                    "page_free" to false,
+                    "conditioned" to false,
+                    "reason" to "page",
+                ),
+                "page_free" to valueListOf(),
+            ),
+        )
         val envelope = valueMapOf(
+            "schema_version" to 3L,
             "release" to release,
             "kernel_major" to 5L,
-            "kernel_phys_load" to 2818572288L,
-            "kernel_phys_offset" to null,
-            "phys_source" to "uefi memory map",
             "routes" to valueListOf(
                 valueMapOf(
                     "route" to "select_stack",
@@ -40,33 +64,19 @@ class OptionSupersetDeviceCutTest {
                     "geometry" to valueMapOf("waiter_shift" to -2L),
                 ),
             ),
-            "plans" to valueListOf(
-                valueMapOf(
-                    "route" to "select_stack",
-                    "page" to valueMapOf(
-                        "route" to "select_stack",
-                        "anchor" to null,
-                        "scratch" to null,
-                        "page_free" to false,
-                        "conditioned" to false,
-                        "reason" to "page",
-                    ),
-                    "page_free" to valueListOf(),
-                ),
-            ),
             "document" to document,
-            "devices" to valueListOf(
+            "device_analysis" to valueListOf(
                 valueMapOf(
                     "device" to "diting",
-                    "kernel_phys_load" to 2818572288L,
-                    "kernel_phys_offset" to null,
                     "phys_source" to "uefi memory map",
+                    "candidates" to valueListOf(),
+                    "plans" to plans,
                 ),
                 valueMapOf(
                     "device" to "yunluo",
-                    "kernel_phys_load" to 1073741824L,
-                    "kernel_phys_offset" to 1073741824L,
                     "phys_source" to "vendor_boot header (MediaTek)",
+                    "candidates" to valueListOf(),
+                    "plans" to plans,
                 ),
             ),
         )
@@ -82,13 +92,15 @@ class OptionSupersetDeviceCutTest {
         )
 
     @Test
-    fun `the cut selects the device pair and emits a v3 map`() {
+    fun `the cut narrows the document to the primary device`() {
         val superset = superset()
         assertEquals("diting", superset.device)
         val plans = superset.plansFor("select_stack") ?: error("no plans")
         val document = cutDocument(superset.cut("select_stack", plans.page)!!)
         assertEquals(3, (document["schema_version"] as Number).toInt())
         assertEquals(2818572288L to null, pair(document, "diting"))
+        /* The other device's pair is not in the cut. */
+        assertNull(document["devices"].asValueMap()?.get("yunluo"))
     }
 
     @Test
@@ -100,11 +112,11 @@ class OptionSupersetDeviceCutTest {
     }
 
     @Test
-    fun `a superset without devices carries no pair`() {
-        /* The cleaned document has no global physical pair: it is a per-device
-         * entry. A cut with no device list keeps the native defaults, and a
-         * platform that needs the pair refuses it at import (fail-closed). */
-        val superset = superset().copy(devices = emptyList())
+    fun `a document without a pair carries no pair`() {
+        /* A pass with no device sidecar set states `devices = null`: the cut
+         * keeps the compiled defaults, and a platform that needs the pair
+         * refuses it at import (fail-closed). */
+        val superset = superset(documentDevices = null)
         val plans = superset.plansFor("select_stack") ?: error("no plans")
         val document = cutDocument(superset.cut("select_stack", plans.page)!!)
         assertEquals(3, (document["schema_version"] as Number).toInt())

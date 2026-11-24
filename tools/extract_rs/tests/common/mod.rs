@@ -236,13 +236,18 @@ pub fn options_path(meta: &Meta) -> PathBuf {
 ///
 /// An entry with `devices/<codename>/` sets runs the extractor once per device
 /// and merges the per-device derivations into one superset: the first device's
-/// run supplies the shared top-level sections, and `devices[]` collects all.
+/// run supplies the shared sections, `document.devices` collects every pair in
+/// the schema shape, and `device_analysis` collects the per-pair evidence.
 pub fn run_options(bin: &str, meta: &Meta, out: &Path) -> Run {
     if meta.devices.is_empty() {
         return run_options_one(bin, meta, &meta.dir, None, out);
     }
     let mut base: Option<serde_json::Value> = None;
-    let mut merged: Vec<serde_json::Value> = Vec::new();
+    let mut analysis: Vec<serde_json::Value> = Vec::new();
+    /* The document is the one home of the physical pair, keyed by codename in
+     * the schema shape. Each per-device run carries its own entry; the merged
+     * document carries all of them. */
+    let mut pairs = serde_json::Map::new();
     let mut last: Option<Run> = None;
     for device in &meta.devices {
         let dir = sidecar_dir_for(meta, Some(device));
@@ -265,11 +270,34 @@ pub fn run_options(bin: &str, meta: &Meta, out: &Path) -> Run {
             panic!("{}: invalid {device} superset JSON: {err}", meta.release)
         });
         let entries = value
-            .get("devices")
+            .get("device_analysis")
             .and_then(|entries| entries.as_array())
             .cloned()
             .unwrap_or_default();
-        merged.extend(entries);
+        analysis.extend(entries);
+        /* A device with no derived pair still appears in the document map with
+         * a null pair (the native's compiled default applies). */
+        let doc_devices = value
+            .get("document")
+            .and_then(|document| document.get("devices"))
+            .and_then(|devices| devices.as_object());
+        let names: Vec<String> = value
+            .get("device_analysis")
+            .and_then(|entries| entries.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.get("device").and_then(|name| name.as_str()))
+            .map(str::to_string)
+            .collect();
+        for name in names {
+            let entry = doc_devices
+                .and_then(|devices| devices.get(&name))
+                .cloned()
+                .unwrap_or_else(|| {
+                    serde_json::json!({"phys": {"load": null, "offset": null}})
+                });
+            pairs.insert(name, entry);
+        }
         match &base {
             None => base = Some(value),
             Some(base_value) => {
@@ -287,35 +315,38 @@ pub fn run_options(bin: &str, meta: &Meta, out: &Path) -> Run {
                         meta.release
                     );
                 }
-                /* The `w1_scratch` and top-level phys are pair-dependent; every
-                 * other common block is image-level and must agree. */
-                if let (Some(a), Some(b)) = (
-                    base_value.get("profile").and_then(|v| v.as_object()),
-                    value.get("profile").and_then(|v| v.as_object()),
-                ) {
-                    for (block, entries) in a {
-                        if block.is_empty() || block == "w1_scratch" {
-                            continue;
-                        }
-                        assert_eq!(
-                            Some(entries),
-                            b.get(block),
-                            "{}: profile block {block:?} differs between devices",
-                            meta.release
-                        );
-                    }
-                }
+                /* The pair is the only per-device part of the document; every
+                 * other block is image-level and must agree. */
+                assert_eq!(
+                    without_devices(base_value.get("document").unwrap_or(&base_value)),
+                    without_devices(value.get("document").unwrap_or(&value)),
+                    "{}: the document differs between devices outside `devices`",
+                    meta.release
+                );
             }
         }
         last = Some(run);
     }
     let mut base = base.expect("at least one device");
-    if !merged.is_empty() {
-        base["devices"] = serde_json::Value::Array(merged);
+    base["device_analysis"] = serde_json::Value::Array(analysis);
+    if !pairs.is_empty() {
+        if let Some(document) = base.get_mut("document").and_then(|d| d.as_object_mut()) {
+            document.insert("devices".to_string(), serde_json::Value::Object(pairs));
+        }
     }
     let text = serde_json::to_string_pretty(&base).expect("serialize merged superset");
     std::fs::write(out, text + "\n").expect("write merged superset");
     last.expect("at least one device run")
+}
+
+/// A document with its per-device pair map blanked, for the cross-device
+/// equality check. A non-object document is returned unchanged.
+fn without_devices(document: &serde_json::Value) -> serde_json::Value {
+    let mut document = document.clone();
+    if let Some(map) = document.as_object_mut() {
+        map.insert("devices".to_string(), serde_json::Value::Null);
+    }
+    document
 }
 
 fn run_options_one(bin: &str, meta: &Meta, sidecars: &Path, device: Option<&str>, out: &Path) -> Run {

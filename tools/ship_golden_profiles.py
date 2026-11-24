@@ -4,14 +4,15 @@
 Rule (CLAUDE.md): every store entry that has an option superset and at least
 one feasible route is shipped as a bundled profile. Entries with
 ``corpus = btf-only | codegen | excluded``, entries without a superset, entries
-without a feasible route, and an entry whose ``devices[]`` mixes null and
-non-null physical pairs (a single HOCON map cannot carry both) are exempt.
+without a feasible route, and a hand-finished asset whose store entry cannot
+produce a complete document are exempt.
 
 The bundle asset is the store entry's cleaned ``document`` — the v3 profile
-tree the extractor rendered — with the store-only composition applied: every
-``devices[]`` physical pair widened in, the measured ``kernel.heap.stride``,
-and the timer facts the store sweep already merged. Nothing is converted and
-the extractor is not re-run: the store is the single golden.
+tree the extractor rendered, with every device pair already in
+``document.devices`` — with the store-only composition applied: the measured
+``kernel.heap.stride`` and the timer facts the store sweep already merged.
+Nothing is converted and the extractor is not re-run: the store is the single
+golden.
 
 The document itself selects its syscall (the extractor's pick) and states the
 fixed ladder through ``kernel.dirtyfrag`` / ``kernel.kdp`` / ``ghostlock.module``
@@ -239,11 +240,10 @@ def asset_has_stride(path):
 
 MISSING = object()
 
-# `schema_version`/addresses are structural; `kernel_phys_*` is the extractor's
-# render-time output with the device sidecars, and `recommend_shizuku` is
-# retired from the authored schema, so none of them is compared as a fact.
+# `schema_version`/addresses are structural and `recommend_shizuku` is retired
+# from the authored schema, so neither is compared as a fact.
 FACT_SKIP = {
-    "schema_version", "kernel_phys_load", "kernel_phys_offset", "recommend_shizuku",
+    "schema_version", "recommend_shizuku",
     # The engine selection is the app's default (the alphabetically first
     # viable syscall), not a store fact.
     "ghostlock.syscall", "ghostlock.carrier",
@@ -263,26 +263,14 @@ def flatten_facts(value, prefix=""):
 
 
 def compose_document(entry):
-    """The store's cleaned document with the store-only composition: every
-    device pair the entry derived and the measured mm struct stride. The timer
-    facts are already merged by the store sweep; nothing is converted here."""
+    """The store's cleaned document with the store-only composition: the
+    measured mm struct stride. Every device pair is already in the document
+    (`devices.<codename>.phys`); the timer facts are already merged by the
+    store sweep. Nothing is converted here."""
     document = entry["options"].get("document")
     if not isinstance(document, dict):
         return None
     document = copy.deepcopy(document)
-    devices = {}
-    for device in entry["options"].get("devices") or []:
-        name = device.get("device")
-        if not name:
-            continue
-        devices[name] = {
-            "phys": {
-                "load": _hex_literal(device.get("kernel_phys_load")),
-                "offset": _hex_literal(device.get("kernel_phys_offset")),
-            },
-        }
-    if devices:
-        document["devices"] = devices
     kernel = document.get("kernel")
     if isinstance(kernel, dict) and entry.get("stride"):
         kernel.setdefault("heap", {})["stride"] = int(entry["stride"])
@@ -479,10 +467,6 @@ def add_index_entries(text, releases):
         lines[end - 1] += "\n"
     lines[end:end] = block
     return "".join(lines)
-
-
-def _hex_literal(value):
-    return None if value is None else "0x" + format(int(value) & 0xFFFFFFFFFFFFFFFF, "x")
 
 
 def asset_text(entry):

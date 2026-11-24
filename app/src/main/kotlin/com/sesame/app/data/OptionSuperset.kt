@@ -76,11 +76,14 @@ data class OptionPipeline(
     val reason: String,
 )
 
-/** One device sidecar set's physical derivation from the superset's `devices[]`. */
+/**
+ * One `device_analysis[]` record: the sidecar set the derivations were made
+ * for and where its physical pair came from. The pair itself lives in the
+ * document (`devices.<codename>.phys`), not here.
+ */
 data class OptionDevice(
-    val device: String,
-    val physLoad: Long?,
-    val physOffset: Long?,
+    /** Codename; null when the pass had no device sidecar set. */
+    val device: String?,
     val physSource: String,
 )
 
@@ -123,9 +126,6 @@ fun RoutePlans.decision(): OptionDecision = when {
 data class OptionSuperset(
     val release: String,
     val kernelMajor: Int?,
-    val physLoad: Long?,
-    val physOffset: Long?,
-    val physSource: String,
     val routes: List<OptionRoute>,
     val plans: List<RoutePlans>,
     /** The cleaned v3 profile document the extractor rendered for this image:
@@ -133,8 +133,7 @@ data class OptionSuperset(
      * device inside it; nothing is assembled from blocks. Null when the image
      * has no feasible route. */
     val document: ValueMap?,
-    /** Every device derivation the extractor recorded (`--device`); empty on
-     * a legacy device-neutral pass. */
+    /** The device sidecar sets the extractor derived (`device_analysis[]`). */
     val devices: List<OptionDevice> = emptyList(),
     /** The image's pipeline verdicts (`pipelines[]`); empty on a superset
      * written before the selector existed. */
@@ -157,8 +156,8 @@ data class OptionSuperset(
 
     /**
      * Materialize a runnable profile: the extractor's document with the
-     * chosen route, carrier, plan anchor and device pair applied. No
-     * derivation happens here.
+     * chosen route, carrier and plan anchor applied and narrowed to the
+     * chosen device's pair. No derivation happens here.
      */
     fun cut(
         route: String,
@@ -196,17 +195,16 @@ data class OptionSuperset(
                 "scratch" to plan.scratch?.let { scratch -> hex(scratch.image) },
             )
         }
-        val selected = device?.let { name -> devices.firstOrNull { it.device.equals(name, true) } }
-            ?: devices.firstOrNull()
-        if (selected != null) {
-            base["devices"] = linkedMapOf<String, Any?>(
-                selected.device to linkedMapOf(
-                    "phys" to linkedMapOf(
-                        "load" to hex(selected.physLoad),
-                        "offset" to hex(selected.physOffset),
-                    ),
-                ),
-            )
+        /* The document already states the pair for the device it was generated
+         * for (`devices.<codename>.phys`); a multi-device document is narrowed
+         * to the chosen codename. A pass with no device key keeps the document
+         * as rendered (the pair is null and the native default applies). */
+        val declaredDevices = base["devices"].asValueMap()
+        val wanted = device ?: declaredDevices?.keys?.firstOrNull()
+        if (declaredDevices != null && wanted != null) {
+            declaredDevices.entries
+                .firstOrNull { (name, _) -> name.equals(wanted, ignoreCase = true) }
+                ?.let { (name, entry) -> base["devices"] = linkedMapOf<String, Any?>(name to entry) }
         }
         base["release"] = release
         return HoconSupport.render(base) + "\n"
@@ -241,25 +239,28 @@ data class OptionSuperset(
                     alternatives = alternatives,
                 )
             }
-            val plans = root["plans"].asValueList().orEmpty().mapNotNull { entry ->
-                val map = entry.asValueMap() ?: return@mapNotNull null
-                val route = map["route"] as? String ?: return@mapNotNull null
-                val page = plan(map["page"]) ?: return@mapNotNull null
-                RoutePlans(
-                    route = route,
-                    page = page,
-                    anchorOnly = plan(map["anchor_only"]),
-                    pageFree = map["page_free"].asValueList().orEmpty()
-                        .mapNotNull { plan(it) },
-                )
-            }
-            val devices = root["devices"].asValueList().orEmpty().mapNotNull { entry ->
-                val map = entry.asValueMap() ?: return@mapNotNull null
-                val device = map["device"] as? String ?: return@mapNotNull null
+            /* The per-device evidence: the plans are derived against the
+             * device's pair, so the first analysis record's plans are the
+             * list the picker uses. The pair itself is in the document. */
+            val analysis = root["device_analysis"].asValueList().orEmpty()
+                .mapNotNull { entry -> entry.asValueMap() }
+            val plans = analysis.firstOrNull()
+                ?.get("plans").asValueList().orEmpty()
+                .mapNotNull { entry ->
+                    val map = entry.asValueMap() ?: return@mapNotNull null
+                    val route = map["route"] as? String ?: return@mapNotNull null
+                    val page = plan(map["page"]) ?: return@mapNotNull null
+                    RoutePlans(
+                        route = route,
+                        page = page,
+                        anchorOnly = plan(map["anchor_only"]),
+                        pageFree = map["page_free"].asValueList().orEmpty()
+                            .mapNotNull { plan(it) },
+                    )
+                }
+            val devices = analysis.map { map ->
                 OptionDevice(
-                    device = device,
-                    physLoad = (map["kernel_phys_load"] as? Number)?.toLong(),
-                    physOffset = (map["kernel_phys_offset"] as? Number)?.toLong(),
+                    device = map["device"] as? String,
                     physSource = map["phys_source"] as? String ?: "unset",
                 )
             }
@@ -277,9 +278,6 @@ data class OptionSuperset(
             OptionSuperset(
                 release = root["release"] as? String ?: return@runCatching null,
                 kernelMajor = (root["kernel_major"] as? Number)?.toInt(),
-                physLoad = (root["kernel_phys_load"] as? Number)?.toLong(),
-                physOffset = (root["kernel_phys_offset"] as? Number)?.toLong(),
-                physSource = root["phys_source"] as? String ?: "unset",
                 routes = routes,
                 plans = plans,
                 document = document,

@@ -4,8 +4,9 @@
 //! page-vs-conditional prompt; the test corpus keeps it as the single golden.
 //! A runnable profile is a **cut** of this document:
 //! `(superset, route, plan, device)`, not a separate derivation. The document
-//! carries one full derivation per device sidecar set in `devices[]`; the
-//! top-level sections are the first (primary) device.
+//! carries every device pair (`devices.<codename>.phys`);
+//! `device_analysis[]` keeps the per-device evidence — the pair's source and
+//! the anchor/plan derivations that depend on it.
 //!
 //! Policy (operator, 2026-10-31):
 //! - `dump_skip.zeroes`/`__dump_skip.zeroes`, `bm_pmd` and `serial8250_ports`
@@ -25,7 +26,7 @@ use crate::analysis::RouteVerdict;
 use crate::anchor::{self, W1Scratch};
 use crate::pipeline::{PipelineFacts, PipelineOption};
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Named anchor/scratch classes, in policy order, with the operator's
 /// `conditioned` flag. The scan verdict stays in the entry as evidence.
@@ -42,11 +43,6 @@ pub struct Superset {
     pub schema_version: u32,
     pub release: String,
     pub kernel_major: Option<u32>,
-    pub kernel_phys_load: Option<u64>,
-    pub kernel_phys_offset: Option<u64>,
-    /// The physical pair's source (`xbl_config FDT`, `uefi memory map`, …),
-    /// so the app can show the same advice without a second run.
-    pub phys_source: String,
     /// The image's link-time base (`_text`), the anchor for every symbol VA
     /// the timer engine states.
     #[serde(default)]
@@ -66,31 +62,28 @@ pub struct Superset {
     /// before W1.
     #[serde(default)]
     pub pipeline_order: Vec<String>,
-    pub candidates: Vec<CandidateOption>,
-    pub plans: Vec<RoutePlans>,
     /// The cleaned v3 profile document for this image: the route-superset form
-    /// (every feasible syscall with its carriers, the shared anchor/scratch).
-    /// Null when the image has no feasible route. Every consumer reads this
-    /// one shape; there is no old-keyed profile map.
+    /// (every feasible syscall with its carriers, the shared anchor/scratch)
+    /// and every device pair the entry derived, in the schema shape
+    /// (`devices.<codename>.phys`). Null when the image has no feasible route.
+    /// Every consumer reads this one shape; there is no old-keyed profile map.
     pub document: crate::document::Node,
-    /// Every device sidecar set derived for this kernel, in generation order.
-    /// The top-level pair/candidates/plans above are the first (primary)
-    /// device; a cut for another device selects its entry here. The scratch
-    /// placement is a function of the physical delta, so the candidates and
-    /// plans are per device even though the routes and common profile blocks
-    /// are image-level and shared.
+    /// Per-device evidence: where the pair came from and the anchor/plan
+    /// derivations that depend on it, in generation order. The pair itself is
+    /// not repeated here — `document.devices.<codename>.phys` is its one home.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub devices: Vec<DeviceDerivation>,
+    pub device_analysis: Vec<DeviceDerivation>,
 }
 
-/// One device's physical-pair derivation for a kernel.
+/// One device's analysis record for a kernel: the pair's source and the
+/// candidates/plans derived against it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceDerivation {
-    pub device: String,
-    pub kernel_phys_load: Option<u64>,
-    pub kernel_phys_offset: Option<u64>,
+    /// The sidecar device this record was derived for; null for a run with no
+    /// device sidecar set (an excluded corpus entry still keeps its scan).
+    pub device: Option<String>,
     /// `xbl_config FDT`, `uefi memory map`, `vendor_boot header (MediaTek)`,
-    /// `pair.conf`, … .
+    /// `pair.conf`, … — the source of `document.devices.<device>.phys`.
     pub phys_source: String,
     /// Named anchor candidates with this device's scratch placements.
     pub candidates: Vec<CandidateOption>,
@@ -287,35 +280,24 @@ pub fn build(input: &Input<'_>) -> Superset {
             }
         })
         .collect();
-    let devices = input
-        .device
-        .map(|device| DeviceDerivation {
-            device: device.to_string(),
-            kernel_phys_load: input.phys_load,
-            kernel_phys_offset: input.phys_offset,
-            phys_source: input.phys_source.to_string(),
-            candidates: candidates.clone(),
-            plans: plans.clone(),
-        })
-        .into_iter()
-        .collect();
+    let device_analysis = vec![DeviceDerivation {
+        device: input.device.map(str::to_string),
+        phys_source: input.phys_source.to_string(),
+        candidates: candidates.clone(),
+        plans: plans.clone(),
+    }];
     let document = scene_document(input, &routes, &plans);
     Superset {
         schema_version: SCHEMA_VERSION,
-        document,
         release: input.release.to_string(),
         kernel_major: input.kernel_major,
-        kernel_phys_load: input.phys_load,
-        kernel_phys_offset: input.phys_offset,
-        phys_source: input.phys_source.to_string(),
         image_base: input.image_base,
         routes,
         pipeline_facts: input.pipeline_facts.clone(),
         pipelines: input.pipelines.to_vec(),
         pipeline_order: input.pipeline_order.to_vec(),
-        candidates,
-        plans,
-        devices,
+        document,
+        device_analysis,
     }
 }
 
@@ -756,18 +738,13 @@ mod tests {
             schema_version: SCHEMA_VERSION,
             release: "r".to_string(),
             kernel_major: None,
-            kernel_phys_load: None,
-            kernel_phys_offset: None,
-            phys_source: "unset".to_string(),
             image_base: None,
             routes: Vec::new(),
             pipeline_facts: PipelineFacts::default(),
             pipelines: Vec::new(),
             pipeline_order: Vec::new(),
-            candidates: Vec::new(),
-            plans: Vec::new(),
             document: crate::document::Node::Null,
-            devices: Vec::new(),
+            device_analysis: Vec::new(),
         };
         assert!(render_superset(&superset).is_none());
     }

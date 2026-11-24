@@ -26,7 +26,7 @@ Family notes: waiter `node`（`rt_waiter_node`）；cred 四个引用；caps 48/
 | `struct.waiter.shape/pi_tree/task/lock/wake_state` | the waiter layout the stamp encoder uses |
 | `struct.rt_mutex.size` | anchor stride lower bound |
 | `struct.selinux_state.enforcing/initialized` | the field values W1 writes |
-| `heap.stride` | measured overlay (never the extractor) |
+| `heap.stride` | the measured slab stride; required when the chain needs W1 (the generation flow writes it into the document) |
 | `heap.collisions` | KernelSnitch count (8 on 5.x, 4 on verified 6.x) |
 | `dirtyfrag` | `"feasible"` / `"infeasible"` / `"unknown"` |
 | `kdp` | `true` on an RKP/KDP image (DirtyFrag only) |

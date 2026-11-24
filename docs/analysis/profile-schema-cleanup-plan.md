@@ -22,7 +22,7 @@ Implemented on `fix/ui-behaviour-2026-11-23` (commits `1a002862`..`38aaa949`):
 | Bundled assets | **done**: all 74 converted (one-off Python); the ship now renders each asset from the store's `document` (no converter), `--check` reads the cleaned shape (61 bundled, 0 missing, 0 mismatched, 12 exempt). |
 | Extractor | **done**: one document builder (`src/document.rs`) serves both conf renderers and the store's `document`; `render_facts`, `parse_conf_blocks`, `Superset.profile` and the legacy cut API are deleted. Extractor suite 165 + the store corpus. |
 | Consumers | **done**: the ship composes the cleaned render with the store-only facts (devices, stride, timer block and its shared symbols, the credential sid); the app's `LegacyProfileShape` is deleted, a non-cleaned document is refused, the on-device cut and the timer composition emit the cleaned shape. |
-| Store + timer (decision 20) | **done**: the store entry carries `document` (the cleaned tree) instead of the old-keyed `profile` map; `report::render_facts`, `parse_conf_blocks`, `Superset.profile` and the legacy cut API are deleted; the timer analyzer emits the cleaned fragment (`kernel` facts + `timer`) and `tools/sweep_timer_store.py` merges it into every store entry (`timer_analysis` keeps the evidence); the ship renders each asset from the store document (no extractor re-run, no conversion), `--refresh-all` rewrote all 60 store-derived assets, `--check` reads 61 bundled / 0 missing / 0 mismatched / 12 exempt; the app's `OptionSuperset` clones the document and selects route/carrier/anchor/device, and its timer merge is a deep merge (`TimerBlockText` and the mapping deleted). The store was regenerated from the images (the corpus `options_ondevice`/`structs_ondevice`/`codegen_ondevice` tests are green). |
+| Store + timer (decision 20) | **done**: the store entry carries `document` (the cleaned tree) instead of the old-keyed `profile` map; **the envelope itself is schema-clean (2026-11-24, later)**: `document.devices` carries every device pair (the merge harness widens it; 19 pairs that lived only in `devices[]` moved in), `devices[]` became `device_analysis` (per codename: `phys_source` + `candidates` + `plans`; the pair is not repeated), the duplicated top-level pair and `candidates`/`plans` are gone, the envelope `schema_version` is 3, and the ship no longer widens devices (all 60 assets re-render byte-identically). The whole store was regenerated (60 entries changed, the excluded sidecar-less 6.6.102 entry converted by hand); `report::render_facts`, `parse_conf_blocks`, `Superset.profile` and the legacy cut API are deleted; the timer analyzer emits the cleaned fragment (`kernel` facts + `timer`) and `tools/sweep_timer_store.py` merges it into every store entry (`timer_analysis` keeps the evidence); the ship renders each asset from the store document (no extractor re-run, no conversion), `--refresh-all` rewrote all 60 store-derived assets, `--check` reads 61 bundled / 0 missing / 0 mismatched / 12 exempt; the app's `OptionSuperset` clones the document and selects route/carrier/anchor/device, and its timer merge is a deep merge (`TimerBlockText` and the mapping deleted). The store was regenerated from the images (the corpus `options_ondevice`/`structs_ondevice`/`codegen_ondevice` tests are green). |
 | Docs | **done**: `PROFILE_SCHEMA.md` + `_ZH` rewritten to v3; the four docs templates and the four annotated asset templates rewritten; `defaults`, `README`, `MEDIATEK`, `BUNDLED_PROFILES` key references updated; `FieldLabels` maps the new dotted paths (53 new strings, EN+ZH). |
 | Measured overlay (decision 13) | **done**: `MeasuredOverlay` applies the root-measured `kernel.heap.stride` to the resolved map, never the document; `nativeDocumentWithOverlay` renders it and both run paths log `overlay: <path> document=… effective=… (source)` and write the same provenance to the run-store meta. The generation flow **writes its accepted stride into the exported document** (`kernel.heap.stride`, so a generated profile is self-contained) and records the same value as weaker evidence (`generation-probe`, excluded from `profileFacts()`: never overlaid, never merged; a root `/proc/slabinfo` fact is ground truth and never replaced). A profile whose ladder needs W1 (ghostlock or dirtyfrag) must carry a non-null stride — the validator refuses a null at import, run and export; module-only and timer-only documents may leave it null. A store load drops retired keys (`kernelsnitch.mm_struct_sz`) so only the declared set is merged. Unit gates: overlay apply/ignore/immutability, the overlaid render, the probe-vs-root rule, the meta survival, the retired-key prune, generation materialization, the import refusal. |
 | Leftover cleanup | **done**: the generation path's old-key checks fixed; the v2 model island (`NativeProfile.kt` 959 lines, `Profile.kt`, the five route-config classes, the typed-slot models, the three wire tests), `completeProfileFields`, `uncarriedRouteKeys`, `OffsetMatching` and the dead `credential-*`/`kernelsnitch-6x` fragments deleted; stale comments/readmes corrected; the root harness/tooling reads `profile.json` and the v3 store. Tests 318/0. |
@@ -275,9 +275,9 @@ into a self-contained document. Nothing outside the set can be overlaid.
 
 ### 4.5 Store and ship
 
-- `tools/ship_golden_profiles.py` — render the new shape from the superset; `dirtyfrag` from the
-  `pipelines` verdicts; `devices` from the entry's `devices[]`; the module block; nulls; the
-  `--check` compares the new asset bytes.
+- `tools/ship_golden_profiles.py` — render the new shape from the document; `dirtyfrag` from the
+  `pipelines` verdicts; the module block; nulls; the measured stride; the `--check` compares the
+  new asset bytes.
 - The store: regenerate each entry's profile facts with the updated extractor (deterministic from
   the in-hand images), then re-apply the hand-curated additions (device pairs, module manifests,
   the A16 KDP cell); review the per-entry diff.
@@ -291,12 +291,14 @@ into a self-contained document. Nothing outside the set can be overlaid.
 ### 4.5.1 The store carries the document (decision 20)
 
 The store entry (`external/test-kernels/<release>/options-<release>.json`) keeps its
-analysis envelope — `routes`, `plans`, `candidates`, `devices[]`, `pipelines`,
-`pipeline_facts`, `pipeline_order`, `phys_source` — and replaces the old-keyed
-`profile` map with `document`: the cleaned v3 tree the CLI renders for that image
-(the route-superset form: all feasible syscalls with their carriers, the shared
-anchor/scratch, `devices` for the primary device, `kernel.heap.stride = null`, the
-timer symbols null, `timer = null`).
+analysis envelope — `routes`, `pipelines`, `pipeline_facts`, `pipeline_order`,
+`image_base`, `device_analysis[]` — and replaces the old-keyed `profile` map with
+`document`: the cleaned v3 tree the CLI renders for that image (the route-superset
+form: all feasible syscalls with their carriers, the shared anchor/scratch,
+`devices.<codename>.phys` for **every** device the entry derives,
+`kernel.heap.stride = null`, the timer symbols null, `timer = null`). The envelope
+itself is schema 3 (2026-11-24, later): the pair has one home (the document) and
+`device_analysis[]` keeps only the evidence that produced it.
 
 Producers and consumers:
 
@@ -311,9 +313,9 @@ Producers and consumers:
   `timer { … }` with image-relative offsets — for both `--emit-timer-conf` and the
   store overlay's `block`. The `timer_98260` spelling leaves the profile surface
   (the overlay object keeps the analyzer's evidence fields).
-- **Ship**: an asset is the store `document` plus the store-only composition — all
-  `devices[]` pairs widened in, `kernel.heap.stride` from the measured entry, the
-  timer fragment merged — then the header. `--check` compares the asset tree to that
+- **Ship**: an asset is the store `document` plus the store-only composition —
+  `kernel.heap.stride` from the measured entry (the device pairs are already in the
+  document), the timer fragment merged — then the header. `--check` compares the asset tree to that
   document tree directly. `expected_facts`, `_expected_clean_document`,
   `cleaned_timer`, `sync_timer_block`, `render_timer_block` and the
   `migrate_profile_shape.convert` call are deleted; `--sync-facts` (which inserted
