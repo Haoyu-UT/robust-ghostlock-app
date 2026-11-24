@@ -20,13 +20,15 @@ Implemented on `fix/ui-behaviour-2026-11-23` (commits `1a002862`..`38aaa949`):
 | Authored schema (profile-core) | **done**: `ProfileResolver` validates the one-document schema (fixed key sets, null-not-absent, verdict-derived ladder, engine/carrier selection, anchor containment, complete carriers, W1 facts); `ProfileMerger` nests the tuning under `ghostlock.execution`; `PerDevicePhys` selects `devices.<id>.phys`; `Timer98260`/`ModuleBlock` read the cleaned blocks. |
 | App layer | **done**: the controller resolves/validates/renders the cleaned tree, the picker enumerates `ghostlock.syscalls` × carriers, the measured key is `kernel.heap.stride`, generated exports are stored cleaned. |
 | Bundled assets | **done**: all 74 converted by `tools/migrate_profile_shape.py` (one-off, Python); `ship_golden_profiles.py` renders through the same converter and `--check` reads the cleaned shape (61 bundled, 0 missing, 0 mismatched, 12 exempt). |
-| Device gate | **diting build 882**: converted assets, fresh boot, store `completed` — native load line, ladder `dirtyfrag`, DirtyFrag stage `RESULT=OK script=0 enforce=1`; build 875 proved the transport on the POCO 6.1.138 and OnePlus 6.6.66; native refusals exercised on device. |
+| Extractor | **done**: both conf renderers (`report::render_conf_with_device`, `options::render_superset`) emit the cleaned document; the store's internal `profile` map is rendered separately (`report::render_facts`), so no old-shape text is parsed back. Extractor suite 165. |
+| Consumers | **done**: the ship composes the cleaned render with the store-only facts (devices, stride, timer block and its shared symbols, the credential sid); the app's `LegacyProfileShape` is deleted, a non-cleaned document is refused, the on-device cut and the timer composition emit the cleaned shape. |
+| Device gate | **diting build 887**: cleaned assets and the converter-free app, fresh boot, store `completed` — native load line, ladder `dirtyfrag`, DirtyFrag stage `RESULT=OK script=0 enforce=1`; build 875 proved the transport on the POCO 6.1.138 and OnePlus 6.6.66; native refusals exercised on device. |
 
 Remaining:
 
-1. **The extractor's conf renderer** (`tools/extract_rs/src/report.rs`, `timer_extract`) still emits the pre-release layout. Both consumers convert it (the ship script; the app's `LegacyProfileShape` at generation/import), so it is functional but redundant. Switching it removes those two conversions — the last cleanup of decision 19.
-2. **Docs/templates**: `docs/kernel_profiles/PROFILE_SCHEMA.md` (EN+ZH), the four reference templates, the field labels for the new dotted paths.
-3. The POCO and OnePlus rigs have not run the *converted-asset* build (they proved the transport earlier).
+1. **Docs/templates**: `docs/kernel_profiles/PROFILE_SCHEMA.md` (EN+ZH), the four reference templates, and the field labels for the new dotted paths.
+2. The POCO and OnePlus rigs have not run the cleaned-asset build (they proved the transport earlier).
+3. The store's own `profile` map and the timer extractor's `timer_98260` block stay in their producer-internal spelling; the ship and the app map them once at composition. Renaming them would mean a store-format change and a regeneration, not a consumer change.
 
 ## 1. Why
 
