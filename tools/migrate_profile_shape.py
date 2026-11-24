@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""One-shot conversion of the bundled authored profiles to the cleaned v3 shape.
+"""HOCON parser/renderer for the profile tools, plus the retired one-off converter.
 
-This is a verification aid, not the shipping path: the store regeneration and
-the extractor produce new assets. It converts every document in a profile
-directory (expanding includes), writes the cleaned shape to an output
-directory, and verifies each result by parsing its own output back and
-comparing it value for value with the tree it was written from.
+The shipping path is the extractor and the store (`tools/extract_rs`,
+`tools/sweep_timer_store.py`, `tools/ship_golden_profiles.py`); they use this
+module's `Parser`/`render` only. The conversion half (`convert` and its CLI)
+is the 2026-11-24 one-off that moved the bundled assets from the authored
+schema to v3; it is kept as the migration record and is no longer called.
 
 Usage:
     python3 tools/migrate_profile_shape.py <profilesDir> <outDir>
