@@ -24,12 +24,12 @@ Implemented on `fix/ui-behaviour-2026-11-23` (commits `1a002862`..`38aaa949`):
 | Consumers | **done**: the ship composes the cleaned render with the store-only facts (devices, stride, timer block and its shared symbols, the credential sid); the app's `LegacyProfileShape` is deleted, a non-cleaned document is refused, the on-device cut and the timer composition emit the cleaned shape. |
 | Store + timer (decision 20) | **done**: the store entry carries `document` (the cleaned tree) instead of the old-keyed `profile` map; `report::render_facts`, `parse_conf_blocks`, `Superset.profile` and the legacy cut API are deleted; the timer analyzer emits the cleaned fragment (`kernel` facts + `timer`) and `tools/sweep_timer_store.py` merges it into every store entry (`timer_analysis` keeps the evidence); the ship renders each asset from the store document (no extractor re-run, no conversion), `--refresh-all` rewrote all 60 store-derived assets, `--check` reads 61 bundled / 0 missing / 0 mismatched / 12 exempt; the app's `OptionSuperset` clones the document and selects route/carrier/anchor/device, and its timer merge is a deep merge (`TimerBlockText` and the mapping deleted). The store was regenerated from the images (the corpus `options_ondevice`/`structs_ondevice`/`codegen_ondevice` tests are green). |
 | Docs | **done**: `PROFILE_SCHEMA.md` + `_ZH` rewritten to v3; the four docs templates and the four annotated asset templates rewritten; `defaults`, `README`, `MEDIATEK`, `BUNDLED_PROFILES` key references updated; `FieldLabels` maps the new dotted paths (53 new strings, EN+ZH). |
-| Device gate | **diting build 887**: cleaned assets and the converter-free app, fresh boot, store `completed` — native load line, ladder `dirtyfrag`, DirtyFrag stage `RESULT=OK script=0 enforce=1`; build 875 proved the transport on the POCO 6.1.138 and OnePlus 6.6.66; native refusals exercised on device. |
+| Device gate | **diting build 893**: the store-document assets, fresh boot — `resolved profile loaded: 5.10.236…`, `pipeline=dirtyfrag (profile order)`, `dirtyfrag: T+2465ms RESULT=OK script=0 enforce=1`, run store `state=completed`, the `profile.json` sidecar is the v3 document (`devices.diting.phys.offset = null` resolved to the native default `0x80000000`); `guard_bad=0 guard_moved=0`. Build 887 proved the cleaned assets before the store change; build 875 proved the transport on the POCO 6.1.138 and OnePlus 6.6.66; native refusals exercised on device. |
 
 Remaining:
 
-1. The POCO and OnePlus rigs have not run the cleaned-asset build (they proved the transport earlier). A diting run on the refreshed assets (the store-document build) is the next device gate.
-2. The pre-release release cut (r12) after that gate.
+1. The POCO and OnePlus rigs have not run the store-document assets (they proved the transport on build 875).
+2. The pre-release release cut (r12).
 
 ## 1. Why
 
