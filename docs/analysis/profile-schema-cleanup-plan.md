@@ -11,35 +11,22 @@ below.
 
 ## Implementation status (2026-11-24)
 
-Landed, gated and committed on `fix/ui-behaviour-2026-11-23`:
+Implemented on `fix/ui-behaviour-2026-11-23` (commits `1a002862`..`38aaa949`):
 
 | slice | state |
 |---|---|
-| Native JSON transport (decision 19) | **done**: `src/core/profile/json.{c,h}` (shared tree parser), `json_profile.cpp` (ghostlock mapper), `timer/profile_fields.c` (timer mapper), `entry.*`/`main.cpp` over JSON, the GLK1 wire deleted. Gates: native build 0 warnings, timer build, `lint-tidy` 0, host suite incl. `json_test`/`timer_profile_test`, `cmp_disasm` control (identical instruction counts). |
-| App-side transport render | **done**: `ProfileTransport` renders the one document from the resolved tree; the run path, timer tool, Shizuku frame and Gradle exporter use it; `profile.json` sidecar + sha256 log line replace the wire dump/digest; the emitted document golden re-frozen. Gates: app 285 tests, profile-core 85, `assembleDebug`. All 68 exported documents decode through the native mapper on the host. |
-| Migration aid | **done, and one-off**: `tools/migrate_profile_shape.py` (stdlib-only HOCON subset parser + the authored mapping) converts the bundled documents — 74 converted, 9 skipped, each verified by parsing its own output back, and `--check` compares against an existing output directory. The Kotlin tool and its Gradle task are removed. The assets are **not** applied yet — that lands with the resolver and the extractor/ship switch. |
-| Credential references | **done**: the document names `user`/`user_ns`/`ucounts`/`group_info`; the layout is assigned by the derived offsets (a 5.x image without ucounts writes user/user_ns/group_info), and the native compacts the image-bearing ones into the wire's write slots. |
-| Device gate | **All three rigs, fresh boot, run store `completed`** — diting on the final build 879, POCO/OnePlus on 875: diting 5.10.236 (W1-only + DirtyFrag stage `RESULT=OK script=0 enforce=1`, KernelSU loaded), POCO 6.1.138 (`compact=1` from the BTF layout, select native, `KernelSU ready`), OnePlus 6.6.66 (`compact=0` node shape, four clean route calls, `KernelSU ready`). The run's `profile.json` decodes through the native mapper, and the native's `--load-prebuilt-profile` refusals were run on the diting: unknown key (named path), truncated JSON, the old GLK1 bytes, and a release mismatch all exit 255 with one message and no crash. The gate found one real defect, now fixed: the 5.10 assets state the waiter shape through the branch's `compact_waiter`, which the transport must carry into `kernel.struct.waiter.shape`. |
+| Native JSON transport (decision 19) | **done**: `src/core/profile/json.{c,h}`, `json_profile.cpp`, `timer/profile_fields.c`; the GLK1 wire deleted; `cmp_disasm` control identical; device-proven on 5.10/6.1/6.6. |
+| App transport render | **done**: `ProfileTransport` = the resolved tree plus `mode`/`safe_mode` and the native execution shape; `profile.json` sidecar + sha256; Shizuku frame unchanged. |
+| Authored schema (profile-core) | **done**: `ProfileResolver` validates the one-document schema (fixed key sets, null-not-absent, verdict-derived ladder, engine/carrier selection, anchor containment, complete carriers, W1 facts); `ProfileMerger` nests the tuning under `ghostlock.execution`; `PerDevicePhys` selects `devices.<id>.phys`; `Timer98260`/`ModuleBlock` read the cleaned blocks. |
+| App layer | **done**: the controller resolves/validates/renders the cleaned tree, the picker enumerates `ghostlock.syscalls` × carriers, the measured key is `kernel.heap.stride`, generated exports are stored cleaned. |
+| Bundled assets | **done**: all 74 converted by `tools/migrate_profile_shape.py` (one-off, Python); `ship_golden_profiles.py` renders through the same converter and `--check` reads the cleaned shape (61 bundled, 0 missing, 0 mismatched, 12 exempt). |
+| Device gate | **diting build 882**: converted assets, fresh boot, store `completed` — native load line, ladder `dirtyfrag`, DirtyFrag stage `RESULT=OK script=0 enforce=1`; build 875 proved the transport on the POCO 6.1.138 and OnePlus 6.6.66; native refusals exercised on device. |
 
-Remaining (the authored-shape migration, slices 1b–3 below): convert the 74
-assets and the store via the rewriter, rewrite `ProfileResolver` /
-`ProfileMerger` / `PerDevicePhys` / `Timer98260` / `ProfileDocument` for the
-new shape, migrate the controller/repository/UI candidate model, update the
-Rust extractor's `--format conf` and the ship script, then the remaining device
-arms (Shizuku transport; the authored-shape import path).
+Remaining:
 
-
-**Scope:** the authored HOCON profile (bearer of `schema_version = 3`), its two renderers (the Rust
-extractor's `--format conf` and `tools/ship_golden_profiles.py`), the app's resolver / render / UI /
-measured overlay, the profile transport itself (the GLK1 binary wire is **deleted**, decision 19),
-the 74 bundled assets and the test-kernel store, and both native profile readers (ghostlock's, and
-the timer tool's, which are merged into one). The exploit's attack code is unchanged; its profile
-input becomes JSON, so the native reader is new code on the run path and the native gates below
-cover it.
-
-The version number stays **3**: the package rename (`com.sesame.app`) means this v3 was never
-released, so the cleanup defines v3 rather than succeeding it. No migration for old documents; the
-one exception is a clear rejection message for a pre-release v3 file (§5.4).
+1. **The extractor's conf renderer** (`tools/extract_rs/src/report.rs`, `timer_extract`) still emits the pre-release layout. Both consumers convert it (the ship script; the app's `LegacyProfileShape` at generation/import), so it is functional but redundant. Switching it removes those two conversions — the last cleanup of decision 19.
+2. **Docs/templates**: `docs/kernel_profiles/PROFILE_SCHEMA.md` (EN+ZH), the four reference templates, the field labels for the new dotted paths.
+3. The POCO and OnePlus rigs have not run the *converted-asset* build (they proved the transport earlier).
 
 ## 1. Why
 
