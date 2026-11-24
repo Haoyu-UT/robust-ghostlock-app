@@ -236,4 +236,30 @@ class MeasuredProfileStoreTest {
         assertFalse(store.recordProbeStride(release, 7, "garbled"))
         assertNull(newStore().kernel(release))
     }
+
+    @Test
+    fun `a retired-key fact is dropped on load and never merged`() {
+        val file = File(temporaryFolder.root, "measured_profiles.conf")
+        file.writeText(
+            """
+            schema_version = 1
+            kernels = [
+              {
+                release = "$release"
+                updated_at = 1
+                facts = [
+                  { key = "kernelsnitch.mm_struct_sz", value = 960, source = "root-slabinfo", evidence = "old", measured_at = 1 }
+                  { key = "kernel.heap.stride", value = 960, source = "root-slabinfo", evidence = "mm_struct", measured_at = 1 }
+                ]
+              }
+            ]
+            """.trimIndent() + "\n",
+        )
+        val store = MeasuredProfileStore(file)
+
+        val kernel = store.kernel(release)!!
+        assertEquals(listOf(MeasuredProfileStore.KeyMmStructSz), kernel.facts.map { it.key })
+        assertEquals(listOf(MeasuredProfileStore.KeyMmStructSz), kernel.profileFacts().map { it.key })
+        assertFalse(file.readText().contains("kernelsnitch.mm_struct_sz"))
+    }
 }

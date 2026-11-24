@@ -1,5 +1,6 @@
 package com.sesame.app.data
 
+import com.sesame.app.data.profile.MeasuredOverlay
 import java.io.File
 import java.nio.charset.StandardCharsets
 
@@ -27,23 +28,26 @@ internal data class MeasuredKernel(
     fun fact(key: String): MeasuredFact? = facts.firstOrNull { it.key == key }
 
     /**
-     * Facts that name a profile path, i.e. the ones a merge may apply to a
-     * document. The DirtyFrag probe fact and its two companions are runtime
-     * decisions for the pipeline resolver: they stay visible in the
-     * measurements screen, but merged as profile values they would create an
-     * unknown top-level `dirtyfrag` key and the validator would refuse the
-     * whole export. The DB keeps one fact shape; this is the projection the
-     * merge needs.
+     * The facts a merge or the run-time overlay may apply: exactly the
+     * declared measurable set (`MeasuredOverlay.Paths`). The DirtyFrag probe
+     * trio is a runtime decision for the pipeline resolver and stays out; a
+     * fact under a retired key (e.g. `kernelsnitch.mm_struct_sz` written by an
+     * older build) stays out too — merging it would add an unknown top-level
+     * key and the validator would refuse the whole export.
      */
-    fun profileFacts(): List<MeasuredFact> = facts.filter { it.key !in ProbeFactKeys }
+    fun profileFacts(): List<MeasuredFact> =
+        facts.filter { it.key in MeasuredOverlay.Paths }
 }
 
-/** The non-profile fact keys [MeasuredKernel.profileFacts] excludes. */
+/** The runtime decision facts: visible in the UI, never merged or overlaid. */
 private val ProbeFactKeys = setOf(
     MeasuredProfileStore.KeyDirtyfragProbe,
     MeasuredProfileStore.KeyDirtyfragProbeRom,
     MeasuredProfileStore.KeyDirtyfragProbeProtocol,
 )
+
+/** Every key a current build understands; a load drops anything else. */
+private val KnownFactKeys = MeasuredOverlay.Paths + ProbeFactKeys
 
 /**
  * The measured database: per-kernel ground truth and one controlled probe fact.
@@ -259,7 +263,16 @@ internal class MeasuredProfileStore(private val file: File) {
             }
             MeasuredKernel(release, updatedAt, facts.sortedBy { it.key })
         }.sortedBy { it.release }
-        return Loaded(kernels, true)
+        /* A fact under a retired key (written by a pre-v3 build) is dropped
+         * once and the file rewritten, so the measurements screen and every
+         * merge see only keys the current document understands. A write failure
+         * is not fatal: the filter above keeps it out anyway. */
+        val known = kernels.map { kernel ->
+            val kept = kernel.facts.filter { it.key in KnownFactKeys }
+            if (kept.size == kernel.facts.size) kernel else kernel.copy(facts = kept)
+        }
+        if (known != kernels) write(known)
+        return Loaded(known, true)
     }
 
     private fun write(kernels: List<MeasuredKernel>): Boolean = runCatching {
