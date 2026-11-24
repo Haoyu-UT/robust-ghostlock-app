@@ -28,6 +28,7 @@ import com.sesame.app.domain.model.OffsetCandidate
 import com.sesame.app.data.ota.OtaPayloadExtractor
 import com.sesame.app.data.profile.OverlayFact
 import com.sesame.app.data.profile.OverlayRecord
+import com.sesame.app.data.profile.ProfileResolver
 import com.sesame.app.data.profile.PerDevicePhys
 import com.sesame.app.data.profile.Timer98260
 import com.sesame.app.domain.model.OffsetImportResult
@@ -621,21 +622,26 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 .filter { (it["release"] as? String).orEmpty().isNotEmpty() }
             if (filtered.isEmpty()) return ParseResult.AlreadyPresent
             val releases = freshReleases(filtered)
-            /* A v2 document carries the pair as a per-device map; the presence
-             * checks must see this device's entry, not `getLongAt` on a map. */
+            /* The document is the cleaned v3 tree: the pair lives in the
+             * running device's `devices.<id>.phys` entry, and the anchor is
+             * `ghostlock.anchor`. The presence checks read those, not the
+             * retired top-level spellings. */
             val resolved = filtered.map { resolvedForDevice(it, deviceCandidates) }
             val missing = missingSidecarFields(resolved)
             val name = parsedDocumentName(releases)
+            val anchor = parseEntries(generated)
+                ?.firstNotNullOfOrNull { it.asValueMap() }
+                ?.let { ProfileResolver.anchorOf(it) }
             ParseResult.Parsed(
                 releases = releases,
                 missing = missing,
                 documentName = name,
                 route = report?.chosen ?: route,
                 anchor = anchorLine(captured),
-                hasAnchor = generated.contains("lock_anchor_image"),
+                hasAnchor = anchor?.first != null,
                 physSource = physSourceFromLines(captured),
-                physLoadPresent = resolved.any { it.getLongAt("kernel_phys_load") != null },
-                physOffsetPresent = resolved.any { it.getLongAt("kernel_phys_offset") != null },
+                physLoadPresent = resolved.any { ProfileResolver.physOf(it).first != null },
+                physOffsetPresent = resolved.any { ProfileResolver.physOf(it).second != null },
                 timerDerived = timerBlock != null,
                 documentText = generated,
                 options = options,
@@ -654,7 +660,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     }
 
     /**
-     * Derives the image's `timer_98260` block (the timer route's per-image
+     * Derives the image's `timer` block (the timer route's per-image
      * constants) with the vendored timer analyzer. The block is optional
      * metadata: any failure logs and returns null, leaving a native-only
      * profile. It is validated here with the same parser the timer route's
@@ -738,8 +744,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         val lines = mutableListOf<String>()
         val exit = runProcess(
             /* --enable-status-record selects the length-prefixed stdin frame
-             * (`read_glk1_frame_stdin`); without it the native reads the bare
-             * document and blocks on the app's length prefix. */
+             * (`read_profile_frame_stdin`); without it the native reads the
+             * bare document and blocks on the app's length prefix. */
             ProcessBuilder(
                 listOf(
                     binary.absolutePath,
@@ -843,7 +849,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     /** The extractor's first anchor decision line, or null when none ran. */
     private fun anchorLine(lines: List<String>): String? = lines.firstOrNull {
-        it.contains("lock anchor") && (it.startsWith("info:") || it.startsWith("warning:"))
+        it.contains("anchor") && (it.startsWith("info:") || it.startsWith("warning:"))
     }
 
     /**
@@ -997,7 +1003,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         withDebugAttackLog("timer-probe", onLog) { archivedLog, _, _, writeSidecar ->
             val release = deviceRelease()
             val document = profileController.renderTimerDocument(release) ?: run {
-                archivedLog("<s> error: no timer_98260 profile for $release")
+                archivedLog("<s> error: no timer profile for $release")
                 return@withDebugAttackLog 1
             }
             writeSidecar("timer-profile.json", document.toByteArray(StandardCharsets.UTF_8))
@@ -1029,7 +1035,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         val code = withDebugAttackLog("timer", onLog) { archivedLog, _, _, writeSidecar ->
             val release = deviceRelease()
             val document = profileController.renderTimerDocument(release) ?: run {
-                archivedLog("<s> error: no way-2 timer_98260 profile for $release")
+                archivedLog("<s> error: no way-2 timer profile for $release")
                 return@withDebugAttackLog TimerVerdict.NotStarted
             }
             writeSidecar("timer-profile.json", document.toByteArray(StandardCharsets.UTF_8))
@@ -2096,8 +2102,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         runCatching { PerDevicePhys.resolveFor(entry, candidates).document }.getOrDefault(entry)
 
     private fun missingSidecarFields(entries: List<ValueMap>): Set<String> =
-        if (entries.isNotEmpty() && entries.all { it.getLongAt("kernel_phys_load") == null }) {
-            setOf("kernel_phys_load")
+        if (entries.isNotEmpty() && entries.all { ProfileResolver.physOf(it).first == null }) {
+            val device = entries.firstOrNull()?.get("devices").asValueMap()?.keys?.firstOrNull()
+            setOf(if (device != null) "devices.$device.phys.load" else "devices.*.phys.load")
         } else {
             emptySet()
         }

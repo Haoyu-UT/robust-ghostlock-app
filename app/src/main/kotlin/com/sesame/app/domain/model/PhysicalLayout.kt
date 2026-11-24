@@ -22,7 +22,7 @@ internal fun isQualcommSoc(socName: String): Boolean {
  * Where one half of the kernel's physical layout comes from.
  *
  * The native's `ResolvedAddresses::init_for_soc` is the authority: it refuses a
- * MediaTek profile with no `kernel_phys_load` outright, and every other family
+ * MediaTek profile with no physical load outright, and every other family
  * falls back to a compiled default. The app must reach the same verdict before
  * a profile is written or imported — a document that claims a GhostLock route
  * whose address translation cannot be resolved is a run that fails at W1.
@@ -105,10 +105,10 @@ internal fun physPairErrors(
     val rule = physRule(socName)
     return buildList {
         if (rule.load == PhysSource.Required && !loadPresent) {
-            add("kernel_phys_load: missing for this device (no compiled default on this platform)")
+            add("devices.<id>.phys.load: missing for this device (no compiled default on this platform)")
         }
         if (rule.offset == PhysSource.Required && !offsetPresent) {
-            add("kernel_phys_offset: missing for this device (no compiled default on this platform)")
+            add("devices.<id>.phys.offset: missing for this device (no compiled default on this platform)")
         }
     }
 }

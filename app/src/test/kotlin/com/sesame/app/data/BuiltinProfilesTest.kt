@@ -50,11 +50,7 @@ class BuiltinProfilesTest {
         val document = HoconSupport.parseValue(
             AssetConfigLoader(context).load("kernel_profiles/$file"),
         ).asValueMap()
-        val device = document?.let {
-            listOf("kernel_phys_load", "kernel_phys_offset").firstNotNullOfOrNull { key ->
-                (it[key] as? Map<*, *>)?.keys?.firstOrNull()?.toString()
-            }
-        }
+        val device = document?.get("devices").asValueMap()?.keys?.firstOrNull()
         return AndroidProfileConfigController(
             context = context,
             externalProfiles = FakeExternalProfileStore(),
@@ -197,7 +193,11 @@ class BuiltinProfilesTest {
                 val raw = HoconSupport.parseValue(
                     AssetConfigLoader(context).load("kernel_profiles/${entry.file}"),
                 ).asValueMap()
-                if (raw?.get("kernel_phys_load") is Map<*, *>) {
+                val devices = raw?.get("devices").asValueMap()
+                val device = devices?.keys?.firstOrNull()
+                val phys = (devices?.get(device) as? Map<*, *>)
+                    ?.get("phys") as? Map<*, *>
+                if ((phys?.get("load") as? String) != null) {
                     assertNotNull("${entry.release}: physLoad unset for a mapped pair", config.physLoad)
                 } else {
                     assertNull("${entry.release}: physLoad without a map", config.physLoad)
@@ -246,23 +246,5 @@ class BuiltinProfilesTest {
         } finally {
             root.deleteRecursively()
         }
-    }
-
-    @Test
-    fun `legacy shared defaults stay in sync with the bundled 6x templates`() {
-        val loader = AssetConfigLoader(context)
-        val cred = HoconSupport.parseValue(loader.load("kernel_profiles/credential-6x.conf"))
-            .asValueMap()!!["cred"].asValueMap()!!
-        val snitch = HoconSupport.parseValue(loader.load("kernel_profiles/kernelsnitch-6x.conf"))
-            .asValueMap()!!["kernelsnitch"].asValueMap()!!
-
-        /* LegacyProfileConverter seeds these values into imported reports and
-         * carries its own copies; changing the assets requires updating it. */
-        assertEquals(136L, (cred["copy_size"] as Number).toLong())
-        assertEquals(48L, (cred["caps_offset"] as Number).toLong())
-        assertEquals(5L, (cred["caps_count"] as Number).toLong())
-        assertEquals(1L, (cred["usage_value"] as Number).toLong())
-        assertEquals(-1L, (cred["caps_value"] as Number).toLong())
-        assertEquals(4L, (snitch["collisions"] as Number).toLong())
     }
 }

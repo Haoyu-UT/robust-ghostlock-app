@@ -57,7 +57,7 @@ interface GhostlockRepository {
         input: String,
         xblPath: String? = null,
         uefiPath: String? = null,
-        /** vendor_boot.img (MediaTek only); derives kernel_phys_load from
+        /** vendor_boot.img (MediaTek only); derives the physical load from
          * its header and kernel_phys_offset from its embedded DTB /memory. */
         vendorBootPath: String? = null,
         /** dtbo.img (MediaTek only): the DTB fallback when vendor_boot carries
@@ -159,7 +159,7 @@ interface GhostlockRepository {
 
     /**
      * The canonical backend document for the timer tool (CVE-2026-98260), or
-     * null when the resolved profile carries no `timer_98260` block. That null
+     * null when the resolved profile carries no `timer` block. That null
      * is the timer entry's applicability fact.
      */
     fun timerProfileDocument(): String?

@@ -25,8 +25,6 @@ GhostLock 用 `uname -r` 精确匹配内核版本：匹配不到时应用会直�
   `ghostlock.execution` 之下。
 - `execution-<route>.conf`：各攻击路线（route）专属的调优值。
   这些 preset 由 resolver 加载；设备 profile 不 include。
-- `credential-6x.conf`、`kernelsnitch-6x.conf`：清理前 schema 的带标注参考片段；
-  现在随包 profile 是自包含的，不再 include 它们。
 - `*-template.conf`：带逐字段注释的参考模板。可以在调试页手动加载，但不参与设备匹配。
 - `docs/kernel_profiles/templates/`：按大版本整理的模板文档。
 

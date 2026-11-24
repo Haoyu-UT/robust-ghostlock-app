@@ -1,32 +1,19 @@
 package com.sesame.app.data
 
 /**
- * Removes the lock-anchor triple from a generated profile so the route falls
- * back to the reclaimed payload page. This is the user's "page" choice at
- * profile generation; the rest of the document is unchanged.
+ * Removes the lock anchor from a generated profile so the route uses the
+ * reclaimed payload page. This is the user's "page" choice at profile
+ * generation; the rest of the document is unchanged.
  *
- * Every route branch is cleaned (the selected route and the fallback), so a
- * triple cannot survive under a branch the native later switches to.
+ * The document is the cleaned v3 shape: the anchor is `ghostlock.anchor`, so
+ * the page choice sets it to null. (The pre-v3 `route`/`fallback` branch triples
+ * no longer exist.)
  */
 internal fun stripLockAnchor(documentText: String): String? {
     val entries = ProfileDocumentParser.entries(documentText) ?: return null
     for (entry in entries) {
-        stripAnchorFromBranches(entry["route"])
-        val fallback = entry["fallback"]
-        if (fallback is Map<*, *>) {
-            stripAnchorFromBranches(fallback["route"])
-        }
+        val ghostlock = entry["ghostlock"].asValueMap() ?: continue
+        ghostlock["anchor"] = null
     }
     return HoconSupport.render(if (entries.size == 1) entries.first() else entries)
-}
-
-private fun stripAnchorFromBranches(branches: Any?) {
-    val map = branches as? Map<*, *> ?: return
-    for (branch in map.values) {
-        @Suppress("UNCHECKED_CAST")
-        val route = branch as? MutableMap<String, Any?> ?: continue
-        route.remove("lock_anchor_image")
-        route.remove("lock_anchor_bytes")
-        route.remove("lock_anchor_stride")
-    }
 }

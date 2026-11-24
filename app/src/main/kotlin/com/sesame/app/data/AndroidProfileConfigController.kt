@@ -13,7 +13,6 @@ import com.sesame.app.data.profile.ProfileMerger
 import com.sesame.app.data.profile.ProfileResolver
 import com.sesame.app.data.profile.ProfileTransport
 import com.sesame.app.data.profile.Timer98260
-import com.sesame.app.data.route.RouteKind
 import com.sesame.app.domain.model.AnchorGeometry
 import com.sesame.app.domain.model.ExecutionFieldValue
 import com.sesame.app.domain.model.ProfileConfig
@@ -806,47 +805,6 @@ internal class AndroidProfileConfigController(
     }
 
     /**
-     * Keys the resolved profile states in its **active route branch** that no
-     * wire section declares: settings the profile asks for and the transport
-     * cannot deliver. This is the check that would have caught the lock anchor
-     * vanishing between the resolved document and the wire. The fallback branch
-     * is excluded on purpose — its geometry belongs to another route's section
-     * and never crosses the transport either way.
-     */
-    private fun uncarriedRouteKeys(profile: ValueMap, route: String?): List<String> {
-        val branch = route?.let { name -> profile["route"].asValueMap()?.get(name).asValueMap() }
-            ?: return emptyList()
-        /* The branch keys the transport document carries. `carriers` is the
-         * app's choice list and is consumed by the renderer itself; anything
-         * outside these sets is a setting the profile asks for and the run
-         * cannot deliver. */
-        val known = when (route) {
-            "select_stack" -> setOf(
-                "carriers", "waiter_shift", "compact_waiter", "lock_anchor_image",
-                "lock_anchor_bytes", "lock_anchor_stride", "compat_carrier",
-                "waiter_home", "select_dst_depth", "compat_futex_abi",
-                "enter_delay_us", "timeout_us",
-            )
-
-            "multicast_waiter" -> setOf(
-                "carriers", "waiter_off", "buffer_size", "task_offset", "lock_offset",
-                "compact_waiter", "lock_anchor_image", "lock_anchor_bytes",
-                "lock_anchor_stride", "compat_carrier", "compat_waiter_off",
-                "compat_buffer_size", "compat_futex_abi",
-            )
-
-            "sigreturn" -> setOf(
-                "carriers", "waiter_off_sve", "waiter_off_plain", "compact_waiter",
-                "lock_anchor_image", "lock_anchor_bytes", "lock_anchor_stride",
-            )
-
-            "tcp_zerocopy" -> setOf("carriers", "compact_waiter")
-            else -> emptySet()
-        }
-        return branch.keys.filterIsInstance<String>().filterNot { it in known }.sorted()
-    }
-
-    /**
      * Native decodes one complete `execution.routes` object, while profiles only
      * include the route they use (plus their fallback). Missing groups are
      * filled from the shared `execution-<route>.conf` files.
@@ -964,46 +922,6 @@ internal class AndroidProfileConfigController(
             .map { "execution.routes.$route.$it" }
     }
 
-    /**
-     * Fills every field of the shared geometry and the active route with an
-     * explicit `null` when the resolved profile omitted it, so the advanced
-     * editor always presents the complete editable surface.
-     */
-    private fun completeProfileFields(
-        profile: ValueMap,
-        route: String?,
-        fallbackTo: String?,
-    ): ValueMap {
-        val out = profile.copyValue().asValueMap() ?: return profile
-        if (!out.containsKey("kernel_phys_load")) out["kernel_phys_load"] = null
-        if (!out.containsKey("kernel_phys_offset")) out["kernel_phys_offset"] = null
-        completeSection(out, "task_struct", TaskStructFieldNames)
-        completeSection(out, "cred", CredFieldNames)
-        completeSection(out, "offset", OffsetFieldNames)
-        completeSection(out, "kernelsnitch", KernelsnitchFieldNames)
-        route?.let { completeRouteBranch(out["route"].asValueMap(), it) }
-        if (fallbackTo != null && fallbackTo != "none") {
-            completeRouteBranch(
-                out["fallback"].asValueMap()?.get("route").asValueMap(),
-                fallbackTo,
-            )
-        }
-        return out
-    }
-
-    private fun completeSection(out: ValueMap, section: String, fields: List<String>) {
-        val target = out[section].asValueMap() ?: valueMapOf().also { out[section] = it }
-        for (field in fields) if (!target.containsKey(field)) target[field] = null
-    }
-
-    private fun completeRouteBranch(container: ValueMap?, route: String) {
-        val fields = RouteBranchFields[route] ?: return
-        val containerMap = container ?: return
-        val branch = containerMap[route].asValueMap()
-            ?: valueMapOf().also { containerMap[route] = it }
-        for (field in fields) if (!branch.containsKey(field)) branch[field] = null
-    }
-
     private fun buildTree(
         node: ValueMap,
         prefix: String,
@@ -1101,47 +1019,6 @@ internal class AndroidProfileConfigController(
 
     internal companion object {
         private const val BuiltinDirectory = "kernel_profiles"
-        private val RouteCommonRequired = listOf(
-            "offset.init_task", "offset.init_cred", "offset.root_task_group", "offset.selinux_enforcing",
-            "task_struct.prio", "task_struct.pi_lock", "task_struct.pi_waiters", "task_struct.pi_blocked_on",
-            "task_struct.cred", "task_struct.seccomp",
-        )
-        /** Full shared-geometry field universes (native `kTask`/`kCred`/`kOffset`). */
-        private val TaskStructFieldNames = listOf(
-            "prio", "normal_prio", "sched_task_group", "pi_lock", "pi_waiters", "pi_top_task",
-            "pi_blocked_on", "pid", "tgid", "atomic_flags", "real_cred", "cred", "comm", "tasks",
-            "seccomp",
-        )
-        private val CredFieldNames = listOf(
-            "copy_size", "usage_offset", "usage_value", "caps_offset", "caps_count", "caps_value",
-            "ref_count", "ref0_offset", "ref1_offset", "ref2_offset", "ref3_offset",
-            "ref0_image", "ref1_image", "ref2_image", "ref3_image",
-        )
-        private val OffsetFieldNames = listOf(
-            "init_task", "init_cred", "empty_zero_page", "root_task_group", "selinux_enforcing",
-            "selinux_blob_sizes", "security_hook_heads", "slide_nfulnl_logger", "slide_loggers_0_1",
-            "slide_boot_id",
-        )
-        private val KernelsnitchFieldNames = listOf("collisions", "mm_struct_sz")
-
-        /** Fields each route branch carries, used to seed a switched-to route. */
-        private val RouteBranchFields = mapOf(
-            "tcp_zerocopy" to listOf("compact_waiter"),
-            "select_stack" to listOf("waiter_shift"),
-            "multicast_waiter" to listOf(
-                "waiter_off", "buffer_size", "task_offset", "lock_offset",
-                "compact_waiter",
-            ),
-        )
-        private val RouteMulticastFields = listOf(
-            "buffer_size", "task_offset", "lock_offset",
-        )
-        private const val SizeofU32 = 4L
-        private const val SizeofU64 = 8L
-
-        /** Native's spray clamp (`MM_STRUCT_SZ` sanity range in `main.cpp`). */
-        private const val MinSlabStride = 64L
-        private const val MaxSlabStride = 32768L
 
         const val PrefBuiltinRelease = "debug_builtin_release"
         const val PrefExternalUri = "external_profile_uri"

@@ -3,7 +3,6 @@ package com.sesame.app.data
 import android.app.Application
 import android.content.SharedPreferences
 import androidx.core.content.edit
-import com.sesame.app.data.route.SelectConfig
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,11 +36,7 @@ class RouteCandidatesTest {
         val document = HoconSupport.parseValue(
             AssetConfigLoader(context).load("kernel_profiles/$file"),
         ).asValueMap()
-        val device = document?.let {
-            listOf("kernel_phys_load", "kernel_phys_offset").firstNotNullOfOrNull { key ->
-                (it[key] as? Map<*, *>)?.keys?.firstOrNull()?.toString()
-            }
-        }
+        val device = document?.get("devices").asValueMap()?.keys?.firstOrNull()
         return AndroidProfileConfigController(
             context = context,
             externalProfiles = FakeExternalProfileStore(),

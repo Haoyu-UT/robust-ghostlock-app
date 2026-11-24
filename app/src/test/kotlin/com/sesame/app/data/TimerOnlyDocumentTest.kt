@@ -88,6 +88,6 @@ class TimerOnlyDocumentTest {
         )
         assertTrue(result is ProfileImportResult.Rejected)
         val errors = (result as ProfileImportResult.Rejected).errors
-        assertTrue(errors.toString(), errors.any { it.startsWith("kernel_phys_offset") })
+        assertTrue(errors.toString(), errors.any { it.startsWith("devices.<id>.phys.offset") })
     }
 }

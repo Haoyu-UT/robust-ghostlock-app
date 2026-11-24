@@ -13,7 +13,7 @@
 # on the bundled profiles, so no value changed, but the digest covers
 # every declared key and every document's bytes changed.
 # Re-frozen 2026-10-29 (bundle fix): the 6.1 profiles take the BTF cred
-# values from credential-6_1.conf (copy 128, caps 40); the 5.15 profiles
+# values inlined from the 6.1 BTF (copy 128, caps 40); the 5.15 profiles
 # keep the 5.x template block (copy 176, caps 48, four reference slots).
 # Their bytes still carry the declared stage-3 keys, absent on both.
 # Re-frozen 2026-10-30: page-free Stage 1 added the `selinux` (enforcing,

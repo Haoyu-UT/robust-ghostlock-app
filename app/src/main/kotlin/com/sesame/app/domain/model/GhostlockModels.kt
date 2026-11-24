@@ -278,7 +278,7 @@ data class ProfileConfig(
      */
     val routeCandidates: List<RouteCandidate> = emptyList(),
     /**
-     * The picker's choice — a native route name or `timer_98260`. Null when no
+     * The picker's choice — a syscall name or the timer engine. Null when no
      * route resolved. The default is the first candidate; a stored choice that
      * is no longer viable is cleared at load.
      */
@@ -386,7 +386,7 @@ data class StrideProbe(
 
 sealed interface ParseResult {
     /** Fields only an xbl_config/uefi sidecar can supply (e.g.
-     * `kernel_phys_load`) that the parsed profile is still missing. */
+     * `devices.<id>.phys.load`) that the parsed profile is still missing. */
     data class Parsed(
         val releases: List<String>,
         val missing: Set<String> = emptySet(),
@@ -401,11 +401,11 @@ sealed interface ParseResult {
         /** Extractor's canonical phys source (`xbl_config FDT`, `uefi memory
          * map`, `vendor_boot …`, `MediaTek DRAM base`, `--phys`, `unset`). */
         val physSource: String? = null,
-        /** The parsed document carries `kernel_phys_load`. */
+        /** The parsed document states the device pair under `devices`. */
         val physLoadPresent: Boolean = false,
         /** The parsed document carries `kernel_phys_offset`. */
         val physOffsetPresent: Boolean = false,
-        /** The image's `timer_98260` block was derived and validated. */
+        /** The image's `timer` block was derived and validated. */
         val timerDerived: Boolean = false,
         /**
          * The generated document itself. The app stores no profile: the caller

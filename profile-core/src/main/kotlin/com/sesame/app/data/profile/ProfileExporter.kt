@@ -7,11 +7,11 @@ import com.sesame.app.data.route.RouteKind
 import java.io.File
 
 /**
- * Serializes the bundled HOCON profiles into the v3 binary the native side
- * reads. It shares [ProfileMerger], [ProfileResolver] and
- * [NativeProfileDocument] with the app, so the exporter and the runtime can no
- * longer drift. The work list comes from `index.conf`; a missing/invalid entry
- * fails the export instead of silently dropping a profile.
+ * Renders the bundled HOCON profiles into the one JSON document every backend
+ * reads. It shares [ProfileMerger], [ProfileResolver] and [ProfileTransport]
+ * with the app, so the exporter and the runtime can no longer drift. The work
+ * list comes from `index.conf`; a missing/invalid entry fails the export
+ * instead of silently dropping a profile.
  */
 object ProfileExporter {
     @JvmStatic

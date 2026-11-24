@@ -28,9 +28,6 @@ Every built-in profile lives in `app/src/main/assets/kernel_profiles/`:
   document nests it under `ghostlock.execution`.
 - `execution-<route>.conf` — tuning for a single attack route. The resolver
   loads these presets; device profiles don't `include` them.
-- `credential-6x.conf`, `kernelsnitch-6x.conf` — labelled reference fragments
-  from the pre-clean schema; shipped profiles are self-contained and do not
-  include them.
 - `*-template.conf` — annotated reference templates. You can load them manually
   from the debug page, but they never participate in device matching.
 - `docs/kernel_profiles/templates/` — templates grouped by kernel family.

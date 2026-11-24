@@ -46,11 +46,7 @@ class TimerDocumentTest {
         val document = HoconSupport.parseValue(
             AssetConfigLoader(context).load("kernel_profiles/$file"),
         ).asValueMap()
-        val device = document?.let {
-            listOf("kernel_phys_load", "kernel_phys_offset").firstNotNullOfOrNull { key ->
-                (it[key] as? Map<*, *>)?.keys?.firstOrNull()?.toString()
-            }
-        }
+        val device = document?.get("devices").asValueMap()?.keys?.firstOrNull()
         return AndroidProfileConfigController(
             context = context,
             externalProfiles = FakeExternalProfileStore(),
