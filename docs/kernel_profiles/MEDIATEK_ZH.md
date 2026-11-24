@@ -4,7 +4,8 @@
 
 本文面向尚自定提取配置但未成功运行 GhostLock 的联发科（MediaTek）用户。若设备已在内置支持列表中按 `uname -r` 精确匹配且运行正常，则无需阅读本文。
 
-联发科内核需要两个内核 `Image` 本身并不携带的物理地址：`kernel_phys_load`（内核物理加载地址）与 `kernel_phys_offset`（DRAM 基址，即线性映射的 `PHYS_OFFSET`）。二者缺失或填写错误时，攻击会在 W1 阶段失败：连续重试至上限后终止。
+联发科内核需要两个内核 `Image` 本身并不携带的物理地址。profile 文档按设备写成
+`devices.<codename>.phys.load`（内核物理加载地址）与 `devices.<codename>.phys.offset`（DRAM 基址，即线性映射的 `PHYS_OFFSET`）。二者缺失或填写错误时，攻击会在 W1 阶段失败：连续重试至上限后终止。
 
 ```
 [*] W1 attempt 1/15
@@ -17,8 +18,8 @@
 
 | 取值 | 来源 |
 |---|---|
-| `kernel_phys_load` | 头部 `kernel_addr` 字段 |
-| `kernel_phys_offset` | 头部 `dtb` 段中 DTB 的 `/memory` 节点 |
+| `devices.<codename>.phys.load` | 头部 `kernel_addr` 字段（提取器日志写作 `kernel_phys_load`） |
+| `devices.<codename>.phys.offset` | 头部 `dtb` 段中 DTB 的 `/memory` 节点（日志写作 `kernel_phys_offset`） |
 
 在联发科设备上，`dtb` 段是 DTBO 表（`dtbo.img` 的格式）；提取器会直接解析。若某镜像的 `dtb_size = 0`（引导程序从别处取 DTB），改用 `--dtbo` 传入手机的 `dtbo.img`（见下方命令）；其中包含同样的 `/memory` 节点。
 
@@ -99,7 +100,8 @@ kernel_phys_load = <值>
 kernel_phys_offset = <值>
 ```
 
-打开 App 的 **「高级参数覆盖」** 页，把这两个字段填成上述取值。保存后即对下次运行生效，无需重新构建。
+提取器会把它们写入 profile 文档的 `devices.<codename>.phys.load` / `.offset`。在 App 中为该 release
+在参数页填入这两个值（或直接从镜像生成 profile，会自动填写）。保存后即对下次运行生效，无需重新构建。
 
 ## 第 4 步 —— 运行并验证
 

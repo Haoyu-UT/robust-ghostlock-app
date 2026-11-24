@@ -6,8 +6,9 @@ This guide is for MediaTek users who extract the offsets by themselves but have 
 the device is listed with an exact `uname -r` match and runs, this guide does
 not apply.
 
-MediaTek kernels require two physical addresses that the kernel `Image` does not carry: `kernel_phys_load` (the
-kernel's physical load address) and `kernel_phys_offset` (the DRAM base, i.e. the
+MediaTek kernels require two physical addresses that the kernel `Image` does not carry. The profile document
+states them per device as `devices.<codename>.phys.load` (the kernel's physical load address) and
+`devices.<codename>.phys.offset` (the DRAM base, i.e. the
 linear map's `PHYS_OFFSET`). When they are missing or incorrect, the attack
 fails during W1: it is retried to its limit and then fails.
 
@@ -23,8 +24,8 @@ needed**:
 
 | value | source |
 |---|---|
-| `kernel_phys_load` | the header's `kernel_addr` field |
-| `kernel_phys_offset` | the `/memory` node of the DTB in the header's `dtb` section |
+| `devices.<codename>.phys.load` | the header's `kernel_addr` field (the extractor logs it as `kernel_phys_load`) |
+| `devices.<codename>.phys.offset` | the `/memory` node of the DTB in the header's `dtb` section (logged as `kernel_phys_offset`) |
 
 On MediaTek the `dtb` section is a DTBO table (the `dtbo.img` format); the
 extractor reads it directly. If a particular image has `dtb_size = 0` — the
@@ -120,8 +121,11 @@ kernel_phys_load = <value>
 kernel_phys_offset = <value>
 ```
 
-Open the app's **Advanced parameter overrides** page and set the two fields to
-those values. Saving applies them to the next run; no rebuild is required.
+The extractor writes them into the profile document as
+`devices.<codename>.phys.load` / `.offset`. In the app, set the two fields on the
+parameter page for that release (or generate the profile from the image, which
+fills them automatically). Saving applies them to the next run; no rebuild is
+required.
 
 ## Step 4 — run and verify
 

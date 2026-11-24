@@ -22,13 +22,14 @@ Implemented on `fix/ui-behaviour-2026-11-23` (commits `1a002862`..`38aaa949`):
 | Bundled assets | **done**: all 74 converted by `tools/migrate_profile_shape.py` (one-off, Python); `ship_golden_profiles.py` renders through the same converter and `--check` reads the cleaned shape (61 bundled, 0 missing, 0 mismatched, 12 exempt). |
 | Extractor | **done**: both conf renderers (`report::render_conf_with_device`, `options::render_superset`) emit the cleaned document; the store's internal `profile` map is rendered separately (`report::render_facts`), so no old-shape text is parsed back. Extractor suite 165. |
 | Consumers | **done**: the ship composes the cleaned render with the store-only facts (devices, stride, timer block and its shared symbols, the credential sid); the app's `LegacyProfileShape` is deleted, a non-cleaned document is refused, the on-device cut and the timer composition emit the cleaned shape. |
+| Store + timer (decision 20) | **done**: the store entry carries `document` (the cleaned tree) instead of the old-keyed `profile` map; `report::render_facts`, `parse_conf_blocks`, `Superset.profile` and the legacy cut API are deleted; the timer analyzer emits the cleaned fragment (`kernel` facts + `timer`) and `tools/sweep_timer_store.py` merges it into every store entry (`timer_analysis` keeps the evidence); the ship renders each asset from the store document (no extractor re-run, no conversion), `--refresh-all` rewrote all 60 store-derived assets, `--check` reads 61 bundled / 0 missing / 0 mismatched / 12 exempt; the app's `OptionSuperset` clones the document and selects route/carrier/anchor/device, and its timer merge is a deep merge (`TimerBlockText` and the mapping deleted). The store was regenerated from the images (the corpus `options_ondevice`/`structs_ondevice`/`codegen_ondevice` tests are green). |
+| Docs | **done**: `PROFILE_SCHEMA.md` + `_ZH` rewritten to v3; the four docs templates and the four annotated asset templates rewritten; `defaults`, `README`, `MEDIATEK`, `BUNDLED_PROFILES` key references updated; `FieldLabels` maps the new dotted paths (53 new strings, EN+ZH). |
 | Device gate | **diting build 887**: cleaned assets and the converter-free app, fresh boot, store `completed` — native load line, ladder `dirtyfrag`, DirtyFrag stage `RESULT=OK script=0 enforce=1`; build 875 proved the transport on the POCO 6.1.138 and OnePlus 6.6.66; native refusals exercised on device. |
 
 Remaining:
 
-1. **Docs/templates**: `docs/kernel_profiles/PROFILE_SCHEMA.md` (EN+ZH), the four reference templates, and the field labels for the new dotted paths.
-2. The POCO and OnePlus rigs have not run the cleaned-asset build (they proved the transport earlier).
-3. The store's own `profile` map and the timer extractor's `timer_98260` block stay in their producer-internal spelling; the ship and the app map them once at composition. Renaming them would mean a store-format change and a regeneration, not a consumer change.
+1. The POCO and OnePlus rigs have not run the cleaned-asset build (they proved the transport earlier). A diting run on the refreshed assets (the store-document build) is the next device gate.
+2. The pre-release release cut (r12) after that gate.
 
 ## 1. Why
 
@@ -66,6 +67,7 @@ The current v3 document is not clean in six measurable ways (audit of the 74 bun
 | 17 | An unknown key under `ghostlock.execution` (or `execution.routes.<route>`) is an import error |
 | 18 | A timer-only document is the full fixed shape with nulls (§3.2) |
 | 19 | **Every backend reads the same JSON document.** The GLK1 binary wire is deleted (encoder, decoder, digest, and the planned cut); the native decodes the render directly, through the reader the timer tool already has (§4.6) |
+| 20 | **Every artifact that carries profile facts uses the v3 document.** The test-kernels store's `profile` map (old-keyed facts) becomes `document` (the cleaned v3 tree, route-superset form); the timer analyzer emits the cleaned fragment (`kernel.*` facts + `timer`) instead of a `timer_98260` block. The store→asset and analyzer→document conversions are deleted; composition is a deep merge of documents plus the measured overlay (see §4.5.1) |
 
 ## 3. The target document
 
@@ -278,6 +280,46 @@ overlaid.
   recorded by hand, in `meta.txt`. Benign in value (the two skipped words are zero in
   `init_cred`), but wrong for the native's caps write.
 - The 4 reference templates (`5.15/6.1/6.6/6.12-template.conf`) rewritten.
+
+### 4.5.1 The store carries the document (decision 20)
+
+The store entry (`external/test-kernels/<release>/options-<release>.json`) keeps its
+analysis envelope — `routes`, `plans`, `candidates`, `devices[]`, `pipelines`,
+`pipeline_facts`, `pipeline_order`, `phys_source` — and replaces the old-keyed
+`profile` map with `document`: the cleaned v3 tree the CLI renders for that image
+(the route-superset form: all feasible syscalls with their carriers, the shared
+anchor/scratch, `devices` for the primary device, `kernel.heap.stride = null`, the
+timer symbols null, `timer = null`).
+
+Producers and consumers:
+
+- **Extractor** (`tools/extract_rs`): `options::build` constructs the document tree
+  from the same facts `--format conf` already uses; the CLI renders it to HOCON with
+  one generic renderer. `report::render_facts`, `parse_conf_blocks`, the
+  `Superset.profile` map and the legacy cut API (`cut`, `cut_plan`, `render_cut`)
+  are deleted; `cut_ondevice` with them.
+- **Timer analyzer** (`tools/timer_extract`): the block it emits is the cleaned
+  fragment — `kernel { symbols { panic_on_warn, root_user, init_user_ns,
+  init_ucounts, init_groups }, struct { cred { security_sid, refs } } }` and
+  `timer { … }` with image-relative offsets — for both `--emit-timer-conf` and the
+  store overlay's `block`. The `timer_98260` spelling leaves the profile surface
+  (the overlay object keeps the analyzer's evidence fields).
+- **Ship**: an asset is the store `document` plus the store-only composition — all
+  `devices[]` pairs widened in, `kernel.heap.stride` from the measured entry, the
+  timer fragment merged — then the header. `--check` compares the asset tree to that
+  document tree directly. `expected_facts`, `_expected_clean_document`,
+  `cleaned_timer`, `sync_timer_block`, `render_timer_block` and the
+  `migrate_profile_shape.convert` call are deleted; `--sync-facts` (which inserted
+  old-keyed blocks) goes with them.
+- **App** (`OptionSuperset`, `AndroidGhostlockRepository`): the on-device extractor's
+  `document` is the picker's base; `cut` clones it and applies the chosen
+  syscall/carrier, the plan's anchor/scratch, the device pair, the pipeline and the
+  presets — no block assembly. The timer merge is a deep merge of the analyzer's
+  fragment; `mergeTimerBlock`'s mapping and `TimerBlockText` are deleted.
+- **Regeneration**: `generate_options` writes the new envelope (it preserves the
+  timer overlay, which must be regenerated once with the cleaned analyzer). The
+  per-entry diff is reviewed; hand-curated facts (device pairs, module manifests,
+  KDP) live outside `document` and are untouched.
 
 ### 4.6 The transport: one JSON document for every backend
 
