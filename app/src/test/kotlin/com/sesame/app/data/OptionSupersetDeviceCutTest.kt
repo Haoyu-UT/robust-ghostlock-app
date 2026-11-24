@@ -54,12 +54,7 @@ class OptionSupersetDeviceCutTest {
         HoconSupport.parseValue(text).asValueMap() ?: error("cut is not an object")
 
     private fun cleaned(document: ValueMap): ValueMap =
-        if (com.sesame.app.data.profile.ProfileResolver.isCleanedShape(document)) {
-            document
-        } else {
-            com.sesame.app.data.profile.LegacyProfileShape.convert(document)
-                ?.asValueMap() ?: error("the cut did not convert")
-        }
+        document
 
     private fun pair(document: ValueMap, device: String): Pair<Long?, Long?> =
         com.sesame.app.data.profile.ProfileResolver.physOf(

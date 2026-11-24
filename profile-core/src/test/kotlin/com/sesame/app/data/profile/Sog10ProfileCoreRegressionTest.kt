@@ -21,8 +21,7 @@ class Sog10ProfileCoreRegressionTest {
          * keep the regression coverage for the day it is restored. A restored
          * asset is in the cleaned shape already. */
         Assume.assumeTrue("$release is not in the bundled assets", source.isFile)
-        val builtin = requireNotNull(LegacyProfileShape.convert(parse(source))).asValueMap()
-            ?: error("converted document is not an object")
+        val builtin = parse(source)
         assertNull(builtin["devices"])
 
         val tuning = parse(File(profiles, "execution-tuning.conf"))["execution"].asValueMap()

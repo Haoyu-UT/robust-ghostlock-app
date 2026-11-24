@@ -190,62 +190,228 @@ data class OptionSuperset(
         val top = profile[""] ?: return null
         val selected = device?.let { name -> devices.firstOrNull { it.device.equals(name, true) } }
             ?: devices.firstOrNull()
-        val document = linkedMapOf<String, Any?>()
-        for (key in TopLevelKeys) {
-            /* The physical pair is device-scoped: write the selected device's
-             * schema-v3 per-device map instead of the common render's scalar. */
-            if (selected != null &&
-                (key == "schema_version" || key == "kernel_phys_load" || key == "kernel_phys_offset")
-            ) {
-                continue
-            }
-            top[key]?.let { document[key] = literal(it) }
+        fun lit(block: Map<String, String>?, key: String): Any? =
+            block?.get(key)?.let(::literal)
+        fun number(block: Map<String, String>?, key: String): Long? =
+            lit(block, key) as? Long
+        fun hex(value: Long?): String? = value?.let { "0x" + it.toULong().toString(16) }
+        fun hexOf(block: Map<String, String>?, key: String): String? = hex(number(block, key))
+        fun block(name: String): Map<String, String>? = profile[name]
+        fun geometryNumber(source: Map<String, Long>, key: String): Long? = source[key]
+        fun futexAbi(source: Map<String, Long>): String =
+            if (geometryNumber(source, "compat_futex_abi") == 1L) "time64" else "time32"
+
+        val offset = block("offset")
+        val task = block("task_struct")
+        val cred = block("cred")
+        val snitch = block("kernelsnitch")
+        val selinux = block("selinux")
+        val waiterLayout = block("waiter_layout")
+        val carriersOfRoute = carriers
+        val nativeDeclared = "native" in carriersOfRoute
+        val compatDeclared = "compat" in carriersOfRoute
+        val selectedCarrier = when {
+            compatDeclared && !nativeDeclared -> "compat"
+            nativeDeclared && !compatDeclared -> null
+            nativeDeclared -> "native"
+            else -> null
         }
-        if (selected != null) {
-            document["schema_version"] = 3L
-            document["kernel_phys_load"] = selected.physLoad?.let { mapOf(selected.device to it) }
-            document["kernel_phys_offset"] = selected.physOffset?.let { mapOf(selected.device to it) }
-        }
-        /* The profile carries the ordered pipeline preference; a cut without
-         * one would read as the legacy ghostlock default. */
+        val primaryGeometry = routeOption.geometry
+        val compatGeometry = routeOption.alternatives
+            .firstOrNull { it.carrier == "compat" && it.verdict == Feasible }
+            ?.geometry ?: emptyMap()
+        val compact = number(waiterLayout, "compact")
+            ?: geometryNumber(primaryGeometry, "compact_waiter")
+        val waiterTask = number(waiterLayout, "task")
+            ?: geometryNumber(primaryGeometry, "task_offset")
+            ?: geometryNumber(compatGeometry, "task_offset")
+        val waiterLock = number(waiterLayout, "lock")
+            ?: geometryNumber(primaryGeometry, "lock_offset")
+            ?: geometryNumber(compatGeometry, "lock_offset")
         val order = pipelineOrder ?: this.pipelineOrder
-        if (order.isNotEmpty()) {
-            document["pipeline"] = order
+        val dirtyfrag = if ("dirtyfrag" in order) "feasible" else "unknown"
+        val symbolNames = listOf(
+            "init_task", "init_cred", "root_task_group", "empty_zero_page",
+            "selinux_state", "selinux_blob_sizes", "security_hook_heads",
+            "nf_logger", "loggers_0_1", "boot_id",
+        )
+        val offsetSource = mapOf(
+            "init_task" to "init_task",
+            "init_cred" to "init_cred",
+            "root_task_group" to "root_task_group",
+            "empty_zero_page" to "empty_zero_page",
+            "selinux_state" to "selinux_enforcing",
+            "selinux_blob_sizes" to "selinux_blob_sizes",
+            "security_hook_heads" to "security_hook_heads",
+            "nf_logger" to "slide_nfulnl_logger",
+            "loggers_0_1" to "slide_loggers_0_1",
+            "boot_id" to "slide_boot_id",
+        )
+        val symbols = linkedMapOf<String, Any?>()
+        for (name in symbolNames) {
+            symbols[name] = hexOf(offset, offsetSource.getValue(name))
         }
-        val block = linkedMapOf<String, Any?>()
-        if (carrier == null) {
-            block["carriers"] = carriers
+        for (name in listOf(
+            "panic_on_warn", "root_user", "init_user_ns", "init_ucounts", "init_groups",
+        )) {
+            symbols[name] = null
         }
-        geometry.forEach { (key, value) -> block[key] = value }
-        if (carrier == null) {
-            for (alternative in routeOption.alternatives.filter { it.verdict == Feasible }) {
-                for ((key, value) in alternative.geometry) {
-                    if (key == "compat_carrier" && carriers.size > 1) continue
-                    block.putIfAbsent(key, value)
+        val taskFields = listOf(
+            "prio", "normal_prio", "sched_task_group", "pi_lock", "pi_waiters",
+            "pi_top_task", "pi_blocked_on", "pid", "tgid", "atomic_flags",
+            "real_cred", "cred", "comm", "tasks", "seccomp",
+        )
+        val taskBlock = linkedMapOf<String, Any?>()
+        for (field in taskFields) taskBlock[field] = number(task, field)
+        val refNames = listOf("user", "user_ns", "ucounts", "group_info")
+        val refs = linkedMapOf<String, Any?>()
+        for ((index, name) in refNames.withIndex()) {
+            refs[name] = linkedMapOf<String, Any?>(
+                "offset" to number(cred, "ref${index}_offset"),
+                "image" to hexOf(cred, "ref${index}_image"),
+            )
+        }
+        val credBlock = linkedMapOf<String, Any?>(
+            "copy_size" to number(cred, "copy_size"),
+            "usage" to linkedMapOf(
+                "offset" to number(cred, "usage_offset"),
+                "size" to number(cred, "usage_size"),
+                "value" to number(cred, "usage_value"),
+            ),
+            "uid" to number(cred, "uid_offset"),
+            "security" to number(cred, "security_offset"),
+            "security_sid" to null,
+            "caps" to linkedMapOf(
+                "offset" to number(cred, "caps_offset"),
+                "count" to number(cred, "caps_count"),
+                "mask" to hexOf(cred, "caps_value"),
+            ),
+            "refs" to refs,
+        )
+        val kernel = linkedMapOf<String, Any?>(
+            "image_base" to null,
+            "symbols" to symbols,
+            "struct" to linkedMapOf<String, Any?>(
+                "task" to taskBlock,
+                "cred" to credBlock,
+                "waiter" to linkedMapOf<String, Any?>(
+                    "shape" to when (compact) {
+                        1L -> "compact"
+                        0L -> "node"
+                        else -> null
+                    },
+                    "pi_tree" to number(waiterLayout, "pi_tree"),
+                    "task" to waiterTask,
+                    "lock" to waiterLock,
+                    "wake_state" to number(waiterLayout, "wake_state"),
+                ),
+                "rt_mutex" to linkedMapOf<String, Any?>(
+                    "size" to number(snitch, "rt_mutex_size"),
+                ),
+                "selinux_state" to linkedMapOf<String, Any?>(
+                    "enforcing" to number(selinux, "enforcing"),
+                    "initialized" to number(selinux, "initialized"),
+                ),
+            ),
+            "heap" to linkedMapOf<String, Any?>(
+                "stride" to null,
+                "collisions" to number(snitch, "collisions"),
+            ),
+            "dirtyfrag" to dirtyfrag,
+            "kdp" to (number(top, "kdp") == 1L || lit(top, "kdp") == true),
+        )
+        val branch = linkedMapOf<String, Any?>()
+        when (route) {
+            "select_stack" -> {
+                branch["native"] = if (nativeDeclared) {
+                    linkedMapOf<String, Any?>(
+                        "waiter_shift" to geometryNumber(primaryGeometry, "waiter_shift"),
+                    )
+                } else {
+                    null
+                }
+                branch["compat"] = if (compatDeclared) {
+                    linkedMapOf<String, Any?>(
+                        "waiter_home" to geometryNumber(compatGeometry, "waiter_home"),
+                        "dst_depth" to geometryNumber(compatGeometry, "select_dst_depth"),
+                        "futex_abi" to futexAbi(compatGeometry),
+                    )
+                } else {
+                    null
                 }
             }
-        }
-        plan.anchor?.let { anchor ->
-            block["lock_anchor_image"] = anchor.image
-            block["lock_anchor_bytes"] = anchor.bytes
-            block["lock_anchor_stride"] = anchor.stride
-        }
-        document["route"] = linkedMapOf(route to block)
-        profile["fallback"]?.let { fallback ->
-            document["fallback"] = fallback.mapValues { literal(it.value) }
-        }
-        profile["selinux"]?.let { selinux ->
-            document["selinux"] = selinux.mapValues { literal(it.value) }
-        }
-        plan.scratch?.let { scratch ->
-            document["w1_scratch"] = linkedMapOf<String, Any?>("image" to scratch.image)
-        }
-        for (name in CommonBlocks) {
-            profile[name]?.let { entries ->
-                document[name] = entries.mapValues { literal(it.value) }
+            "multicast_waiter" -> {
+                branch["native"] = if (nativeDeclared) {
+                    linkedMapOf<String, Any?>(
+                        "waiter_off" to geometryNumber(primaryGeometry, "waiter_off"),
+                        "buffer_size" to geometryNumber(primaryGeometry, "buffer_size"),
+                    )
+                } else {
+                    null
+                }
+                branch["compat"] = if (compatDeclared) {
+                    linkedMapOf<String, Any?>(
+                        "waiter_off" to (geometryNumber(compatGeometry, "compat_waiter_off")
+                            ?: geometryNumber(compatGeometry, "waiter_off")),
+                        "buffer_size" to (geometryNumber(compatGeometry, "compat_buffer_size")
+                            ?: geometryNumber(compatGeometry, "buffer_size")),
+                        "futex_abi" to futexAbi(compatGeometry),
+                    )
+                } else {
+                    null
+                }
+            }
+            "sigreturn" -> {
+                branch["native"] = linkedMapOf<String, Any?>(
+                    "waiter_off" to linkedMapOf<String, Any?>(
+                        "plain" to geometryNumber(primaryGeometry, "waiter_off_plain"),
+                        "sve" to geometryNumber(primaryGeometry, "waiter_off_sve"),
+                    ),
+                )
+                branch["compat"] = null
+            }
+            else -> {
+                branch["native"] = linkedMapOf<String, Any?>()
+                branch["compat"] = null
             }
         }
-        document["schema_version"] = 3L
+        val syscalls = linkedMapOf<String, Any?>()
+        for (name in listOf("select_stack", "sigreturn", "multicast_waiter", "tcp_zerocopy")) {
+            syscalls[name] = if (name == route) branch else null
+        }
+        val anchor = plan.anchor?.let {
+            linkedMapOf<String, Any?>(
+                "image" to hex(it.image),
+                "bytes" to it.bytes,
+                "stride" to it.stride,
+                "scratch" to plan.scratch?.let { scratch -> hex(scratch.image) },
+            )
+        }
+        val ghostlock = linkedMapOf<String, Any?>(
+            "syscall" to route,
+            "carrier" to selectedCarrier,
+            "anchor" to anchor,
+            "syscalls" to syscalls,
+            "module" to null,
+            "execution" to null,
+        )
+        val document = linkedMapOf<String, Any?>(
+            "schema_version" to 3L,
+            "release" to ((lit(top, "release") as? String) ?: release),
+            "devices" to selected?.let {
+                linkedMapOf<String, Any?>(
+                    it.device to linkedMapOf(
+                        "phys" to linkedMapOf(
+                            "load" to hex(it.physLoad),
+                            "offset" to hex(it.physOffset),
+                        ),
+                    ),
+                )
+            },
+            "kernel" to kernel,
+            "ghostlock" to ghostlock,
+            "timer" to null,
+        )
         return HoconSupport.render(document) + "\n"
     }
 

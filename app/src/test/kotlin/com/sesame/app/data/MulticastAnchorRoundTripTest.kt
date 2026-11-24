@@ -19,23 +19,24 @@ class MulticastAnchorRoundTripTest {
     private val anchorStride = 0x20L
 
     private fun document(withAnchor: Boolean): ValueMap {
-        val branch = valueMapOf(
-            "waiter_off" to 48L,
-            "buffer_size" to 264L,
-            "task_offset" to 48L,
-            "lock_offset" to 56L,
-        )
-        if (withAnchor) {
-            branch["lock_anchor_image"] = anchor
-            branch["lock_anchor_bytes"] = anchorBytes
-            branch["lock_anchor_stride"] = anchorStride
+        val anchorBlock = if (withAnchor) {
+            valueMapOf(
+                "image" to "0x" + anchor.toString(16),
+                "bytes" to anchorBytes,
+                "stride" to anchorStride,
+                "scratch" to null,
+            )
+        } else {
+            null
         }
-        return valueMapOf(
-            "release" to release,
-            "schema_version" to 1L,
-            "kernel_major" to 5L,
-            "route" to valueMapOf("multicast_waiter" to branch),
-            "fallback" to valueMapOf("to" to "none"),
+        return CleanedProfileFixture.document(
+            release = release,
+            route = "multicast_waiter",
+            branch = valueMapOf(
+                "waiter_off" to 48L,
+                "buffer_size" to 264L,
+            ),
+            anchor = anchorBlock,
         )
     }
 
@@ -72,11 +73,15 @@ class MulticastAnchorRoundTripTest {
     @Test
     fun `the compat carrier states its own geometry`() {
         val document = document(withAnchor = true)
-        val branch = (document["route"] as ValueMap)["multicast_waiter"] as ValueMap
-        branch["compat_carrier"] = 1L
-        branch["compat_waiter_off"] = 0xa8L
-        branch["compat_buffer_size"] = 0x104L
-        branch["compat_futex_abi"] = 1L
+        val ghostlock = document["ghostlock"] as ValueMap
+        ghostlock["carrier"] = "compat"
+        val branch = (ghostlock["syscalls"] as ValueMap)["multicast_waiter"] as ValueMap
+        branch["native"] = null
+        branch["compat"] = valueMapOf(
+            "waiter_off" to 0xa8L,
+            "buffer_size" to 0x104L,
+            "futex_abi" to "time64",
+        )
         val rendered = transport(document)
         val syscalls = (rendered["ghostlock"] as ValueMap)["syscalls"] as ValueMap
         val compat = ((syscalls["multicast_waiter"] as ValueMap)["compat"] as ValueMap)

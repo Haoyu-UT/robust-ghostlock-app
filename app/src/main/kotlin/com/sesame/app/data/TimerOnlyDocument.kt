@@ -1,6 +1,5 @@
 package com.sesame.app.data
 
-import com.sesame.app.data.profile.LegacyProfileShape
 import com.sesame.app.data.profile.ProfileResolver
 import com.sesame.app.data.profile.Timer98260
 
@@ -18,11 +17,8 @@ object TimerOnlyDocument {
         val raw = documentText
             ?.let { runCatching { HoconSupport.parseValue(it).asValueMap() }.getOrNull() }
             ?: return null
-        val map = if (ProfileResolver.isCleanedShape(raw)) {
-            raw
-        } else {
-            LegacyProfileShape.convert(raw) ?: return null
-        }
+        if (!ProfileResolver.isCleanedShape(raw)) return null
+        val map = raw
         if (!Timer98260.fakeSupported(map)) return null
         val view = map.copyValue().asValueMap() ?: return null
         view["ghostlock"] = null

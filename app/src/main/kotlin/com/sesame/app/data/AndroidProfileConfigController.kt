@@ -8,7 +8,6 @@ import com.sesame.app.BuildConfig
 import com.sesame.app.data.profile.ModuleBlock
 import com.sesame.app.data.profile.PerDevicePhys
 import com.sesame.app.data.profile.ProfileMerger
-import com.sesame.app.data.profile.LegacyProfileShape
 import com.sesame.app.data.profile.ProfileResolver
 import com.sesame.app.data.profile.ProfileTransport
 import com.sesame.app.data.profile.Timer98260
@@ -675,15 +674,12 @@ internal class AndroidProfileConfigController(
          * device-neutral: the maps resolve to the native default, as the
          * exporter's own .bin does. The app always has an identity, and a map
          * that does not name it is refused by PerDevicePhys. */
-        val sourceDocument = if (ProfileResolver.isCleanedShape(document)) {
-            document
-        } else {
-            LegacyProfileShape.convert(document)
-                ?: throw IllegalArgumentException(
-                    "the profile is neither the cleaned layout nor a convertible document",
-                )
+        if (!ProfileResolver.isCleanedShape(document)) {
+            throw IllegalArgumentException(
+                "the profile is not the cleaned v3 layout; regenerate it with this build",
+            )
         }
-        val cleaned = sourceDocument.asValueMap()
+        val cleaned = document.asValueMap()
             ?: throw IllegalArgumentException("the profile is not an object")
         val resolvedDocument = if (deviceCandidates.isEmpty()) {
             PerDevicePhys.resolveNeutral(cleaned)

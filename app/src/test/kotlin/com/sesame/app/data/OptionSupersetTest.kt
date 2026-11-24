@@ -146,18 +146,15 @@ class OptionSupersetTest {
         val plan = superset.plansFor("select_stack")!!.safeOptions[0]
         /* The cut uses the superset's order by default... */
         val chosen = requireNotNull(superset.cut("select_stack", plan))
-        assertTrue(chosen.contains("pipeline = ["))
-        assertTrue(chosen.contains("\"dirtyfrag\""))
-        assertTrue(chosen.contains("\"ghostlock\""))
-        /* ...and an explicit order replaces it; an empty one is the legacy
-         * no-pipeline form. */
+        /* The fixed ladder is derived from the verdict, not listed. */
+        assertTrue(chosen.contains("dirtyfrag = \"feasible\""))
+        /* An order without DirtyFrag leaves the verdict unknown. */
         val override = requireNotNull(
             superset.cut("select_stack", plan, pipelineOrder = listOf("ghostlock")),
         )
-        assertTrue(override.contains("\"ghostlock\""))
-        assertFalse(override.contains("\"dirtyfrag\""))
+        assertTrue(override.contains("dirtyfrag = \"unknown\""))
         val legacy = requireNotNull(superset.cut("select_stack", plan, pipelineOrder = emptyList()))
-        assertFalse(legacy.contains("pipeline ="))
+        assertTrue(legacy.contains("dirtyfrag = \"unknown\""))
     }
 
     @Test
@@ -171,12 +168,13 @@ class OptionSupersetTest {
         val plan = superset.plansFor("select_stack")!!.safeOptions[0]
         val native = requireNotNull(superset.cut("select_stack", plan))
         assertTrue(native.contains("waiter_shift = 1"))
-        assertFalse(native.contains("compat_carrier"))
+        /* The profile form declares both carriers; the run picks one. */
+        assertTrue(native.contains("compat {"))
         val chosen = requireNotNull(superset.cut("select_stack", plan, carrier = "compat"))
-        assertTrue(chosen.contains("compat_carrier = 1"))
+        assertTrue(chosen.contains("compat {"))
         assertTrue(chosen.contains("waiter_home = 432"))
-        assertTrue(chosen.contains("select_dst_depth = 480"))
-        assertTrue(chosen.contains("compat_futex_abi = 0"))
+        assertTrue(chosen.contains("dst_depth = 480"))
+        assertTrue(chosen.contains("futex_abi = \"time32\""))
         assertFalse(chosen.contains("waiter_shift"))
         assertNull(superset.cut("select_stack", plan, carrier = "bogus"))
     }
@@ -188,15 +186,13 @@ class OptionSupersetTest {
         val cut = requireNotNull(superset.cut("select_stack", plan))
         assertTrue(cut.contains("release = \"6.1.138-android14-11-g44bda9e8f6e9-ab13792638\""))
         assertTrue(cut.contains("waiter_shift = 1"))
-        assertTrue(cut.contains("compact_waiter = 1"))
-        assertTrue(cut.contains("lock_anchor_image = 35802320"))
-        assertTrue(cut.contains("w1_scratch {"))
-        assertTrue(cut.contains("image = 35459072"))
-        assertTrue(cut.contains("selinux {"))
+        assertTrue(cut.contains("shape = \"compact\""))
+        assertTrue(cut.contains("image = \"0x2224cd0\""))
+        assertTrue(cut.contains("scratch = \"0x21d1000\""))
+        assertTrue(cut.contains("selinux_state {"))
         assertTrue(cut.contains("prio = 132"))
         val page = requireNotNull(superset.cut("select_stack", superset.plansFor("select_stack")!!.page))
-        assertFalse(page.contains("lock_anchor_image"))
-        assertFalse(page.contains("w1_scratch"))
+        assertTrue(page.contains("anchor = null"))
         assertNull(superset.cut("sigreturn", plan))
     }
 }

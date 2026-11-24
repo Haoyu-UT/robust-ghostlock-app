@@ -57,15 +57,10 @@ object ProfileExporter {
             /* Reference templates are not device profiles and are not exported. */
             if (release.endsWith("-template")) continue
             val parsed = parseFile(File(srcDir, file), srcDir) ?: error("cannot parse $file")
-            /* A bundled asset in the cleaned shape is used as is; the
-             * pre-release layout is converted (the one-off asset migration
-             * lands separately). */
-            val cleaned = if (ProfileResolver.isCleanedShape(parsed)) {
-                parsed
-            } else {
-                LegacyProfileShape.convert(parsed)?.asValueMap()
-                    ?: error("$file is not a convertible profile")
+            require(ProfileResolver.isCleanedShape(parsed)) {
+                "$file is not the cleaned v3 layout; run the one-off migration"
             }
+            val cleaned = parsed
             /* The exporter is device-neutral: the per-device entries are
              * dropped (the native default). */
             val resolved = PerDevicePhys.resolveNeutral(cleaned)

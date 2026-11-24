@@ -71,11 +71,13 @@ object ProfileMerger {
         ghostlock["execution"] = execution
     }
 
-    /** A layer in the cleaned shape; the pre-release layout is converted. */
+    /** A layer must already be the cleaned document. */
     private fun cleaned(layer: ValueMap?): ValueMap? {
         if (layer == null) return null
-        if (ProfileResolver.isCleanedShape(layer)) return layer.copyValue().asValueMap()
-        return LegacyProfileShape.convert(layer)?.asValueMap()
+        require(ProfileResolver.isCleanedShape(layer)) {
+            "the profile is not the cleaned v3 layout; regenerate it with this build"
+        }
+        return layer.copyValue().asValueMap()
     }
 
     private fun requireIdentity(layer: String, profile: ValueMap?, deviceRelease: String) {

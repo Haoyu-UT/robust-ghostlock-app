@@ -601,7 +601,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             if (code != 0 || !parsedFile.isFile) return ParseResult.Failed(code)
             val document = parsedFile.readText()
             val generated = timerBlock?.let { block ->
-                document.trimEnd() + "\n\n" + block.trimEnd() + "\n"
+                mergeTimerBlock(document, block) ?: document
             } ?: document
             val fresh = parseEntries(document) ?: return ParseResult.Failed(code, "invalid extractor output")
             /* The document is returned, never stored: the app keeps no profile
@@ -785,6 +785,94 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             if (snitch.isEmpty()) entry.remove("kernelsnitch")
         }
         val document = if (entries.size == 1) entries.first() else ValueList().apply { addAll(entries) }
+        return HoconSupport.render(document)
+    }
+
+    /**
+     * Merges the timer extractor's block into the cleaned document: the
+     * `timer` block plus the shared kernel facts it owns (the five symbols,
+     * the credential sid and its derived reference offsets). The store's
+     * block keeps its own spelling; the document is the cleaned shape.
+     */
+    private fun mergeTimerBlock(documentText: String, blockText: String): String? {
+        val document = HoconSupport.parseValue(documentText).asValueMap() ?: return null
+        val block = HoconSupport.parseValue(blockText).asValueMap()
+            ?.get("timer_98260").asValueMap() ?: return null
+        val kernel = document["kernel"].asValueMap() ?: return null
+        fun address(value: Any?): ULong? = when (value) {
+            is Number -> value.toLong().toULong()
+            is String -> value.trim().let { text ->
+                if (text.startsWith("0x", ignoreCase = true)) text.substring(2).toULongOrNull(16)
+                else text.toULongOrNull()
+            }
+            else -> null
+        }
+        fun address(key: String): ULong? = address(block[key])
+        val base = address(kernel["image_base"])
+        fun relative(key: String): String? {
+            val value = address(key) ?: return null
+            if (base == null || value < base) return null
+            return "0x" + (value - base).toString(16)
+        }
+        val site = address("static_timer_site")
+        val siteOffset = when {
+            site == null -> null
+            base != null && site >= base -> "0x" + (site - base).toString(16)
+            else -> "0x" + site.toString(16)
+        }
+        val low = address("task_alloc_site_lower_21bit")
+        document["timer"] = linkedMapOf<String, Any?>(
+            "trigger" to when (block["trigger"]) {
+                "core_state" -> "core_state"
+                else -> "killable"
+            },
+            "match_bits" to 21L,
+            "sites" to linkedMapOf(
+                "timer" to linkedMapOf("offset" to siteOffset),
+                "task_alloc" to linkedMapOf(
+                    "low_bits" to low?.let { "0x" + (it and 0x1FFFFFuL).toString(16) },
+                ),
+            ),
+            "object_size" to (block["timer_object_size"] as? Number)?.toLong(),
+            "task_alloc_size" to (block["task_alloc_size"] as? Number)?.toLong(),
+            "node_offset" to (block["timer_node_offset"] as? Number)?.toLong(),
+            "cred" to linkedMapOf(
+                "request_size" to (block["cred_request_size"] as? Number)?.toLong(),
+                "alloc_size" to (block["cred_alloc_size"] as? Number)?.toLong(),
+            ),
+            "trace" to linkedMapOf(
+                "gfp" to linkedMapOf(
+                    "offset" to (block["page_alloc_gfp_offset"] as? Number)?.toLong(),
+                    "size" to (block["page_alloc_gfp_size"] as? Number)?.toLong(),
+                ),
+            ),
+        )
+        val symbols = kernel["symbols"].asValueMap()
+        if (symbols != null) {
+            for (name in listOf(
+                "panic_on_warn", "root_user", "init_user_ns", "init_ucounts", "init_groups",
+            )) {
+                relative(name)?.let { symbols[name] = it }
+            }
+        }
+        val cred = ((kernel["struct"] as? Map<*, *>)?.get("cred").asValueMap())
+        if (cred != null) {
+            (block["security_sid_offset"] as? Number)?.toLong()?.let { cred["security_sid"] = it }
+            val refs = cred["refs"].asValueMap()
+            if (refs != null) {
+                for ((key, name) in listOf(
+                    "cred_user_offset" to "user",
+                    "cred_user_ns_offset" to "user_ns",
+                    "cred_ucounts_offset" to "ucounts",
+                    "cred_group_info_offset" to "group_info",
+                )) {
+                    val offset = (block[key] as? Number)?.toLong() ?: continue
+                    (refs[name].asValueMap() ?: linkedMapOf<String, Any?>().also {
+                        refs[name] = it
+                    })["offset"] = offset
+                }
+            }
+        }
         return HoconSupport.render(document)
     }
 

@@ -43,11 +43,7 @@ class BundledTimerBlocksTest {
         for ((release, file) in entries) {
             val authored = HoconSupport.parseValue(loader.load("kernel_profiles/$file"))
                 .asValueMap() ?: continue
-            val document = if (com.sesame.app.data.profile.ProfileResolver.isCleanedShape(authored)) {
-                authored
-            } else {
-                com.sesame.app.data.profile.LegacyProfileShape.convert(authored) ?: continue
-            }
+            val document = authored
             val raw = document["timer"] ?: continue
             blocks++
             val (config, errors) = Timer98260.parse(raw)

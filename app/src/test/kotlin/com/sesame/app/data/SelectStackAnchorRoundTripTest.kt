@@ -18,21 +18,21 @@ class SelectStackAnchorRoundTripTest {
     private val anchorStride = 0x20L
 
     private fun document(withAnchor: Boolean): ValueMap {
-        val branch = valueMapOf(
-            "waiter_shift" to -2L,
-            "compact_waiter" to 1L,
-        )
-        if (withAnchor) {
-            branch["lock_anchor_image"] = anchor
-            branch["lock_anchor_bytes"] = anchorBytes
-            branch["lock_anchor_stride"] = anchorStride
+        val anchorBlock = if (withAnchor) {
+            valueMapOf(
+                "image" to "0x" + anchor.toString(16),
+                "bytes" to anchorBytes,
+                "stride" to anchorStride,
+                "scratch" to null,
+            )
+        } else {
+            null
         }
-        return valueMapOf(
-            "release" to release,
-            "schema_version" to 1L,
-            "kernel_major" to 5L,
-            "route" to valueMapOf("select_stack" to branch),
-            "fallback" to valueMapOf("to" to "none"),
+        return CleanedProfileFixture.document(
+            release = release,
+            route = "select_stack",
+            branch = valueMapOf("waiter_shift" to -2L),
+            anchor = anchorBlock,
         )
     }
 

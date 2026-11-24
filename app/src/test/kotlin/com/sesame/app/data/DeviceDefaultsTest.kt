@@ -73,8 +73,7 @@ class DeviceDefaultsTest {
             val text = AssetConfigLoader(context).load("kernel_profiles/$r.conf")
             val document = HoconSupport.parseValue(text).asValueMap()
                 ?: error("$r is not an object")
-            val cleaned = com.sesame.app.data.profile.LegacyProfileShape.convert(document)
-                ?.asValueMap() ?: error("$r did not convert")
+            val cleaned = document
             fun pair(device: String) = com.sesame.app.data.profile.ProfileResolver.physOf(
                 PerDevicePhys.resolve(cleaned, device),
             )
@@ -102,8 +101,7 @@ class DeviceDefaultsTest {
             val text = AssetConfigLoader(context).load("kernel_profiles/$r.conf")
             val document = HoconSupport.parseValue(text).asValueMap()
                 ?: error("$r is not an object")
-            val cleaned = com.sesame.app.data.profile.LegacyProfileShape.convert(document)
-                ?.asValueMap() ?: error("$r did not convert")
+            val cleaned = document
             val (actualLoad, actualOffset) = com.sesame.app.data.profile.ProfileResolver.physOf(
                 PerDevicePhys.resolve(cleaned, device),
             )

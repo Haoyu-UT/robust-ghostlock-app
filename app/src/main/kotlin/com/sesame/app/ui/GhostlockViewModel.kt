@@ -2201,20 +2201,7 @@ class GhostlockViewModel(
         } else {
             document
         }
-        /* The generator still emits the pre-release layout; the app stores and
-         * exports the cleaned shape (the one-off asset migration and the
-         * extractor's own switch are separate workstreams). */
-        val text = runCatching {
-            val parsed = HoconSupport.parseValue(adjusted).asValueMap()
-            parsed?.let {
-                val cleaned = if (com.sesame.app.data.profile.ProfileResolver.isCleanedShape(it)) {
-                    it
-                } else {
-                    com.sesame.app.data.profile.LegacyProfileShape.convert(it)
-                }
-                cleaned?.let(HoconSupport::render)
-            }
-        }.getOrNull() ?: adjusted
+        val text = adjusted
         if (stride != null) appendLog("stride: kernel.heap.stride = $stride")
         val suggested = name?.takeIf { it.endsWith(".conf") }
             ?: exportDocumentName(release)
