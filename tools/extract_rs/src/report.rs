@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 use crate::derive::Cred5x;
+use crate::document;
 use crate::error::{ExtractError, Result};
 use crate::fact::{Fact, Source};
 use crate::layout::LayoutFacts;
@@ -144,20 +145,12 @@ pub(crate) const CONF_OFFSET_FIELDS: &[&str] = &[
     "slide_boot_id",
 ];
 
-/// Looks up a key in `(key, value)` entries, or `"null"` when absent.
-fn conf_lookup(entries: &[(String, String)], key: &str) -> String {
-    entries
-        .iter()
-        .find(|(candidate, _)| candidate == key)
-        .map(|(_, value)| value.clone())
-        .unwrap_or_else(|| "null".to_string())
-}
 
 /* Stage 3: emit a layout fact only when a per-image source (BTF) supplied
  * it. The release template stays in `--explain` as the labelled fallback;
  * writing it into the profile would turn a heuristic into a shipped value,
  * and the 6.1 template is already known to be 6.6/6.12-shaped. */
-fn btf_decimal(value: &Fact<String>) -> Option<String> {
+pub(crate) fn btf_decimal(value: &Fact<String>) -> Option<String> {
     if value.source != Source::Btf {
         return None;
     }
@@ -169,11 +162,11 @@ fn btf_decimal(value: &Fact<String>) -> Option<String> {
     Some(parsed.to_string())
 }
 
-fn btf_u32(value: &Fact<u32>) -> Option<String> {
+pub(crate) fn btf_u32(value: &Fact<u32>) -> Option<String> {
     (value.source == Source::Btf).then(|| value.value.to_string())
 }
 
-fn btf_flag(value: &Fact<bool>) -> Option<String> {
+pub(crate) fn btf_flag(value: &Fact<bool>) -> Option<String> {
     (value.source == Source::Btf).then(|| u8::from(value.value).to_string())
 }
 
@@ -412,16 +405,6 @@ pub(crate) fn conf_offsets(
     .collect()
 }
 
-fn push_conf_block(lines: &mut Vec<String>, name: &str, entries: &[(String, String)]) {
-    if entries.is_empty() {
-        return;
-    }
-    lines.push(format!("{name} {{"));
-    for (key, value) in entries {
-        lines.push(format!("  {key} = {value}"));
-    }
-    lines.push("}".to_string());
-}
 
 /// Everything `render_conf` writes, in one bundle.
 #[derive(Debug, Clone)]
@@ -464,141 +447,6 @@ pub struct Stage1Conf {
     /// header (provenance, never a gate).
     pub selinux_source: String,
     pub w1_scratch: Option<crate::anchor::W1Scratch>,
-}
-
-/// Renders a flattened, self-contained GLK profile (`--format conf`): no
-/// `include` lines, the shared 6.x credential and KernelSnitch constants
-/// inlined, keys and nesting matching `app/src/main/assets/kernel_profiles/`.
-/// Fields without a derived value are omitted rather than written as `null`.
-/// The old-shape fact blocks, for the option superset's `profile` map (the
-/// store document's internal representation). This is not a profile render:
-/// the shipped document is the cleaned shape above.
-pub fn render_facts(input: &ConfInputs<'_>) -> String {
-    let mut lines = vec![
-        format!("release = \"{}\"", input.release),
-        format!(
-            "kernel_major = {}",
-            input
-                .release
-                .split('.')
-                .next()
-                .and_then(|part| part.parse::<u32>().ok())
-                .unwrap_or(0)
-        ),
-    ];
-    let phys_line = |key: &str, value: Option<u64>| match value {
-        Some(value) => format!("{key} = {value}"),
-        None => format!("{key} = null"),
-    };
-    lines.push(phys_line("kernel_phys_load", input.phys));
-    lines.push(phys_line("kernel_phys_offset", input.phys_offset));
-    if input.kdp == Some(true) {
-        lines.push("kdp = 1".to_string());
-    }
-    let mut snitch: Vec<(String, String)> = Vec::new();
-    let major = input
-        .release
-        .split('.')
-        .next()
-        .and_then(|part| part.parse::<u32>().ok());
-    if kernel_layout_verified(Some(input.release)) || major == Some(5) {
-        match major {
-            Some(6) => snitch.push(("collisions".to_string(), "4".to_string())),
-            Some(5) => snitch.push(("collisions".to_string(), "8".to_string())),
-            _ => {}
-        }
-    }
-    if !snitch.iter().any(|(key, _)| key == "collisions") {
-        snitch.push(("collisions".to_string(), "null".to_string()));
-    }
-    if let Some(size) = input
-        .layouts
-        .and_then(|layouts| btf_u32(&layouts.rt_mutex_size))
-    {
-        snitch.push(("rt_mutex_size".to_string(), size));
-    }
-    push_conf_block(&mut lines, "kernelsnitch", &snitch);
-    let task: Vec<(String, String)> = CONF_TASK_FIELDS
-        .iter()
-        .map(|(macro_name, key)| {
-            (
-                (*key).to_string(),
-                input
-                    .structs
-                    .get(*macro_name)
-                    .copied()
-                    .flatten()
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "null".to_string()),
-            )
-        })
-        .collect();
-    push_conf_block(&mut lines, "task_struct", &task);
-    let mut cred: Vec<(String, String)> = CONF_CRED_FIELDS
-        .iter()
-        .map(|key| ((*key).to_string(), conf_lookup(input.cred, key)))
-        .collect();
-    if let Some(layouts) = input.layouts {
-        for (key, fact) in [
-            ("usage_size", &layouts.cred_usage_size),
-            ("uid_offset", &layouts.cred_uid_offset),
-            ("security_offset", &layouts.cred_security_offset),
-        ] {
-            if let Some(value) = btf_decimal(fact) {
-                cred.push((key.to_string(), value));
-            }
-        }
-        if major != Some(5) {
-            for (key, fact) in [
-                ("caps_offset", &layouts.cred_caps_offset),
-                ("copy_size", &layouts.cred_copy_size),
-            ] {
-                if let Some(value) = btf_decimal(fact) {
-                    cred.push((key.to_string(), value));
-                }
-            }
-        }
-    }
-    push_conf_block(&mut lines, "cred", &cred);
-    if let Some(layouts) = input.layouts {
-        let mut waiter: Vec<(String, String)> = Vec::new();
-        if let Some(value) = btf_flag(&layouts.waiter_compact) {
-            waiter.push(("compact".to_string(), value));
-        }
-        for (key, fact) in [
-            ("pi_tree", &layouts.waiter_pi_tree),
-            ("task", &layouts.waiter_task),
-            ("lock", &layouts.waiter_lock),
-            ("wake_state", &layouts.waiter_wake_state),
-        ] {
-            if let Some(value) = btf_decimal(fact) {
-                waiter.push((key.to_string(), value));
-            }
-        }
-        if !waiter.is_empty() {
-            push_conf_block(&mut lines, "waiter_layout", &waiter);
-        }
-    }
-    if let Some(stage1) = input.stage1.as_ref() {
-        push_conf_block(
-            &mut lines,
-            "selinux",
-            &[
-                ("enforcing".to_string(), stage1.selinux_enforcing.to_string()),
-                (
-                    "initialized".to_string(),
-                    stage1.selinux_initialized.to_string(),
-                ),
-            ],
-        );
-    }
-    let offset_entries = conf_offsets(input.symbols, input.extra_offsets);
-    let offset: Vec<(String, String)> = CONF_OFFSET_FIELDS
-        .iter()
-        .map(|key| ((*key).to_string(), conf_lookup(&offset_entries, key)))
-        .collect();
-    push_conf_block(&mut lines, "offset", &offset);
-    lines.join("\n") + "\n"
 }
 
 pub fn render_conf(input: &ConfInputs<'_>) -> String {
@@ -652,397 +500,58 @@ pub fn render_conf_with_device(input: &ConfInputs<'_>, device: Option<&str>) -> 
         fact_sources.insert(0, format!("device={name}"));
     }
 
-    fn hex_lit(value: u64) -> String {
-        format!("\"0x{value:x}\"")
-    }
-    fn hex_of_literal(text: &str) -> String {
-        let text = text.trim();
-        if text == "null" || text.is_empty() {
-            return "null".to_string();
-        }
-        text.parse::<i64>()
-            .ok()
-            .map(|value| hex_lit(value as u64))
-            .or_else(|| text.parse::<u64>().ok().map(hex_lit))
-            .unwrap_or_else(|| "null".to_string())
-    }
-
-    let mut out: Vec<String> = Vec::new();
-    out.push(format!("# GhostLock kernel profile: {release} (HOCON, self-contained)."));
-    out.push(format!("# fact_sources: {}", fact_sources.join("; ")));
-    out.push(format!("schema_version = {}", 3));
-    out.push(format!("release = \"{release}\""));
-    match (device, input.phys) {
-        (Some(name), Some(load)) => {
-            out.push("devices {".to_string());
-            out.push(format!("  {name} {{"));
-            out.push("    phys {".to_string());
-            out.push(format!("      load = {}", hex_lit(load)));
-            out.push(format!(
-                "      offset = {}",
-                input
-                    .phys_offset
-                    .map(hex_lit)
-                    .unwrap_or_else(|| "null".to_string())
-            ));
-            out.push("    }".to_string());
-            out.push("  }".to_string());
-            out.push("}".to_string());
-        }
-        _ => out.push("devices = null".to_string()),
-    }
-
-    let offset_entries = conf_offsets(input.symbols, input.extra_offsets);
-    out.push("kernel {".to_string());
-    out.push(format!(
-        "  image_base = {}",
-        input.image_base.map(hex_lit).unwrap_or_else(|| "null".to_string())
-    ));
-    out.push("  symbols {".to_string());
-    for (key, source) in [
-        ("init_task", "init_task"),
-        ("init_cred", "init_cred"),
-        ("root_task_group", "root_task_group"),
-        ("empty_zero_page", "empty_zero_page"),
-        ("selinux_state", "selinux_enforcing"),
-        ("selinux_blob_sizes", "selinux_blob_sizes"),
-        ("security_hook_heads", "security_hook_heads"),
-        ("nf_logger", "slide_nfulnl_logger"),
-        ("loggers_0_1", "slide_loggers_0_1"),
-        ("boot_id", "slide_boot_id"),
-    ] {
-        match conf_lookup(&offset_entries, source).as_str() {
-            "null" => out.push(format!("    {key} = null")),
-            value => out.push(format!("    {key} = {}", hex_of_literal(value))),
-        }
-    }
-    for key in [
-        "panic_on_warn", "root_user", "init_user_ns", "init_ucounts", "init_groups",
-    ] {
-        out.push(format!("    {key} = null"));
-    }
-    out.push("  }".to_string());
-
-    out.push("  struct {".to_string());
-    out.push("    task {".to_string());
-    for (macro_name, key) in CONF_TASK_FIELDS {
-        let value = input
-            .structs
-            .get(*macro_name)
-            .copied()
-            .flatten()
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "null".to_string());
-        out.push(format!("      {key} = {value}"));
-    }
-    out.push("    }".to_string());
-    let mut cred_map: std::collections::BTreeMap<String, String> =
-        input.cred.iter().cloned().collect();
-    if let Some(layouts) = input.layouts {
-        for (key, fact) in [
-            ("usage_size", &layouts.cred_usage_size),
-            ("uid_offset", &layouts.cred_uid_offset),
-            ("security_offset", &layouts.cred_security_offset),
-        ] {
-            if let Some(value) = btf_decimal(fact) {
-                cred_map.insert(key.to_string(), value);
-            }
-        }
-        /* The 6.x template's caps/copy are the BTF answer on 6.1 (40/128 vs
-         * the template's 48/136); a 5.x block is per-image already. */
-        if release.split('.').next().and_then(|part| part.parse::<u32>().ok()) != Some(5) {
-            for (key, fact) in [
-                ("caps_offset", &layouts.cred_caps_offset),
-                ("copy_size", &layouts.cred_copy_size),
-            ] {
-                if let Some(value) = btf_decimal(fact) {
-                    cred_map.insert(key.to_string(), value);
-                }
-            }
-        }
-    }
-    let cred_value = |key: &str| {
-        cred_map
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| "null".to_string())
-    };
-    out.push("    cred {".to_string());
-    out.push(format!("      copy_size = {}", cred_value("copy_size")));
-    out.push("      usage {".to_string());
-    out.push(format!("        offset = {}", cred_value("usage_offset")));
-    out.push(format!("        size = {}", cred_value("usage_size")));
-    out.push(format!("        value = {}", cred_value("usage_value")));
-    out.push("      }".to_string());
-    out.push(format!("      uid = {}", cred_value("uid_offset")));
-    out.push(format!("      security = {}", cred_value("security_offset")));
-    out.push("      security_sid = null".to_string());
-    out.push("      caps {".to_string());
-    out.push(format!("        offset = {}", cred_value("caps_offset")));
-    out.push(format!("        count = {}", cred_value("caps_count")));
-    out.push(format!("        mask = {}", hex_of_literal(&cred_value("caps_value"))));
-    out.push("      }".to_string());
-    out.push("      refs {".to_string());
-    for (name, index) in [
-        ("user", 0),
-        ("user_ns", 1),
-        ("ucounts", 2),
-        ("group_info", 3),
-    ] {
-        out.push(format!("        {name} {{"));
-        out.push(format!(
-            "          offset = {}",
-            cred_value(&format!("ref{index}_offset"))
-        ));
-        out.push(format!(
-            "          image = {}",
-            hex_of_literal(&cred_value(&format!("ref{index}_image")))
-        ));
-        out.push("        }".to_string());
-    }
-    out.push("      }".to_string());
-    out.push("    }".to_string());
-    let geometry_number = |key: &str| {
+    let geometry = |key: &str| {
         input
             .route_geometry
             .iter()
             .find(|(name, _)| *name == key)
             .map(|(_, value)| *value)
     };
-    let compact = input
-        .layouts
-        .and_then(|layouts| btf_flag(&layouts.waiter_compact))
-        .map(|value| match value.as_str() {
-            "1" => 1,
-            _ => 0,
-        })
-        .or_else(|| geometry_number("compact_waiter"));
-    let shape = match compact {
-        Some(1) => "\"compact\"",
-        Some(0) => "\"node\"",
-        _ => "null",
-    };
-    let waiter_value = |source: &Fact<String>| {
-        btf_decimal(source).unwrap_or_else(|| "null".to_string())
-    };
-    out.push("    waiter {".to_string());
-    out.push(format!("      shape = {shape}"));
-    let layouts = input.layouts;
-    if let Some(layouts) = layouts {
-        out.push(format!("      pi_tree = {}", waiter_value(&layouts.waiter_pi_tree)));
-        let task = waiter_value(&layouts.waiter_task);
-        let task = if task == "null" {
-            geometry_number("task_offset")
-                .map(|value| value.to_string())
-                .unwrap_or(task)
-        } else {
-            task
-        };
-        let lock = waiter_value(&layouts.waiter_lock);
-        let lock = if lock == "null" {
-            geometry_number("lock_offset")
-                .map(|value| value.to_string())
-                .unwrap_or(lock)
-        } else {
-            lock
-        };
-        out.push(format!("      task = {task}"));
-        out.push(format!("      lock = {lock}"));
-        out.push(format!(
-            "      wake_state = {}",
-            waiter_value(&layouts.waiter_wake_state)
-        ));
-        out.push("    }".to_string());
-        out.push("    rt_mutex {".to_string());
-        out.push(format!(
-            "      size = {}",
-            btf_u32(&layouts.rt_mutex_size).unwrap_or_else(|| "null".to_string())
-        ));
-        out.push("    }".to_string());
-    } else {
-        out.push("      pi_tree = null".to_string());
-        let task = geometry_number("task_offset")
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "null".to_string());
-        let lock = geometry_number("lock_offset")
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "null".to_string());
-        out.push(format!("      task = {task}"));
-        out.push(format!("      lock = {lock}"));
-        out.push("      wake_state = null".to_string());
-        out.push("    }".to_string());
-        out.push("    rt_mutex {".to_string());
-        out.push("      size = null".to_string());
-        out.push("    }".to_string());
-    }
-    out.push("    selinux_state {".to_string());
-    match input.stage1.as_ref() {
-        Some(stage1) => {
-            out.push(format!("      enforcing = {}", stage1.selinux_enforcing));
-            out.push(format!("      initialized = {}", stage1.selinux_initialized));
-        }
-        None => {
-            out.push("      enforcing = null".to_string());
-            out.push("      initialized = null".to_string());
-        }
-    }
-    out.push("    }".to_string());
-    out.push("  }".to_string());
-    let collisions = match release.split('.').next().and_then(|part| part.parse::<u32>().ok()) {
-        Some(6) if kernel_layout_verified(Some(release)) => "4",
-        Some(5) => "8",
-        _ => "null",
-    };
-    out.push("  heap {".to_string());
-    out.push("    stride = null".to_string());
-    out.push(format!("    collisions = {collisions}"));
-    out.push("  }".to_string());
-    let dirtyfrag = if input
-        .pipeline_order
-        .iter()
-        .any(|name| name.eq_ignore_ascii_case("dirtyfrag"))
-    {
-        "feasible"
-    } else {
-        "unknown"
-    };
-    out.push(format!("  dirtyfrag = \"{dirtyfrag}\""));
-    out.push(format!(
-        "  kdp = {}",
-        if input.kdp == Some(true) { "true" } else { "false" }
-    ));
-    out.push("}".to_string());
-
-    out.push("ghostlock {".to_string());
-    let route = input.route;
     let compat = input
         .route_geometry
         .iter()
         .any(|(key, value)| *key == "compat_carrier" && *value == 1);
-    let carrier = match route {
-        Some("select_stack") | Some("multicast_waiter") if compat => "\"compat\"",
-        _ => "null",
+    let carrier = match input.route {
+        Some("select_stack") | Some("multicast_waiter") if compat => "compat",
+        Some(_) => "native",
+        None => "",
     };
-    out.push(format!(
-        "  syscall = {}",
-        route
-            .map(|name| format!("\"{name}\""))
-            .unwrap_or_else(|| "null".to_string())
-    ));
-    out.push(format!("  carrier = {carrier}"));
-    let geometry = |key: &str| {
-        input
-            .route_geometry
-            .iter()
-            .find(|(name, _)| *name == key)
-            .map(|(_, value)| value.to_string())
-            .unwrap_or_else(|| "null".to_string())
+    let routes = match input.route {
+        Some(route) => vec![document::RouteDoc {
+            name: route,
+            carriers: vec![document::CarrierDoc {
+                name: carrier,
+                geometry: document::Geometry::Pairs(input.route_geometry),
+            }],
+        }],
+        None => Vec::new(),
     };
-    let anchor_image = geometry("lock_anchor_image");
-    if anchor_image != "null" {
-        out.push("  anchor {".to_string());
-        out.push(format!("    image = {}", hex_of_literal(&anchor_image)));
-        out.push(format!("    bytes = {}", geometry("lock_anchor_bytes")));
-        out.push(format!("    stride = {}", geometry("lock_anchor_stride")));
-        out.push(format!(
-            "    scratch = {}",
-            match input.stage1.as_ref().and_then(|stage| stage.w1_scratch) {
-                Some(scratch) => hex_lit(scratch.image),
-                None => "null".to_string(),
-            }
-        ));
-        out.push("  }".to_string());
-    } else {
-        out.push("  anchor = null".to_string());
-    }
-    out.push("  syscalls {".to_string());
-    let branch = |name: &str, out: &mut Vec<String>| {
-        if route != Some(name) {
-            out.push(format!("    {name} = null"));
-            return;
-        }
-        out.push(format!("    {name} {{"));
-        match name {
-            "select_stack" if compat => {
-                out.push("      native = null".to_string());
-                let abi = if geometry("compat_futex_abi") == "1" {
-                    "\"time64\""
-                } else {
-                    "\"time32\""
-                };
-                out.push("      compat {".to_string());
-                out.push(format!("        waiter_home = {}", geometry("waiter_home")));
-                out.push(format!("        dst_depth = {}", geometry("select_dst_depth")));
-                out.push(format!("        futex_abi = {abi}"));
-                out.push("      }".to_string());
-            }
-            "select_stack" => {
-                out.push("      native {".to_string());
-                out.push(format!("        waiter_shift = {}", geometry("waiter_shift")));
-                out.push("      }".to_string());
-                out.push("      compat = null".to_string());
-            }
-            "multicast_waiter" if compat => {
-                out.push("      native = null".to_string());
-                let off = match geometry("compat_waiter_off").as_str() {
-                    "null" => geometry("waiter_off"),
-                    value => value.to_string(),
-                };
-                let size = match geometry("compat_buffer_size").as_str() {
-                    "null" => geometry("buffer_size"),
-                    value => value.to_string(),
-                };
-                let abi = if geometry("compat_futex_abi") == "1" {
-                    "\"time64\""
-                } else {
-                    "\"time32\""
-                };
-                out.push("      compat {".to_string());
-                out.push(format!("        waiter_off = {off}"));
-                out.push(format!("        buffer_size = {size}"));
-                out.push(format!("        futex_abi = {abi}"));
-                out.push("      }".to_string());
-            }
-            "multicast_waiter" => {
-                out.push("      native {".to_string());
-                out.push(format!("        waiter_off = {}", geometry("waiter_off")));
-                out.push(format!("        buffer_size = {}", geometry("buffer_size")));
-                out.push("      }".to_string());
-                out.push("      compat = null".to_string());
-            }
-            "sigreturn" => {
-                out.push("      native {".to_string());
-                out.push("        waiter_off {".to_string());
-                out.push(format!(
-                    "          plain = {}",
-                    geometry("waiter_off_plain")
-                ));
-                out.push(format!("          sve = {}", geometry("waiter_off_sve")));
-                out.push("        }".to_string());
-                out.push("      }".to_string());
-                out.push("      compat = null".to_string());
-            }
-            _ => {
-                out.push("      native {}".to_string());
-                out.push("      compat = null".to_string());
-            }
-        }
-        out.push("    }".to_string());
-    };
-    for name in [
-        "select_stack",
-        "sigreturn",
-        "multicast_waiter",
-        "tcp_zerocopy",
-    ] {
-        branch(name, &mut out);
-    }
-    out.push("  }".to_string());
-    out.push("  module = null".to_string());
-    out.push("  execution = null".to_string());
-    out.push("}".to_string());
-    out.push("timer = null".to_string());
-    out.join("\n") + "\n"
+    let anchor = geometry("lock_anchor_image").map(|image| document::AnchorDoc {
+        image: image as u64,
+        bytes: geometry("lock_anchor_bytes").map(|value| value as u64),
+        stride: geometry("lock_anchor_stride").map(|value| value as u64),
+        scratch: input
+            .stage1
+            .as_ref()
+            .and_then(|stage1| stage1.w1_scratch)
+            .map(|scratch| scratch.image),
+    });
+    let built = document::build(&document::DocumentInput {
+        facts: input,
+        devices: match (device, input.phys) {
+            (Some(name), Some(load)) => Some((name, Some(load), input.phys_offset)),
+            _ => None,
+        },
+        routes,
+        selected: input.route,
+        anchor,
+        geometry: document::Geometry::Pairs(input.route_geometry),
+    });
+    format!(
+        "# GhostLock kernel profile: {release} (HOCON, self-contained).\n# fact_sources: {}\n{}",
+        fact_sources.join("; "),
+        document::render_hocon(&built)
+    )
 }
 
 pub fn require_fields(

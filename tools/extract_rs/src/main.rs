@@ -1734,26 +1734,6 @@ fn run(cli: &Cli) -> Result<i32> {
                     );
                 }
             }
-            let common_text = report::render_facts(&report::ConfInputs {
-                release: release_text,
-                phys: kernel_phys_load,
-                phys_offset: kernel_phys_offset,
-                phys_source,
-                image_base: Some(base),
-                symbols: &symbol_offsets,
-                structs: &struct_offsets,
-                pipeline_order: &[],
-                kdp: pipeline_facts.kdp,
-                route: None,
-                route_geometry: &[],
-                cred: &cred,
-                extra_offsets: &extra_offsets,
-                layouts: Some(&layouts),
-                stage1: stage1.map(|stage| report::Stage1Conf {
-                    w1_scratch: None,
-                    ..stage
-                }),
-            });
             let initialized = selinux_fields.as_ref().map(|(_, initialized, _)| *initialized);
             let input = options::Input {
                 release: release_text,
@@ -1771,7 +1751,7 @@ fn run(cli: &Cli) -> Result<i32> {
                 initialized,
                 kernel: &boot.kernel,
                 rel_symbols: &rel_symbols,
-                common_profile: &common_text,
+                facts: &inputs,
             };
             let superset = options::build(&input);
             if let Some(path) = &cli.options_out {
@@ -1804,11 +1784,13 @@ fn run(cli: &Cli) -> Result<i32> {
             .filter(|route| route.verdict == "feasible")
             .count();
         if cli.route.is_none() && feasible_routes > 1 {
-            options::render_superset(
-                &option_superset,
-                options::PlanKind::Auto,
-                cli.device.as_deref(),
-            )
+            options::render_superset(&option_superset)
+            .map(|body| {
+                format!(
+                    "# GhostLock kernel profile: {release_text} (HOCON, self-contained, route superset).\n\
+                     # The app's route picker reads this document; a run still cuts one route.\n{body}"
+                )
+            })
             .unwrap_or_else(|| report::render_conf_with_device(&inputs, cli.device.as_deref()))
         } else {
             report::render_conf_with_device(&inputs, cli.device.as_deref())

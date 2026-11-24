@@ -454,3 +454,64 @@ pub fn par_for_each<T: Sync, F: Fn(&T) + Sync>(items: &[T], workers: usize, f: F
         }
     });
 }
+
+/// The value at a dotted path in the cleaned profile text. Blocks are
+/// `name {` … `}`; leaves are `key = value`. Strings keep their quotes.
+pub fn profile_value(text: &str, path: &str) -> Option<String> {
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut stack: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line == "}" {
+            stack.pop();
+            continue;
+        }
+        if line.ends_with("{}") {
+            continue;
+        }
+        if let Some(name) = line.strip_suffix('{') {
+            stack.push(name.trim().to_string());
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if stack.len() + 1 == parts.len()
+            && stack.iter().zip(parts.iter()).all(|(opened, wanted)| opened == wanted)
+            && key.trim() == parts[parts.len() - 1]
+        {
+            return Some(value.trim().to_string());
+        }
+    }
+    None
+}
+
+/// A dotted-path string value without its HOCON quotes.
+pub fn profile_string(text: &str, path: &str) -> Option<String> {
+    profile_value(text, path).map(|value| value.trim_matches('"').to_string())
+}
+
+/// Deep-merge a document fragment into a document; a null in the fragment is
+/// "no opinion" and never overwrites, matching the app's `deepMergeValues`.
+pub fn merge_document(base: &mut serde_json::Value, patch: &serde_json::Value) {
+    let (Some(base), Some(patch)) = (base.as_object_mut(), patch.as_object()) else {
+        return;
+    };
+    for (key, value) in patch {
+        match base.get_mut(key) {
+            Some(slot) => {
+                if value.is_object() && slot.is_object() {
+                    merge_document(slot, value);
+                } else if !value.is_null() {
+                    *slot = value.clone();
+                }
+            }
+            None => {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}

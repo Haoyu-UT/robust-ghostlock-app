@@ -36,9 +36,17 @@ fn expected_offset(dir: &Path, release: &str, key: &str) -> Option<u64> {
     let superset = dir.join(format!("options-{release}.json"));
     if let Ok(text) = std::fs::read_to_string(&superset) {
         let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-        return value["profile"]["offset"][key]
+        /* The cleaned document names the derived anchor by its symbol. */
+        let symbol = match key {
+            "slide_loggers_0_1" => "loggers_0_1",
+            "slide_nfulnl_logger" => "nf_logger",
+            "selinux_enforcing" => "selinux_state",
+            other => other,
+        };
+        return value["document"]["kernel"]["symbols"][symbol]
             .as_str()
-            .and_then(|value| value.parse().ok());
+            .and_then(|value| value.strip_prefix("0x"))
+            .and_then(|value| u64::from_str_radix(value, 16).ok());
     }
     let text = std::fs::read_to_string(dir.join("profile.conf")).ok()?;
     profile_offset(&text, key)
@@ -57,7 +65,20 @@ fn collect_images(dir: &Path, out: &mut Vec<PathBuf>) {
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.starts_with("Image-5.10."))
         {
-            out.push(path);
+            /* A `corpus = excluded` image has no profile target (the
+             * extractor refuses it before route derivation), so there is no
+             * anchor to compare against. */
+            let meta = path.parent().map(|parent| parent.join("meta.txt"));
+            let excluded = meta
+                .and_then(|meta| std::fs::read_to_string(meta).ok())
+                .is_some_and(|text| {
+                    text.lines().any(|line| {
+                        line.trim().starts_with("corpus") && line.contains("excluded")
+                    })
+                });
+            if !excluded {
+                out.push(path);
+            }
         }
     }
 }
