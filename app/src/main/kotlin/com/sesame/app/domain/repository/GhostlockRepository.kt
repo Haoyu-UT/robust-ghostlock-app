@@ -58,7 +58,7 @@ interface GhostlockRepository {
         xblPath: String? = null,
         uefiPath: String? = null,
         /** vendor_boot.img (MediaTek only); derives the physical load from
-         * its header and kernel_phys_offset from its embedded DTB /memory. */
+         * its header and the DRAM base from its embedded DTB /memory. */
         vendorBootPath: String? = null,
         /** dtbo.img (MediaTek only): the DTB fallback when vendor_boot carries
          * no usable /memory (`dtb_size = 0` or no root memory node). */

@@ -944,9 +944,7 @@ internal class AndroidProfileConfigController(
                     }
                 }
 
-                value is Number -> if (path != "schema_version" && path != "release" &&
-                    path != "recommend_shizuku"
-                ) {
+                value is Number -> if (path != "schema_version" && path != "release") {
                     leaves += ProfileFieldNode(
                         path = path,
                         name = key,
@@ -954,9 +952,7 @@ internal class AndroidProfileConfigController(
                     )
                 }
 
-                value == null -> if (path != "schema_version" && path != "release" &&
-                    path != "recommend_shizuku"
-                ) {
+                value == null -> if (path != "schema_version" && path != "release") {
                     leaves += ProfileFieldNode(
                         path = path,
                         name = key,
@@ -989,7 +985,7 @@ internal class AndroidProfileConfigController(
         val left = numericLeaves(current)
         val right = numericLeaves(bundled)
         return (left.keys + right.keys).sorted().mapNotNull { path ->
-            if (path == "schema_version" || path == "release" || path == "recommend_shizuku") {
+            if (path == "schema_version" || path == "release") {
                 return@mapNotNull null
             }
             val currentValue = left[path]

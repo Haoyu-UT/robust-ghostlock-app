@@ -403,7 +403,7 @@ sealed interface ParseResult {
         val physSource: String? = null,
         /** The parsed document states the device pair under `devices`. */
         val physLoadPresent: Boolean = false,
-        /** The parsed document carries `kernel_phys_offset`. */
+        /** The parsed document carries the per-device physical pair. */
         val physOffsetPresent: Boolean = false,
         /** The image's `timer` block was derived and validated. */
         val timerDerived: Boolean = false,
