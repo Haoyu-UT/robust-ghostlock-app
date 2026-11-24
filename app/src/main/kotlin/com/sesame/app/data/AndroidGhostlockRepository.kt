@@ -26,6 +26,8 @@ import com.sesame.app.domain.model.MeasuredKernelInfo
 import com.sesame.app.domain.model.MeasurementMergeRow
 import com.sesame.app.domain.model.OffsetCandidate
 import com.sesame.app.data.ota.OtaPayloadExtractor
+import com.sesame.app.data.profile.OverlayFact
+import com.sesame.app.data.profile.OverlayRecord
 import com.sesame.app.data.profile.PerDevicePhys
 import com.sesame.app.data.profile.Timer98260
 import com.sesame.app.domain.model.OffsetImportResult
@@ -778,21 +780,12 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         keepAnchor: Boolean,
     ): String? = if (keepAnchor) documentText else stripLockAnchor(documentText)
 
-    override fun applyStrideToDocument(
-        documentText: String,
+    override suspend fun recordGenerationStride(
         release: String,
-        stride: Int?,
-    ): String? {
-        val entries = ProfileDocumentParser.entries(documentText) ?: return null
-        val targets = entries.filter { it["release"] == release }
-        if (targets.isEmpty()) return null
-        for (entry in targets) {
-            val snitch = entry.mutableChild("kernelsnitch")
-            if (stride != null) snitch["mm_struct_sz"] = stride.toLong() else snitch.remove("mm_struct_sz")
-            if (snitch.isEmpty()) entry.remove("kernelsnitch")
-        }
-        val document = if (entries.size == 1) entries.first() else ValueList().apply { addAll(entries) }
-        return HoconSupport.render(document)
+        value: Int,
+        evidence: String,
+    ): Boolean = withContext(Dispatchers.IO) {
+        measuredProfiles.recordProbeStride(release, value.toLong(), evidence)
     }
 
     /**
@@ -1101,14 +1094,20 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         /* The Shizuku service runs as uid 2000 and cannot write the app's run
          * folder; the module sidecar is a direct-entry diagnostic. Its AIDL also
          * carries no vr.ko mode, so that entry runs Auto. */
-        return withDebugAttackLog("shizuku", onLog, measure = true) { archivedLog, debugDir, _, writeSidecar ->
+        return withDebugAttackLog("shizuku", onLog, measure = true) { archivedLog, debugDir, runDir, writeSidecar ->
             archivedLog("<s> resolving profile")
             val release = System.getProperty("os.version", "").orEmpty()
             /* The Shizuku path runs GhostLock only (the order check below
              * refuses a list without it); the wire carries that resolution so
              * the native's cross-check covers this invocation too. */
-            val profileBlob =
-                profileController.nativeDocument(config, "ghostlock", safeModeEnabled)
+            val render = profileController.nativeDocumentWithOverlay(
+                config,
+                "ghostlock",
+                safeModeEnabled,
+                measuredFacts(release),
+            )
+            render?.let { logOverlay(it.overlay, archivedLog, runDir) }
+            val profileBlob = render?.bytes
             archivedLog(
                 "<s> profile resolved hasProfile=${config.hasProfile} " +
                     "blob=${profileBlob?.size ?: 0} invalid=${config.invalidPaths.size}",
@@ -1775,11 +1774,14 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 onLog("<b> pipeline=module: stage exited code=$moduleCode")
                 return moduleCode
             }
-            val profileBlob = profileController.nativeDocument(
+            val render = profileController.nativeDocumentWithOverlay(
                 config,
                 pipeline,
                 safeModeEnabled,
+                measuredFacts(release),
             ) ?: error("profile is unavailable for $release")
+            logOverlay(render.overlay, onLog, runDir)
+            val profileBlob = render.bytes
             logProfileDigest(onLog, profileBlob)
             dumpRuntimeProfile(onLog, writeSidecar, release, profileBlob)
             val ksuOffset = AtomicLong()
@@ -1994,6 +1996,38 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         editSession = null
         editSessionTargetName = null
         editSessionTargetRelease = null
+    }
+
+    /* ---- measured overlay (plan decision 13, §3.3) ---- */
+
+    /** The measured DB's overlay facts for [release]; only the declared set. */
+    private fun measuredFacts(release: String): List<OverlayFact> =
+        measuredProfiles.kernel(release)?.profileFacts().orEmpty()
+            .map { OverlayFact(path = it.key, value = it.value, source = it.source) }
+
+    /**
+     * Logs every fact the overlay applied (document vs effective, with the
+     * source) and records the same provenance in the run-store meta. A
+     * disagreement is an extractor defect and gets its own warning.
+     */
+    private fun logOverlay(records: List<OverlayRecord>, log: (String) -> Unit, runDir: String?) {
+        if (records.isEmpty()) return
+        for (record in records) {
+            log(
+                "<k> overlay: ${record.path} document=${record.documentValue ?: "null"} " +
+                    "effective=${record.effectiveValue} (${record.source})",
+            )
+            if (record.disagrees) {
+                log(
+                    "<k> warning: ${record.path} measured ${record.effectiveValue} " +
+                        "disagrees with the document's ${record.documentValue}",
+                )
+            }
+        }
+        val line = records.joinToString("; ") {
+            "${it.path}:${it.documentValue ?: "null"}->${it.effectiveValue}(${it.source})"
+        }
+        runDir?.let { RunLogStore.appendMeta(File(it), "overlay=$line") }
     }
 
     /* ---- measured database merge ---- */

@@ -1,5 +1,7 @@
 package com.sesame.app.domain.repository
 
+import com.sesame.app.data.profile.OverlayFact
+import com.sesame.app.data.profile.OverlayRecord
 import com.sesame.app.domain.model.ProfileConfig
 import com.sesame.app.domain.model.ProfileImportResult
 import com.sesame.app.domain.model.ProfileDiffRow
@@ -99,8 +101,30 @@ interface ProfileConfigController {
         safeMode: Boolean = false,
     ): ByteArray?
 
+    /**
+     * The native document with the measured overlay applied (plan decision 13,
+     * §3.3): the resolved map is copied, the declared measurable facts are
+     * written into it, and the records carry the document value, the effective
+     * value and the source. The document itself is never modified. [measured]
+     * is what the measured DB holds for the running release; the caller logs
+     * the records and writes them to the run-store meta.
+     */
+    fun nativeDocumentWithOverlay(
+        config: ProfileConfig,
+        pipeline: String? = null,
+        safeMode: Boolean = false,
+        measured: List<OverlayFact> = emptyList(),
+    ): NativeRunDocument?
+
     companion object {
         /** Reference templates ("6.6-template"): manually loadable, never auto-matched. */
         const val TemplateSuffix = "-template"
     }
 }
+
+/** One rendered native document and the measured facts the overlay applied. */
+data class NativeRunDocument(
+    val bytes: ByteArray,
+    val overlay: List<OverlayRecord>,
+)
+

@@ -5,7 +5,9 @@ import android.content.SharedPreferences
 import android.os.Build
 import androidx.core.content.edit
 import com.sesame.app.BuildConfig
+import com.sesame.app.data.profile.MeasuredOverlay
 import com.sesame.app.data.profile.ModuleBlock
+import com.sesame.app.data.profile.OverlayFact
 import com.sesame.app.data.profile.PerDevicePhys
 import com.sesame.app.data.profile.ProfileMerger
 import com.sesame.app.data.profile.ProfileResolver
@@ -21,6 +23,7 @@ import com.sesame.app.domain.model.ProfileFieldNode
 import com.sesame.app.domain.model.ProfileLayers
 import com.sesame.app.domain.model.RouteCandidate
 import com.sesame.app.domain.model.physPairErrors
+import com.sesame.app.domain.repository.NativeRunDocument
 import com.sesame.app.domain.repository.ProfileConfigController
 
 /**
@@ -607,19 +610,40 @@ internal class AndroidProfileConfigController(
         config: ProfileConfig,
         pipeline: String?,
         safeMode: Boolean,
-    ): ByteArray? = synchronized(lock) {
+    ): ByteArray? = nativeDocumentWithOverlay(config, pipeline, safeMode, emptyList())?.bytes
+
+    override fun nativeDocumentWithOverlay(
+        config: ProfileConfig,
+        pipeline: String?,
+        safeMode: Boolean,
+        measured: List<OverlayFact>,
+    ): NativeRunDocument? = synchronized(lock) {
         val resolved = resolve(config.release).profile
             ?: return@synchronized null
+        /* The measured facts replace their values in the resolved map, never in
+         * the document. The overlay only writes the declared measurable set, so
+         * validation can only fail if the resolved document itself no longer
+         * validates (a concurrent selection change); fail closed then. */
+        val overlay = MeasuredOverlay.apply(resolved, measured)
+        if (overlay.records.isNotEmpty() &&
+            ProfileResolver.validateMerged(overlay.document).isNotEmpty()
+        ) {
+            return@synchronized null
+        }
         /* The document carries the picker's selected syscall and carrier, not
          * the superset's alphabetical first branch. */
-        val route = config.route?.takeIf { it in ProfileConfig.Routes } ?: routeNameOf(resolved)
-        ProfileTransport.render(
-            resolved,
-            route = route,
-            carrier = config.selectedCarrier,
-            pipeline = pipeline,
-            safeMode = safeMode,
-        ).toByteArray(Charsets.UTF_8)
+        val route = config.route?.takeIf { it in ProfileConfig.Routes }
+            ?: routeNameOf(overlay.document)
+        NativeRunDocument(
+            bytes = ProfileTransport.render(
+                overlay.document,
+                route = route,
+                carrier = config.selectedCarrier,
+                pipeline = pipeline,
+                safeMode = safeMode,
+            ).toByteArray(Charsets.UTF_8),
+            overlay = overlay.records,
+        )
     }
 
     // ---- resolution ----

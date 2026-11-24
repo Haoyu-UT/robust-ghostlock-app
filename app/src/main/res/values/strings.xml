@@ -124,7 +124,7 @@
     <string name="stride_details_candidate">%1$d bytes — %2$d/%3$d matches · %4$d objects/slab</string>
     <string name="stride_confirmed_line">✓ Root-measured: %1$d bytes</string>
     <string name="stride_footer_saved">The generated profile is saved and selected for this kernel.</string>
-    <string name="stride_footer_export">The profile is not stored until you export it.</string>
+    <string name="stride_footer_export">The chosen value is recorded for this kernel and applied to runs; exporting saves the profile.</string>
     <string name="import_result_title">Import result</string>
     <string name="parse_timeout">Parse timed out</string>
     <string name="cancel">Cancel</string>

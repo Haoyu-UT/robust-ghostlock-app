@@ -194,4 +194,46 @@ class MeasuredProfileStoreTest {
         val store = MeasuredProfileStore(file)
         assertFalse(store.record(release, MeasuredProfileStore.parseSlabinfo(release, capture())!!))
     }
+
+    @Test
+    fun `a generation probe records the stride when no root measurement exists`() {
+        val store = newStore()
+
+        assertTrue(store.recordProbeStride(release, 1280, "probe gcd=0x400 rounds=3 samples=2"))
+
+        val fact = newStore().kernel(release)!!.fact(MeasuredProfileStore.KeyMmStructSz)!!
+        assertEquals(1280L, fact.value)
+        assertEquals(MeasuredProfileStore.SourceGenerationProbe, fact.source)
+        assertTrue(fact.evidence.contains("gcd"))
+    }
+
+    @Test
+    fun `a root measurement is never replaced by a generation probe`() {
+        val store = newStore()
+        store.record(release, MeasuredProfileStore.parseSlabinfo(release, capture(), now = 1L)!!)
+
+        assertFalse(store.recordProbeStride(release, 1280, "probe"))
+
+        val fact = newStore().kernel(release)!!.fact(MeasuredProfileStore.KeyMmStructSz)!!
+        assertEquals(960L, fact.value)
+        assertEquals(MeasuredProfileStore.SourceRootSlabinfo, fact.source)
+    }
+
+    @Test
+    fun `a later generation probe replaces an earlier one`() {
+        val store = newStore()
+        assertTrue(store.recordProbeStride(release, 1024, "probe 1"))
+        assertTrue(store.recordProbeStride(release, 1280, "probe 2"))
+
+        val fact = newStore().kernel(release)!!.fact(MeasuredProfileStore.KeyMmStructSz)!!
+        assertEquals(1280L, fact.value)
+        assertEquals("probe 2", fact.evidence)
+    }
+
+    @Test
+    fun `an implausible generation probe size is refused`() {
+        val store = newStore()
+        assertFalse(store.recordProbeStride(release, 7, "garbled"))
+        assertNull(newStore().kernel(release))
+    }
 }

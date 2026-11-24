@@ -82,14 +82,13 @@ interface GhostlockRepository {
     ): StrideProbe?
 
     /**
-     * Applies (or clears, with null) `kernelsnitch.mm_struct_sz` to the entry of
-     * [release] in an in-memory document and returns the rendered text.
+     * Records a generation probe's stride as the measured `kernel.heap.stride`
+     * fact. The root phase's `/proc/slabinfo` measurement is ground truth and
+     * is never replaced by a probe. The document is not touched: the run's
+     * measured overlay applies the fact. Returns false when nothing was
+     * written (a root measurement exists, or the size is implausible).
      */
-    fun applyStrideToDocument(
-        documentText: String,
-        release: String,
-        stride: Int?,
-    ): String?
+    suspend fun recordGenerationStride(release: String, value: Int, evidence: String): Boolean
 
     /**
      * Applies the user's lock-source choice to an in-memory generated document:

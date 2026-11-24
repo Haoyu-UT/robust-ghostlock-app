@@ -48,18 +48,22 @@ private val ProbeFactKeys = setOf(
 /**
  * The measured database: per-kernel ground truth and one controlled probe fact.
  *
- * Written from the root phase's `/proc/slabinfo` read (after a completed run)
- * and from a **clear** DirtyFrag viability probe result (before W1). The run
- * path reads the store only for the probe fact, in the pipeline resolver's
- * viability step; it never reaches a profile value or a route. A profile value
- * still reaches a run only when the user merges it into a profile and selects
- * that document. Format and rationale: `docs/analysis/measured-db-plan.md`.
+ * Written from the root phase's `/proc/slabinfo` read (after a completed run),
+ * from a **clear** DirtyFrag viability probe result (before W1), and — when no
+ * root measurement exists — from the generation flow's stride probe. The run
+ * path reads it twice: the probe fact gates the DirtyFrag ladder step, and the
+ * stride fact is applied by the measured overlay to the resolved map at render
+ * time (`MeasuredOverlay`), never written into the profile document. The merge
+ * preview remains the way to materialize a fact into an exported document.
+ * Format and rationale: `docs/analysis/measured-db-plan.md`.
  */
 internal class MeasuredProfileStore(private val file: File) {
     companion object {
         const val SchemaVersion = 1L
         const val SourceRootSlabinfo = "root-slabinfo"
         const val SourceDirtyfragProbe = "dirtyfrag-probe"
+        /** A stride the generation flow's leak-round probe measured. */
+        const val SourceGenerationProbe = "generation-probe"
         const val KeyMmStructSz = "kernel.heap.stride"
         const val KeyDirtyfragProbe = "dirtyfrag.probe"
         const val KeyDirtyfragProbeRom = "dirtyfrag.probe_rom"
@@ -132,6 +136,30 @@ internal class MeasuredProfileStore(private val file: File) {
      */
     @Synchronized
     fun record(release: String, fact: MeasuredFact): Boolean = recordAll(release, listOf(fact))
+
+    /**
+     * Records a generation probe's stride as the [KeyMmStructSz] fact.
+     *
+     * The root phase's `/proc/slabinfo` measurement is ground truth: it is
+     * never replaced by a probe, so choosing the same value in the picker is a
+     * no-op and choosing a different one is refused. A probe may replace an
+     * earlier probe. The value must be a plausible slab object size.
+     */
+    fun recordProbeStride(release: String, value: Long, evidence: String): Boolean {
+        if (value !in PlausibleObjectSize) return false
+        val existing = kernel(release)?.fact(KeyMmStructSz)
+        if (existing != null && existing.source == SourceRootSlabinfo) return false
+        return record(
+            release,
+            MeasuredFact(
+                key = KeyMmStructSz,
+                value = value,
+                source = SourceGenerationProbe,
+                evidence = evidence,
+                measuredAt = System.currentTimeMillis(),
+            ),
+        )
+    }
 
     /**
      * Records a clear DirtyFrag probe result for [release]: the value, the ROM

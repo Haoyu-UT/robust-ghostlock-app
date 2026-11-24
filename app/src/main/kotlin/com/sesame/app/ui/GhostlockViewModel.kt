@@ -2179,8 +2179,10 @@ class GhostlockViewModel(
     }
 
     /**
-     * Applies the chosen stride in memory and asks the user where to export the
-     * generated document. Nothing is stored by the app; the export is the save.
+     * Asks the user where to export the generated document. The measured
+     * stride is not written into it: the choice was recorded in the measured
+     * database, and the run-time overlay applies it. Nothing is stored by the
+     * app; the export is the save.
      */
     private fun markGenerationFailed() {
         mutableState.update { it.copy(generation = it.generation.copy(step = GenerationStep.Failed)) }
@@ -2190,18 +2192,8 @@ class GhostlockViewModel(
         document: String,
         name: String?,
         release: String,
-        stride: Int?,
     ) {
-        val adjusted = if (stride != null) {
-            repository.applyStrideToDocument(document, release, stride) ?: run {
-                appendLog("stride: could not update the generated document")
-                document
-            }
-        } else {
-            document
-        }
-        val text = adjusted
-        if (stride != null) appendLog("stride: kernel.heap.stride = $stride")
+        val text = document
         val suggested = name?.takeIf { it.endsWith(".conf") }
             ?: exportDocumentName(release)
         if (nav.current == Screen.Generation) {
@@ -2293,6 +2285,7 @@ class GhostlockViewModel(
         val document = pendingStrideDocument
         val name = pendingStrideName
         val release = pendingStrideRelease
+        val probe = pendingStrideProbe
         pendingStrideParse = null
         pendingStrideProbe = null
         pendingStrideDocument = null
@@ -2302,11 +2295,27 @@ class GhostlockViewModel(
         if (document == null || release == null) return
         if (value == null) {
             appendLog("stride left unset (native default + stride-agnostic scan)")
-        } else {
-            appendLog("stride chosen: $value")
+            finishGeneratedProfile(document, name, release)
+            parse?.takeIf { it.missing.isNotEmpty() }?.let(::showMissingSidecarNotice)
+            return
         }
-        finishGeneratedProfile(document, name, release, value)
-        parse?.takeIf { it.missing.isNotEmpty() }?.let(::showMissingSidecarNotice)
+        val evidence = probe?.let {
+            "probe gcd=0x${it.gcd.toString(16)} rounds=${it.rounds} samples=${it.samples}"
+        } ?: "generation probe"
+        viewModelScope.launch {
+            val recorded = runCatching {
+                repository.recordGenerationStride(release, value, evidence)
+            }.getOrDefault(false)
+            appendLog(
+                if (recorded) {
+                    "stride: $value recorded (applied by the run-time overlay)"
+                } else {
+                    "stride: $value not recorded; a root measurement is already stored"
+                },
+            )
+            finishGeneratedProfile(document, name, release)
+            parse?.takeIf { it.missing.isNotEmpty() }?.let(::showMissingSidecarNotice)
+        }
     }
 
     /** The root-measured stride for this kernel, when the measured DB has one. */
@@ -2936,7 +2945,6 @@ class GhostlockViewModel(
                 exportDocument,
                 result.documentName,
                 runningRelease ?: result.releases.firstOrNull() ?: "profile",
-                null,
             )
         }
         if (result.missing.isNotEmpty()) {
