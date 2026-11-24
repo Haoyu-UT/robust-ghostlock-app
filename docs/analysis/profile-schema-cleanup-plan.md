@@ -18,18 +18,21 @@ Implemented on `fix/ui-behaviour-2026-11-23` (commits `1a002862`..`38aaa949`):
 | Native JSON transport (decision 19) | **done**: `src/core/profile/json.{c,h}`, `json_profile.cpp`, `timer/profile_fields.c`; the GLK1 wire deleted; `cmp_disasm` control identical; device-proven on 5.10/6.1/6.6. |
 | App transport render | **done**: `ProfileTransport` = the resolved tree plus `mode`/`safe_mode` and the native execution shape; `profile.json` sidecar + sha256; Shizuku frame unchanged. |
 | Authored schema (profile-core) | **done**: `ProfileResolver` validates the one-document schema (fixed key sets, null-not-absent, verdict-derived ladder, engine/carrier selection, anchor containment, complete carriers, W1 facts); `ProfileMerger` nests the tuning under `ghostlock.execution`; `PerDevicePhys` selects `devices.<id>.phys`; `Timer98260`/`ModuleBlock` read the cleaned blocks. |
-| App layer | **done**: the controller resolves/validates/renders the cleaned tree, the picker enumerates `ghostlock.syscalls` × carriers, the measured key is `kernel.heap.stride`, generated exports are stored cleaned. |
-| Bundled assets | **done**: all 74 converted by `tools/migrate_profile_shape.py` (one-off, Python); `ship_golden_profiles.py` renders through the same converter and `--check` reads the cleaned shape (61 bundled, 0 missing, 0 mismatched, 12 exempt). |
-| Extractor | **done**: both conf renderers (`report::render_conf_with_device`, `options::render_superset`) emit the cleaned document; the store's internal `profile` map is rendered separately (`report::render_facts`), so no old-shape text is parsed back. Extractor suite 165. |
+| App layer | **done**: the controller resolves/validates/renders the cleaned tree, the picker enumerates `ghostlock.syscalls` × carriers, the measured key is `kernel.heap.stride`, generated exports are stored cleaned, and the generation path's presence/anchor checks read the v3 document (`devices.<id>.phys`, `ghostlock.anchor`). |
+| Bundled assets | **done**: all 74 converted (one-off Python); the ship now renders each asset from the store's `document` (no converter), `--check` reads the cleaned shape (61 bundled, 0 missing, 0 mismatched, 12 exempt). |
+| Extractor | **done**: one document builder (`src/document.rs`) serves both conf renderers and the store's `document`; `render_facts`, `parse_conf_blocks`, `Superset.profile` and the legacy cut API are deleted. Extractor suite 165 + the store corpus. |
 | Consumers | **done**: the ship composes the cleaned render with the store-only facts (devices, stride, timer block and its shared symbols, the credential sid); the app's `LegacyProfileShape` is deleted, a non-cleaned document is refused, the on-device cut and the timer composition emit the cleaned shape. |
 | Store + timer (decision 20) | **done**: the store entry carries `document` (the cleaned tree) instead of the old-keyed `profile` map; `report::render_facts`, `parse_conf_blocks`, `Superset.profile` and the legacy cut API are deleted; the timer analyzer emits the cleaned fragment (`kernel` facts + `timer`) and `tools/sweep_timer_store.py` merges it into every store entry (`timer_analysis` keeps the evidence); the ship renders each asset from the store document (no extractor re-run, no conversion), `--refresh-all` rewrote all 60 store-derived assets, `--check` reads 61 bundled / 0 missing / 0 mismatched / 12 exempt; the app's `OptionSuperset` clones the document and selects route/carrier/anchor/device, and its timer merge is a deep merge (`TimerBlockText` and the mapping deleted). The store was regenerated from the images (the corpus `options_ondevice`/`structs_ondevice`/`codegen_ondevice` tests are green). |
 | Docs | **done**: `PROFILE_SCHEMA.md` + `_ZH` rewritten to v3; the four docs templates and the four annotated asset templates rewritten; `defaults`, `README`, `MEDIATEK`, `BUNDLED_PROFILES` key references updated; `FieldLabels` maps the new dotted paths (53 new strings, EN+ZH). |
-| Device gate | **diting build 893**: the store-document assets, fresh boot — `resolved profile loaded: 5.10.236…`, `pipeline=dirtyfrag (profile order)`, `dirtyfrag: T+2465ms RESULT=OK script=0 enforce=1`, run store `state=completed`, the `profile.json` sidecar is the v3 document (`devices.diting.phys.offset = null` resolved to the native default `0x80000000`); `guard_bad=0 guard_moved=0`. Build 887 proved the cleaned assets before the store change; build 875 proved the transport on the POCO 6.1.138 and OnePlus 6.6.66; native refusals exercised on device. |
+| Measured overlay (decision 13) | **done**: `MeasuredOverlay` applies the declared set (`kernel.heap.stride`) to the resolved map, never the document; `nativeDocumentWithOverlay` renders it and both run paths log `overlay: <path> document=… effective=… (source)` and write the same provenance to the run-store meta. The generation flow no longer writes the stride into the document: it records the probe's value in the measured DB (`generation-probe`; a root `/proc/slabinfo` fact is ground truth and never replaced), and a store load drops retired keys (`kernelsnitch.mm_struct_sz`) so only the declared set is merged. Unit gates: overlay apply/ignore/immutability, the overlaid render, the probe-vs-root rule, the meta survival, the retired-key prune. |
+| Leftover cleanup | **done**: the generation path's old-key checks fixed; the v2 model island (`NativeProfile.kt` 959 lines, `Profile.kt`, the five route-config classes, the typed-slot models, the three wire tests), `completeProfileFields`, `uncarriedRouteKeys`, `OffsetMatching` and the dead `credential-*`/`kernelsnitch-6x` fragments deleted; stale comments/readmes corrected; the root harness/tooling reads `profile.json` and the v3 store. Tests 318/0. |
+| Device gate | **diting build 897 (overlay)**: fresh boot, run store `state=completed`, `overlay=kernel.heap.stride:960->960(root-slabinfo)` in the meta, the log line `overlay: kernel.heap.stride document=960 effective=960 (root-slabinfo)`, `dirtyfrag: T+2422ms RESULT=OK script=0 enforce=1`, and the measured DB pruned to the current keys. Build 893 proved the store-document assets (`resolved profile loaded`, `pipeline=dirtyfrag`, `state=completed`, the native default offset); build 887 the cleaned assets; build 875 the transport on the POCO 6.1.138 and OnePlus 6.6.66. |
 
 Remaining:
 
-1. The POCO and OnePlus rigs have not run the store-document assets (they proved the transport on build 875).
-2. The pre-release release cut (r12).
+1. The generation UI flow (parse → stride/lock-source → export) has unit coverage but no device pass after the v3 cleanup; run it on the diting (the plan's U6) with the next build.
+2. The POCO and OnePlus rigs have not run the store-document assets (they proved the transport on build 875).
+3. The pre-release release cut (r12).
 
 ## 1. Why
 
@@ -176,13 +179,13 @@ schema error.
 
 ### 3.3 Measured facts (automatic overlay)
 
-Declared measurable set: `kernel.dirtyfrag` (probe; match release + ROM fingerprint + probe
-protocol) and `kernel.heap.stride` (`/proc/slabinfo`; match release). A matching measurement
-replaces the document's value **in the resolved map**, never in the document; the run log and store
-record the effective value and its source; the UI shows effective vs document; a static-vs-measured
-disagreement is logged as an extractor defect. The merge preview + export stays, as the way to
-materialize the effective facts into a self-contained document. Nothing outside the set can be
-overlaid.
+Declared measurable set: `kernel.heap.stride` (`/proc/slabinfo` or the generation probe; match
+release); the DirtyFrag probe is the ladder's viability input (the measured-DB scoped exception),
+not a document value. A matching measurement replaces the document's value **in the resolved map**,
+never in the document; the run log and store meta record the effective value and its source; a
+static-vs-measured disagreement is logged as an extractor defect. The merge preview + export stays,
+as the way to materialize the effective facts into a self-contained document. Nothing outside the
+set can be overlaid.
 
 ## 4. Implementation
 
