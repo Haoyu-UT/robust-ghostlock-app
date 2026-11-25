@@ -94,7 +94,10 @@ In `main.rs`, after `resolve_kallsyms` and BTF are available and after the 43499
    - `ghostlock = null, devices = null` when the 43499 primitive is patched (today's facts-only
      shape), otherwise the normal blocks.
 4. `--options-out` gains `timer_analysis` (the evidence object plus `document` = the cleaned timer
-   fragment), written by the extractor itself.
+   fragment), written by the extractor itself. On a patched image the envelope carries the
+   facts-only document and **no route superset** (`routes` and `device_analysis` empty), fixing
+   the present ordering defect where the envelope is written before the facts-only branch and can
+   advertise routes the kernel cannot run.
 
 So one invocation produces a complete, tool-runnable document for every outcome: native, native +
 timer, timer-only, or nothing.
@@ -103,7 +106,14 @@ timer, timer-only, or nothing.
 
 Removed (the app and the store sweep are the only callers; both are updated in this change):
 
-- `--facts-only` — the default behaviour now covers it.
+- `--facts-only` — the default behaviour now covers it (`facts_only = cli.facts_only &&
+  cve_fixed`, so the flag only ever changed a CVE-refused image, and there it only suppressed
+  exit 6 and nulled `ghostlock`/`devices`; both are now the default). The one case it used to
+  produce something — refused native **and** no derivable timer — yielded a document the app
+  refuses (the loader refuses a null `ghostlock`, and `advancePhys` fails it for lack of a timer
+  block); that becomes exit 6. Triage of such an image is `--analysis` / `--explain`, which print
+  the facts without pretending to be a profile. If a saved facts artifact is ever wanted, add a
+  separately named `--facts-out PATH` ("triage only, not runnable") rather than revive this flag.
 - `--emit-timer-conf`, `--emit-superset`, `--emit-document` — the document and the envelope carry
   these. `--emit-timer-conf` is kept, renamed `--timer-conf-out PATH`, for evidence capture and
   the operator's scripts; it writes the same fragment.
