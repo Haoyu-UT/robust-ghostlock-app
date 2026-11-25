@@ -79,6 +79,51 @@ fn number_or_null(value: Option<i64>) -> Node {
     value.map(Node::Int).unwrap_or(Node::Null)
 }
 
+impl Node {
+    /// Convert a JSON fragment (the timer analyzer's cleaned fragment) into a
+    /// node tree. Arrays are not part of the profile schema; one would be a
+    /// renderer bug, so it becomes null rather than a made-up shape.
+    pub fn from_json(value: &serde_json::Value) -> Node {
+        use serde_json::Value;
+        match value {
+            Value::Null => Node::Null,
+            Value::Bool(value) => Node::Bool(*value),
+            Value::Number(value) => value.as_i64().map(Node::Int).unwrap_or(Node::Null),
+            Value::String(value) => Node::Str(value.clone()),
+            Value::Array(_) => Node::Null,
+            Value::Object(map) => Node::Obj(
+                map.iter()
+                    .map(|(key, value)| (key.clone(), Node::from_json(value)))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+/// Deep-merge `patch` into `base` with the store's rule: a null in the patch is
+/// "no opinion" (it never overwrites), objects merge key by key, and anything
+/// else replaces. This is how the timer fragment lands in the shared `kernel`
+/// block — the same merge `tools/sweep_timer_store.py` performed, now inside
+/// the one extractor.
+pub fn merge(base: &mut Node, patch: &Node) {
+    match (base, patch) {
+        (Node::Obj(base_entries), Node::Obj(patch_entries)) => {
+            for (key, value) in patch_entries {
+                match base_entries.iter_mut().find(|(name, _)| name == key) {
+                    Some((_, current)) => merge(current, value),
+                    None => {
+                        if !matches!(value, Node::Null) {
+                            base_entries.push((key.clone(), value.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        (_, Node::Null) => {}
+        (current, value) => *current = value.clone(),
+    }
+}
+
 /// One carrier's geometry, already materialized by the caller.
 pub enum Geometry<'a> {
     Map(&'a BTreeMap<String, i64>),

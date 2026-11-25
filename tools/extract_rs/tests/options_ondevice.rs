@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 fn check_entry(binary: &str, meta: &common::Meta, checked: &AtomicUsize) {
     let release = &meta.release;
     let golden = options_path(meta);
-    let mut want: serde_json::Value = serde_json::from_str(
+    let want: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(&golden).unwrap_or_else(|err| {
             panic!(
                 "{release}: cannot read {}: {err}",
@@ -45,32 +45,16 @@ fn check_entry(binary: &str, meta: &common::Meta, checked: &AtomicUsize) {
         run.exit,
         run.stderr
     );
-    let mut got: serde_json::Value =
+    let got: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&out).expect("read produced superset"))
             .expect("parse produced superset");
     let _ = std::fs::remove_file(&out);
 
-    /* `timer_analysis` is the timer tool's overlay, not this extractor's
-     * output: the store carries it while a fresh run of this binary cannot.
-     * Merge its cleaned fragment into the fresh document, then compare every
-     * section the extractor owns. */
-    let fragment = want
-        .get("timer_analysis")
-        .and_then(|analysis| analysis.get("document"))
-        .cloned();
-    for value in [&mut want, &mut got] {
-        if let Some(map) = value.as_object_mut() {
-            map.remove("timer_analysis");
-        }
-    }
-    if let Some(fragment) = fragment {
-        common::merge_document(&mut got["document"], &fragment);
-    }
-
-    /* Section-first so a failure names the part that moved. */
+    /* The one extractor writes the timer block and `timer_analysis` itself, so
+     * the whole envelope is compared — no overlay to strip or merge. */
     for key in ["schema_version", "release", "kernel_major", "image_base", "routes",
                 "pipeline_facts", "pipelines", "pipeline_order", "document",
-                "device_analysis"] {
+                "device_analysis", "timer_analysis"] {
         assert_eq!(
             want.get(key),
             got.get(key),

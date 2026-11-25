@@ -459,18 +459,117 @@ pub fn render_conf(input: &ConfInputs<'_>) -> String {
 /// device-neutral; this is the cut/runnable form, and the app resolves the map
 /// for the running device.
 pub fn render_conf_with_device(input: &ConfInputs<'_>, device: Option<&str>) -> String {
-    render_conf_mode(input, device, false)
+    render_conf_mode(input, device, false, None)
 }
 
 /// A facts-only document: the shared `kernel` block with `ghostlock = null`
-/// and `devices = null`. Emitted when the native route is patched; the app
-/// merges the timer block and produces a timer-only profile. The null
+/// and `devices = null`. Emitted when the native route is patched; a timer
+/// block, when one was derived, makes the profile timer-only. The null
 /// `ghostlock` makes the document un-runnable natively by construction.
 pub fn render_conf_facts_only(input: &ConfInputs<'_>, device: Option<&str>) -> String {
-    render_conf_mode(input, device, true)
+    render_conf_mode(input, device, true, None)
 }
 
-fn render_conf_mode(input: &ConfInputs<'_>, device: Option<&str>, facts_only: bool) -> String {
+/// The selected document with the timer fragment merged in: `timer` when the
+/// engine is open, and the five timer-owned symbols.
+pub fn render_conf_with_timer(
+    input: &ConfInputs<'_>,
+    device: Option<&str>,
+    timer: Option<&document::Node>,
+) -> String {
+    render_conf_mode(input, device, false, timer)
+}
+
+/// The facts-only document with the timer fragment merged in.
+pub fn render_conf_facts_only_with_timer(
+    input: &ConfInputs<'_>,
+    device: Option<&str>,
+    timer: Option<&document::Node>,
+) -> String {
+    render_conf_mode(input, device, true, timer)
+}
+
+/// Build the document tree for `input`. The timer fragment (the analyzer's
+/// `kernel` facts and `timer` block) is deep-merged with the store's
+/// null-means-no-opinion rule, so the value and shape match the swept store.
+pub fn conf_document(
+    input: &ConfInputs<'_>,
+    device: Option<&str>,
+    facts_only: bool,
+    timer: Option<&document::Node>,
+) -> document::Node {
+    let geometry = |key: &str| {
+        input
+            .route_geometry
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| *value)
+    };
+    let compat = input
+        .route_geometry
+        .iter()
+        .any(|(key, value)| *key == "compat_carrier" && *value == 1);
+    let carrier = match input.route {
+        Some("select_stack") | Some("multicast_waiter") if compat => "compat",
+        Some(_) => "native",
+        None => "",
+    };
+    let routes = if facts_only {
+        Vec::new()
+    } else {
+        match input.route {
+            Some(route) => vec![document::RouteDoc {
+                name: route,
+                carriers: vec![document::CarrierDoc {
+                    name: carrier,
+                    geometry: document::Geometry::Pairs(input.route_geometry),
+                }],
+            }],
+            None => Vec::new(),
+        }
+    };
+    let anchor = if facts_only {
+        None
+    } else {
+        geometry("lock_anchor_image").map(|image| document::AnchorDoc {
+            image: image as u64,
+            bytes: geometry("lock_anchor_bytes").map(|value| value as u64),
+            stride: geometry("lock_anchor_stride").map(|value| value as u64),
+            scratch: input
+                .stage1
+                .as_ref()
+                .and_then(|stage1| stage1.w1_scratch)
+                .map(|scratch| scratch.image),
+        })
+    };
+    let mut built = document::build(&document::DocumentInput {
+        facts: input,
+        devices: if facts_only {
+            None
+        } else {
+            match (device, input.phys) {
+                (Some(name), Some(load)) => Some((name, Some(load), input.phys_offset)),
+                _ => None,
+            }
+        },
+        routes,
+        selected: if facts_only { None } else { input.route },
+        anchor,
+        geometry: document::Geometry::Pairs(input.route_geometry),
+        facts_only,
+    });
+    if let Some(fragment) = timer {
+        document::merge(&mut built, fragment);
+    }
+    built
+}
+
+fn render_conf_mode(
+    input: &ConfInputs<'_>,
+    device: Option<&str>,
+    facts_only: bool,
+    timer: Option<&document::Node>,
+) -> String {
     let release = input.release;
     let device_label = device.unwrap_or("<device>");
     let mut fact_sources = if facts_only {
@@ -519,66 +618,7 @@ fn render_conf_mode(input: &ConfInputs<'_>, device: Option<&str>, facts_only: bo
         fact_sources.insert(0, format!("device={name}"));
     }
 
-    let geometry = |key: &str| {
-        input
-            .route_geometry
-            .iter()
-            .find(|(name, _)| *name == key)
-            .map(|(_, value)| *value)
-    };
-    let compat = input
-        .route_geometry
-        .iter()
-        .any(|(key, value)| *key == "compat_carrier" && *value == 1);
-    let carrier = match input.route {
-        Some("select_stack") | Some("multicast_waiter") if compat => "compat",
-        Some(_) => "native",
-        None => "",
-    };
-    let routes = if facts_only {
-        Vec::new()
-    } else {
-        match input.route {
-            Some(route) => vec![document::RouteDoc {
-                name: route,
-                carriers: vec![document::CarrierDoc {
-                    name: carrier,
-                    geometry: document::Geometry::Pairs(input.route_geometry),
-                }],
-            }],
-            None => Vec::new(),
-        }
-    };
-    let anchor = if facts_only {
-        None
-    } else {
-        geometry("lock_anchor_image").map(|image| document::AnchorDoc {
-            image: image as u64,
-            bytes: geometry("lock_anchor_bytes").map(|value| value as u64),
-            stride: geometry("lock_anchor_stride").map(|value| value as u64),
-            scratch: input
-                .stage1
-                .as_ref()
-                .and_then(|stage1| stage1.w1_scratch)
-                .map(|scratch| scratch.image),
-        })
-    };
-    let built = document::build(&document::DocumentInput {
-        facts: input,
-        devices: if facts_only {
-            None
-        } else {
-            match (device, input.phys) {
-                (Some(name), Some(load)) => Some((name, Some(load), input.phys_offset)),
-                _ => None,
-            }
-        },
-        routes,
-        selected: if facts_only { None } else { input.route },
-        anchor,
-        geometry: document::Geometry::Pairs(input.route_geometry),
-        facts_only,
-    });
+    let built = conf_document(input, device, facts_only, timer);
     format!(
         "# GhostLock kernel profile: {release} (HOCON, self-contained).\n# fact_sources: {}\n{}",
         fact_sources.join("; "),

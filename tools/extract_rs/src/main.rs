@@ -14,6 +14,7 @@ use ghostlock_extract::derive::{
     ensure_rtmutex_43499_unpatched, relative_symbols,
 };
 use ghostlock_extract::dtbo;
+use ghostlock_extract::document;
 use ghostlock_extract::error::{ExtractError, Result};
 use ghostlock_extract::fact;
 use ghostlock_extract::family;
@@ -32,6 +33,8 @@ use ghostlock_extract::symbols::{
     kernel_layout_verified, kernel_struct_macro, loggers_anchor_fallback, resolve_structs,
     resolve_symbols,
 };
+use ghostlock_extract::timer;
+use ghostlock_extract::timer::facts::RuntimeFacts;
 use ghostlock_extract::vendor_boot::{PhysOffsetSource, recover_kernel_phys_from_vendor_boot};
 
 #[derive(Parser, Debug)]
@@ -115,13 +118,27 @@ struct Cli {
     /// and print a report instead of offsets
     #[arg(long)]
     analysis: bool,
-    /// continue past the CVE-2026-43499 refusal and emit a facts-only document
-    /// (the shared `kernel` block only: `ghostlock = null`, `devices = null`).
-    /// The app merges the timer block and produces a timer-only profile; a
-    /// facts-only document can never run natively. A no-op on a vulnerable
-    /// image.
+    /// skip the CVE-2026-98260 (timer) analysis; the document is native-only
     #[arg(long)]
-    facts_only: bool,
+    no_timer: bool,
+    /// labelled no-BTF layout template for the timer analysis (e.g. `5.10`)
+    #[arg(long, value_name = "NAME")]
+    timer_layout_template: Option<String>,
+    /// explicit timer layout override, repeatable: --timer-layout k=v
+    #[arg(long = "timer-layout", value_name = "KEY=VALUE")]
+    timer_layout: Vec<String>,
+    /// runtime facts file for the timer analysis (slab/config/probe lines)
+    #[arg(long, value_name = "FILE")]
+    timer_runtime_facts: Option<PathBuf>,
+    /// run only the timer's two vulnerability checks
+    #[arg(long)]
+    timer_detect_only: bool,
+    /// constant set the emitted timer block carries: real, fake or real,fake
+    #[arg(long, value_name = "SPEC", default_value = "real,fake")]
+    timer_endgame: String,
+    /// write the cleaned timer fragment (HOCON) to PATH
+    #[arg(long, value_name = "PATH")]
+    timer_conf_out: Option<PathBuf>,
     /// with --format conf, print the per-key fact table (value/domain/source/
     /// confidence) to stderr; the profile output is unchanged
     #[arg(long)]
@@ -475,6 +492,66 @@ fn run(cli: &Cli) -> Result<i32> {
         btf_at.as_ref().map(|(offset, blob)| (*offset, blob.len())),
         cli,
     )?;
+    let btf_raw = btf_at.as_ref().map(|(_, blob)| blob.clone());
+    let btf = btf_raw.as_deref().map(Btf::new).transpose()?;
+    if btf.is_none() {
+        eprintln!(
+            "warning: embedded BTF not found; symbols come from kallsyms \
+             and struct offsets fall back to target.h defaults"
+        );
+    }
+
+    /* The 98260 timer analysis runs on the same parse: one pass, one document.
+     * It is the only engine a CVE-2026-43499-refused image can still use, and
+     * its fragment joins the shared kernel facts below. A timer failure is
+     * logged and never fails the native derivation. */
+    let timer_analysis = analyze_timer(&boot, &ks, btf.as_ref(), cli)?;
+    let timer_endgame = timer::report::Endgame::parse(&cli.timer_endgame).ok_or_else(|| {
+        ExtractError::new(format!(
+            "--timer-endgame {}: expected real, fake or real,fake",
+            cli.timer_endgame
+        ))
+    })?;
+    let timer_fragment_json = match timer_analysis.as_ref() {
+        Some(analysis) => match &analysis.verdict {
+            timer::Verdict::Vulnerable => {
+                match timer::report::render_fragment(analysis, timer_endgame) {
+                    Ok(fragment) => Some(fragment),
+                    Err(err) => {
+                        eprintln!("warning: timer: the block is not derivable: {err}");
+                        None
+                    }
+                }
+            }
+            timer::Verdict::Patched => {
+                eprintln!("info: timer: CVE-2026-98260 is patched on this image");
+                None
+            }
+            timer::Verdict::Unknown(reason) => {
+                eprintln!("warning: timer: vulnerability unknown ({reason})");
+                None
+            }
+        },
+        None => None,
+    };
+    let timer_fragment = timer_fragment_json.as_ref().map(document::Node::from_json);
+    let timer_evidence = match (timer_analysis.as_ref(), timer_fragment_json.as_ref()) {
+        (Some(analysis), Some(fragment)) => {
+            let mut evidence = timer::report::render_superset(analysis);
+            evidence["document"] = fragment.clone();
+            Some(evidence)
+        }
+        _ => None,
+    };
+    if let (Some(path), Some(analysis)) = (&cli.timer_conf_out, timer_analysis.as_ref()) {
+        if timer_fragment.is_some() {
+            let block = timer::report::render_timer_conf(analysis, timer_endgame)?;
+            std::fs::write(path, block)
+                .map_err(|err| ExtractError::new(format!("{}: {err}", path.display())))?;
+            eprintln!("info: timer fragment written to {}", path.display());
+        }
+    }
+
     let symbols = ks.symbols;
     let text_base = kallsyms::unique(&symbols, "_text");
     let base = text_base.or_else(|| kallsyms::unique(&symbols, "_head"));
@@ -493,41 +570,30 @@ fn run(cli: &Cli) -> Result<i32> {
     let kernel_phys_offset: Option<u64> = vendor_boot_phys_offset;
 
     let (rel_symbols, sorted_offsets) = relative_symbols(&symbols, base);
-    // stop early when remove_waiter() is fixed; --analysis reports it instead.
     let primitive = ensure_rtmutex_43499_unpatched(&boot.kernel, &rel_symbols, &sorted_offsets);
-    /* A CVE-refused image can still be profiled when a non-native engine (the
-     * 98260 timer) is open: --facts-only continues the derivation and emits a
-     * document with `ghostlock = null`, which can never run natively. */
+    /* A CVE-refused image still yields a document when a non-native engine (the
+     * 98260 timer) is open: `ghostlock = null`, the full shared kernel block,
+     * and the timer block. With no engine at all the pass exits 6 below. */
     let cve_fixed = primitive.is_err();
-    let facts_only = cli.facts_only && cve_fixed;
+    let facts_only = cve_fixed && !cli.analysis;
     match &primitive {
         Ok(remove_waiter) => eprintln!(
             "info: (CVE-2026-43499 primitive present \
              (remove_waiter@{remove_waiter:#x} still uses current)"
         ),
-        Err(err) => {
-            if !cli.analysis && !cli.facts_only {
-                eprintln!("error: {err}");
-                return Ok(6);
-            }
-            if cli.facts_only && !cli.analysis {
-                eprintln!("warning: {err}");
-                eprintln!(
-                    "info: --facts-only: emitting a facts-only document \
-                     (ghostlock = null, devices = null; not runnable)"
-                );
-            } else {
-                eprintln!("warning: analysis continues: {err}");
-            }
-        }
+        Err(err) => eprintln!("warning: {err}"),
     }
-
-    let btf_raw = btf_at.as_ref().map(|(_, blob)| blob.clone());
-    let btf = btf_raw.as_deref().map(Btf::new).transpose()?;
-    if btf.is_none() {
+    if facts_only && timer_fragment.is_none() {
         eprintln!(
-            "warning: embedded BTF not found; symbols come from kallsyms \
-             and struct offsets fall back to target.h defaults"
+            "error: no engine can run: the native route is patched and the timer \
+             block is not derivable"
+        );
+        return Ok(6);
+    }
+    if facts_only {
+        eprintln!(
+            "info: the native route is patched; emitting ghostlock = null \
+             (devices = null; not runnable natively)"
         );
     }
 
@@ -1775,7 +1841,24 @@ fn run(cli: &Cli) -> Result<i32> {
                 rel_symbols: &rel_symbols,
                 facts: &inputs,
             };
-            let superset = options::build(&input);
+            let mut superset = options::build(&input);
+            if let Some(fragment) = timer_fragment.as_ref() {
+                document::merge(&mut superset.document, fragment);
+            }
+            if facts_only {
+                /* No native route exists on this image: a route superset would
+                 * advertise routes the kernel cannot run. State the facts-only
+                 * document (with the timer block) instead. */
+                superset.document = report::conf_document(
+                    &inputs,
+                    cli.device.as_deref(),
+                    true,
+                    timer_fragment.as_ref(),
+                );
+                superset.routes.clear();
+                superset.device_analysis.clear();
+            }
+            superset.timer_analysis = timer_evidence.clone();
             if let Some(path) = &cli.options_out {
                 let text = serde_json::to_string_pretty(&superset).map_err(|err| {
                     ExtractError::new(format!("cannot serialize options: {err}"))
@@ -1786,7 +1869,7 @@ fn run(cli: &Cli) -> Result<i32> {
             }
             superset
         };
-        if ambiguous {
+        if ambiguous && !facts_only {
             return Ok(7);
         }
         if cli.explain {
@@ -1809,10 +1892,13 @@ fn run(cli: &Cli) -> Result<i32> {
             .filter(|route| route.verdict == "feasible")
             .count();
         if facts_only {
-            /* No native route exists on this image: a route superset would
-             * advertise routes the kernel cannot run. Emit the facts-only
-             * document instead. */
-            report::render_conf_facts_only(&inputs, cli.device.as_deref())
+            /* The native route is patched; the document is the shared kernel
+             * facts plus the timer block, and cannot run natively. */
+            report::render_conf_facts_only_with_timer(
+                &inputs,
+                cli.device.as_deref(),
+                timer_fragment.as_ref(),
+            )
         } else if cli.route.is_none() && feasible_routes > 1 {
             options::render_superset(&option_superset)
             .map(|body| {
@@ -1821,9 +1907,19 @@ fn run(cli: &Cli) -> Result<i32> {
                      # The app's route picker reads this document; a run still cuts one route.\n{body}"
                 )
             })
-            .unwrap_or_else(|| report::render_conf_with_device(&inputs, cli.device.as_deref()))
+            .unwrap_or_else(|| {
+                report::render_conf_with_timer(
+                    &inputs,
+                    cli.device.as_deref(),
+                    timer_fragment.as_ref(),
+                )
+            })
         } else {
-            report::render_conf_with_device(&inputs, cli.device.as_deref())
+            report::render_conf_with_timer(
+                &inputs,
+                cli.device.as_deref(),
+                timer_fragment.as_ref(),
+            )
         }
     } else {
         let report_value = report::build_report(
@@ -1857,6 +1953,86 @@ fn run(cli: &Cli) -> Result<i32> {
         eprintln!("missing: {}", remaining.join(", "));
     }
     Ok(0)
+}
+
+/// Run the CVE-2026-98260 analysis over the image already parsed by this pass.
+/// A failure is the analysis's, not the pass's: it is logged and the native
+/// document is emitted without a timer block.
+fn analyze_timer(
+    boot: &BootImage,
+    ks: &Kallsyms,
+    btf: Option<&Btf>,
+    cli: &Cli,
+) -> Result<Option<timer::Analysis>> {
+    if cli.no_timer {
+        return Ok(None);
+    }
+    let runtime = match &cli.timer_runtime_facts {
+        Some(path) => Some(RuntimeFacts::parse(
+            &std::fs::read_to_string(path)
+                .map_err(|err| ExtractError::new(format!("{}: {err}", path.display())))?,
+        )?),
+        None => None,
+    };
+    let options = timer::derive::Options {
+        detect_only: cli.timer_detect_only,
+        no_layout: false,
+        layout_template: timer_layout_template(boot, btf, cli),
+        overrides: parse_timer_layout(&cli.timer_layout)?,
+        runtime,
+    };
+    match timer::derive::analyze(&boot.kernel, boot.release(), ks, btf, &options) {
+        Ok(analysis) => Ok(Some(analysis)),
+        Err(err) => {
+            eprintln!("warning: timer: analysis failed: {err}");
+            Ok(None)
+        }
+    }
+}
+
+/// The labelled no-BTF layout template: the operator's choice, or the 5.10
+/// template when the image has no BTF and is a 5.10 build. The timer analyzer
+/// cannot derive the struct layout without BTF; generation on the diting (and
+/// every 5.10 no-BTF image) therefore uses the labelled template, and the
+/// document's fact sources say so.
+fn timer_layout_template(boot: &BootImage, btf: Option<&Btf>, cli: &Cli) -> Option<String> {
+    if let Some(name) = &cli.timer_layout_template {
+        return Some(name.clone());
+    }
+    if btf.is_some() {
+        return None;
+    }
+    let release = boot.release()?;
+    if release.starts_with("5.10.") {
+        eprintln!("info: timer: no BTF; using the labelled 5.10 layout template");
+        Some("5.10".to_string())
+    } else {
+        None
+    }
+}
+
+/// `--timer-layout KEY=VALUE` (hex or decimal), repeatable.
+fn parse_timer_layout(values: &[String]) -> Result<BTreeMap<String, u64>> {
+    let mut out = BTreeMap::new();
+    for item in values {
+        let (key, value) = item.split_once('=').ok_or_else(|| {
+            ExtractError::new(format!("--timer-layout {item}: expected key=value"))
+        })?;
+        let trimmed = value.trim();
+        let parsed = if let Some(hex) = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+        {
+            u64::from_str_radix(hex, 16)
+        } else {
+            trimmed.parse()
+        }
+        .map_err(|_| {
+            ExtractError::new(format!("--timer-layout {item}: {value} is not a number"))
+        })?;
+        out.insert(key.trim().to_string(), parsed);
+    }
+    Ok(out)
 }
 
 fn main() {

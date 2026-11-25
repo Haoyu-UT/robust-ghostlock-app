@@ -25,7 +25,7 @@ use crate::boot::BootImage;
 use crate::btf::Btf;
 use crate::disasm::disassemble_range;
 use crate::error::{ExtractError, Result};
-use crate::facts::{self, CredLayout, RuntimeFacts, Source, Template};
+use crate::timer::facts::{self, CredLayout, RuntimeFacts, Source, Template};
 use crate::ikconfig;
 use crate::kallsyms::{self, Kallsyms};
 use crate::kallsyms_finder;
@@ -1200,23 +1200,23 @@ impl CredLayout {
     }
 }
 
-/// Full analysis with the caller's options; the shipped entry point.
-pub fn analyze(image: &Path, options: &Options) -> Result<Analysis> {
-    let boot = BootImage::load(image)?;
-    let btf_blob = boot.embedded_btf_at();
-    let btf_at = btf_blob
-        .as_ref()
-        .map(|(offset, blob)| (*offset, blob.len()));
-    let ks = kallsyms_finder::recover(&boot.kernel, btf_at)?;
-    let syms = Symbols::new(&ks)?;
-    let btf = btf_blob
-        .as_ref()
-        .map(|(_, blob)| Btf::new(blob))
-        .transpose()?;
-    let config = ikconfig::embedded_config(&boot.kernel);
+/// Full analysis over an already-parsed image.
+///
+/// The merged extractor parses each image once: the caller supplies the kernel
+/// slice, release string, recovered kallsyms and (optional) BTF from its own
+/// pass. [`derive`] wraps this with a whole-image load for the lab registry.
+pub fn analyze(
+    kernel: &[u8],
+    release: Option<String>,
+    ks: &Kallsyms,
+    btf: Option<&Btf>,
+    options: &Options,
+) -> Result<Analysis> {
+    let syms = Symbols::new(ks)?;
+    let config = ikconfig::embedded_config(kernel);
 
     let mut analysis = Analysis {
-        release: boot.release(),
+        release,
         text_base: Some(syms.text_base()),
         symbol_count: ks.symbols.len(),
         has_btf: btf.is_some(),
@@ -1246,7 +1246,7 @@ pub fn analyze(image: &Path, options: &Options) -> Result<Analysis> {
     match syms.rel("begin_new_exec") {
         Some(begin_new_exec) => {
             let code =
-                disassemble_function(&boot.kernel, begin_new_exec, syms.extent(begin_new_exec))?;
+                disassemble_function(kernel, begin_new_exec, syms.extent(begin_new_exec))?;
             analysis.order = Some(check_exec_timer_order(&code, &syms));
         }
         None => analysis
@@ -1255,7 +1255,7 @@ pub fn analyze(image: &Path, options: &Options) -> Result<Analysis> {
     }
     let del = match syms.rel("posix_cpu_timer_del") {
         Some(del_start) => {
-            let code = disassemble_function(&boot.kernel, del_start, syms.extent(del_start))?;
+            let code = disassemble_function(kernel, del_start, syms.extent(del_start))?;
             check_posix_cpu_timer_del(
                 &code,
                 syms.rel("pid_task"),
@@ -1290,10 +1290,10 @@ pub fn analyze(image: &Path, options: &Options) -> Result<Analysis> {
     }
 
     // --- exec trigger shape ------------------------------------------------
-    analysis.trigger = Some(check_trigger_shape(&boot.kernel, &syms));
+    analysis.trigger = Some(check_trigger_shape(kernel, &syms));
 
     // --- sites -------------------------------------------------------------
-    let (sites, site_sources) = derive_sites(&boot.kernel, &syms, &mut analysis.notes);
+    let (sites, site_sources) = derive_sites(kernel, &syms, &mut analysis.notes);
     analysis.sites = sites;
     analysis.sources.extend(site_sources);
 
@@ -1313,7 +1313,7 @@ pub fn analyze(image: &Path, options: &Options) -> Result<Analysis> {
         let mut sources = BTreeMap::new();
         let mut layout = None;
         let mut cred = None;
-        match (btf.as_ref(), options.layout_template.as_deref()) {
+        match (btf, options.layout_template.as_deref()) {
             (Some(btf), _) => {
                 let (btf_layout, btf_cred, btf_trace, btf_sources) =
                     derive_btf_layout(btf);
@@ -1377,7 +1377,7 @@ pub fn analyze(image: &Path, options: &Options) -> Result<Analysis> {
         apply_overrides(&mut layout, &mut sizes, &mut cred, &options.overrides, &mut sources)?;
 
         // timer_node_off: the k_itimer `it` member starts with cpu_timer.node.
-        if let Some(btf) = btf.as_ref() {
+        if let Some(btf) = btf {
             if let Some(it) = btf.field("k_itimer", "it") {
                 analysis.timer_node_off = Some(it as u64);
             }
@@ -1538,9 +1538,27 @@ fn verify_runtime(analysis: &mut Analysis, runtime: &RuntimeFacts) -> Result<()>
     Ok(())
 }
 
-/// The strict entry point used by `--add` (the lab corpus: BTF required).
+/// The strict entry point used by the lab registry (BTF required).
 pub fn derive(image: &Path) -> Result<Facts> {
-    let analysis = analyze(image, &Options::default())?;
+    let boot = BootImage::load(image)?;
+    let btf_blob = boot.embedded_btf_at();
+    let btf = btf_blob
+        .as_ref()
+        .map(|(_, blob)| Btf::new(blob))
+        .transpose()?;
+    let ks = kallsyms_finder::recover(
+        &boot.kernel,
+        btf_blob
+            .as_ref()
+            .map(|(offset, blob)| (*offset, blob.len())),
+    )?;
+    let analysis = analyze(
+        &boot.kernel,
+        boot.release(),
+        &ks,
+        btf.as_ref(),
+        &Options::default(),
+    )?;
     facts_from_analysis(&analysis)
 }
 

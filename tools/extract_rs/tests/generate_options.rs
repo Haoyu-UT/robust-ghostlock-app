@@ -33,13 +33,8 @@ fn generate_option_supersets() {
         .min(16);
     par_for_each(&corpus, workers, |meta| {
         let out = options_path(meta);
-        /* `timer_analysis` is the timer analyzer's overlay, not this
-         * extractor's output. Preserve it across the regeneration and merge its
-         * cleaned fragment back into the document, or a whole-store run
-         * silently drops the timer facts (measured 2026-11-22). */
-        let previous_timer = std::fs::read_to_string(&out).ok()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            .and_then(|value| value.get("timer_analysis").cloned());
+        /* The one extractor writes the timer block and `timer_analysis`
+         * itself; nothing is preserved or merged here any more. */
         let run = run_options(binary, meta, &out);
         let text = std::fs::read_to_string(&out).unwrap_or_else(|err| {
             panic!(
@@ -47,18 +42,11 @@ fn generate_option_supersets() {
                 meta.release, run.stderr
             )
         });
-        let mut value = serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|err| {
+        let value = serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|err| {
             panic!("{}: invalid superset JSON: {err}", meta.release)
         });
-        if let Some(timer) = previous_timer {
-            if let Some(fragment) = timer.get("document").cloned() {
-                common::merge_document(&mut value["document"], &fragment);
-            }
-            value["timer_analysis"] = timer;
-            let merged = serde_json::to_string_pretty(&value).expect("serialize superset") + "\n";
-            std::fs::write(&out, &merged).unwrap_or_else(|err| {
-                panic!("{}: cannot preserve timer_analysis: {err}", meta.release)
-            });
+        if value.get("timer_analysis").is_some() && !value["document"].is_object() {
+            panic!("{}: timer_analysis without a document", meta.release);
         }
         eprintln!(
             "generated {} ({}; {} bytes)",

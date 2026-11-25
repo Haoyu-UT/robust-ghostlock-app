@@ -20,4 +20,5 @@ pub mod pipeline;
 pub mod report;
 pub mod structs;
 pub mod symbols;
+pub mod timer;
 pub mod vendor_boot;

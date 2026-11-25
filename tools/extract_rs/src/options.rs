@@ -73,6 +73,12 @@ pub struct Superset {
     /// not repeated here — `document.devices.<codename>.phys` is its one home.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub device_analysis: Vec<DeviceDerivation>,
+    /// The timer analyzer's evidence object when the 98260 engine is open: the
+    /// verdict, the derivation sources, and the cleaned fragment under
+    /// `document`. The fragment is already merged into `document`; this is the
+    /// store's `timer_analysis` record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_analysis: Option<serde_json::Value>,
 }
 
 /// One device's analysis record for a kernel: the pair's source and the
@@ -298,6 +304,7 @@ pub fn build(input: &Input<'_>) -> Superset {
         pipeline_order: input.pipeline_order.to_vec(),
         document,
         device_analysis,
+        timer_analysis: None,
     }
 }
 
@@ -746,6 +753,7 @@ mod tests {
             pipeline_order: Vec::new(),
             document: crate::document::Node::Null,
             device_analysis: Vec::new(),
+            timer_analysis: None,
         };
         assert!(render_superset(&superset).is_none());
     }

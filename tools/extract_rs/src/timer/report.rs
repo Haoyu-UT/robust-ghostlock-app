@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde_json::{json, Map, Value};
 
-use crate::derive::{Analysis, TriggerCheck, TriggerShape, Verdict};
+use crate::timer::derive::{Analysis, TriggerCheck, TriggerShape, Verdict};
 use crate::error::{ExtractError, Result};
 
 /// The constant sets an emitted block may carry: the real five, the fake
@@ -554,14 +554,12 @@ pub fn render_timer_conf(analysis: &Analysis, endgame: Endgame) -> Result<String
     Ok(out)
 }
 
-/// The canonical backend document, timer-only projection: the cleaned fragment
-/// plus the document's identity keys. The app's full renderer adds the rest;
-/// the timer tool ignores them, so this is a complete input for it.
-pub fn render_document(analysis: &Analysis, endgame: Endgame) -> Result<Value> {
-    let release = analysis
-        .release
-        .clone()
-        .ok_or_else(|| ExtractError::new("image carries no kernel release string"))?;
+/// The cleaned fragment as a JSON tree: the five timer-owned symbol facts, the
+/// shared cred fields, and the `timer` block. This is the object the store
+/// keeps under `timer_analysis.document`; the merged extractor converts it to
+/// the document tree and deep-merges it into the native `kernel` block (see
+/// [`crate::document::merge`]), which is the same merge the store sweep used.
+pub fn render_fragment(analysis: &Analysis, endgame: Endgame) -> Result<Value> {
     let facts = frag_facts(analysis, endgame)?;
     let symbols: Map<String, Value> = facts
         .symbols
@@ -608,18 +606,15 @@ pub fn render_document(analysis: &Analysis, endgame: Endgame) -> Result<Value> {
         },
     });
     Ok(json!({
-        "schema_version": 3,
-        "release": release,
-        "devices": Value::Null,
         "kernel": {
             "symbols": Value::Object(symbols),
             "struct": {
                 "cred": {
-                    "uid": facts.uid.map(|value| json!(value)).unwrap_or(Value::Null),
-                    "security": facts.security.map(|value| json!(value)).unwrap_or(Value::Null),
                     "usage": {
                         "size": facts.usage_size.map(|value| json!(value)).unwrap_or(Value::Null),
                     },
+                    "uid": facts.uid.map(|value| json!(value)).unwrap_or(Value::Null),
+                    "security": facts.security.map(|value| json!(value)).unwrap_or(Value::Null),
                     "caps": {
                         "offset": facts.caps_offset.map(|value| json!(value)).unwrap_or(Value::Null),
                         "count": facts.caps_count.map(|value| json!(value)).unwrap_or(Value::Null),
@@ -629,7 +624,6 @@ pub fn render_document(analysis: &Analysis, endgame: Endgame) -> Result<Value> {
                 },
             },
         },
-        "ghostlock": Value::Null,
         "timer": timer,
     }))
 }

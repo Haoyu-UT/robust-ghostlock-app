@@ -217,36 +217,3 @@ tasks.register<Copy>("prepareGhostlockExtractJniLibs") {
     into("app/src/main/jniLibs/arm64-v8a")
     rename { "libextract.so" }
 }
-
-/* The timer route's generation-side analyzer (CVE-2026-98260): a standalone
- * aarch64 executable packaged like the extractor and exec'd from
- * nativeLibraryDir (docs/analysis/timer-block-generation-plan.md). The
- * vendored crate needs the host Rust toolchain (edition 2024), so unlike the
- * extractor this task does not use the ONDK +ondk/build-std path; the NDK
- * linker settings are the same. */
-tasks.register<Exec>("buildTimerExtract") {
-    description = "buildTimerExtract"
-    val tools = extractNdkTools()
-    val command = mutableListOf(resolveCargoExecutable())
-    command += listOf("build", "--release", "--target", "aarch64-linux-android")
-    workingDir(rootProject.file("tools/timer_extract"))
-    commandLine(command)
-    environment("CC_aarch64_linux_android", tools.clang)
-    environment("AR_aarch64_linux_android", tools.ar)
-    environment("CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER", tools.clang)
-    environment("RUSTFLAGS", "-C force-unwind-tables=no -C link-arg=-Wl,--icf=all")
-    inputs.files(
-        fileTree("tools/timer_extract/src") { include("**/*.rs") },
-        file("tools/timer_extract/Cargo.toml"),
-        file("tools/timer_extract/Cargo.lock"),
-    )
-    outputs.file(file("build/timer-extract/aarch64-linux-android/release/timer-extract"))
-}
-
-tasks.register<Copy>("prepareTimerExtractJniLibs") {
-    description = "prepareTimerExtractJniLibs"
-    dependsOn("buildTimerExtract")
-    from("build/timer-extract/aarch64-linux-android/release/timer-extract")
-    into("app/src/main/jniLibs/arm64-v8a")
-    rename { "libtimerextract.so" }
-}
