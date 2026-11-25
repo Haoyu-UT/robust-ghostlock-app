@@ -489,16 +489,19 @@ pub fn render_timer_conf(analysis: &Analysis, endgame: Endgame) -> Result<String
     }
     let _ = writeln!(out, "      refs {{");
     for (name, value) in &facts.refs {
-        let _ = writeln!(out, "        {name} {{");
         match value {
             Some(value) => {
+                let _ = writeln!(out, "        {name} {{");
                 let _ = writeln!(out, "          offset = {value}");
+                let _ = writeln!(out, "        }}");
             }
+            /* A ref the kernel has no field for is absent, not an object of
+             * nulls (the schema's null principle; both loaders skip a null
+             * ref). */
             None => {
-                let _ = writeln!(out, "          offset = null");
+                let _ = writeln!(out, "        {name} = null");
             }
         }
-        let _ = writeln!(out, "        }}");
     }
     let _ = writeln!(out, "      }}");
     let _ = writeln!(out, "    }}");
@@ -576,7 +579,10 @@ pub fn render_document(analysis: &Analysis, endgame: Endgame) -> Result<Value> {
         .map(|(name, value)| {
             (
                 (*name).to_string(),
-                json!({ "offset": value.map(|value| json!(value)).unwrap_or(Value::Null) }),
+                match value {
+                    Some(offset) => json!({ "offset": offset }),
+                    None => Value::Null,
+                },
             )
         })
         .collect();

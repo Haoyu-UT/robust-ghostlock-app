@@ -286,14 +286,36 @@ fn kernel(input: &DocumentInput<'_>) -> Node {
         };
         let mut refs = Vec::new();
         for (name, index) in slots {
-            let (offset, image) = match index {
-                Some(index) => (
-                    literal_number(cred_value(&format!("ref{index}_offset"))),
-                    literal_hex(cred_value(&format!("ref{index}_image"))),
-                ),
-                None => (Node::Null, Node::Null),
-            };
-            refs.push((name, obj(vec![("offset", offset), ("image", image)])));
+            match index {
+                Some(index) => refs.push((
+                    name,
+                    obj(vec![
+                        (
+                            "offset",
+                            literal_number(cred_value(&format!("ref{index}_offset"))),
+                        ),
+                        (
+                            "image",
+                            literal_hex(cred_value(&format!("ref{index}_image"))),
+                        ),
+                    ]),
+                )),
+                /* A reference the kernel has no field for (5.x has no
+                 * `ucounts`). The facts-only document feeds the timer tool,
+                 * whose loader requires an absent ref to be `null`; the
+                 * native/store document keeps the schema's object-of-nulls
+                 * form (the native loader skips it by its null image). */
+                None => {
+                    if input.facts_only {
+                        refs.push((name, Node::Null));
+                    } else {
+                        refs.push((
+                            name,
+                            obj(vec![("offset", Node::Null), ("image", Node::Null)]),
+                        ));
+                    }
+                }
+            }
         }
         obj(vec![
             ("copy_size", literal_number(cred_value("copy_size"))),

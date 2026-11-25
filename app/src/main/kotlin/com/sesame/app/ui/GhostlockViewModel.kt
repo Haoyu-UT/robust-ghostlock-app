@@ -1989,6 +1989,13 @@ class GhostlockViewModel(
                     else -> null
                 }
                 val generated = (result as? ParseResult.Parsed)?.documentText
+                /* Debug-only: keep the exact generated document so a session
+                 * can check its shape and values without the UI export. */
+                generated?.let { text ->
+                    runCatching {
+                        application.filesDir.resolve("derive-document.json").writeText(text)
+                    }
+                }
                 val generatedMap = generated?.let { HoconSupport.parseValue(it).asValueMap() }
                 record(
                     "generated present=${generatedMap != null} " +

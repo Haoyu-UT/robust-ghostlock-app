@@ -55,3 +55,13 @@ the app already cannot generate. Every image that generates today keeps its exac
 - extractor gates: `cargo test`.
 - app: existing Kotlin suites; the on-device `derive_test` debug intent runs the whole path against
   the 5.10.246 Image and records `result=Parsed timerDerived=true`.
+
+## Ref encoding (added 2026-11-25 after the correctness check)
+
+A 5.10 `struct cred` has three references (`user`, `user_ns`, `group_info`); there is no
+`cred->ucounts` on 5.10. Both the extractor (`document::build`) and the timer analyzer
+(`timer_extract::report`) used to write the absent slot as an object of nulls, which the timer
+tool's loader rejects. On the facts-only path they now emit `ucounts = null`; the native/store
+document keeps the object-of-nulls form, which the native loader skips by its null image. The
+`deepMergeValues` used by `mergeTimerFragment` ignores nulls, so the timer fragment must also emit
+`null` (a fragment object would otherwise override the extractor's null).
