@@ -206,7 +206,12 @@ Gates, all green:
 - No host test covers the generated script's text; the guard's real gate is the device one below.
 
 **Device gates outstanding:** venus (Magisk path, the report's failure), star (same image family),
-diting (KernelSU path — the mandatory regression control for `android12-5.10`).
+diting (KernelSU path — the mandatory regression control for `android12-5.10`). Note the diting as
+configured cannot exercise the rewritten parse: `kernelsu` is loaded from boot, so the script takes
+`kernelsu already loaded; skipping late-load`; a real KSU parse test there needs a stock `boot_a`.
+**Build 924** (`Sesame-v1.2(924)-arm64-v8a-debug.apk`, md5 `866a2c1b…`, sha256 `805c5261…`,
+23,507,523 B; packaged `libghostlock.so` md5 `daf9f529…`) is on the NAS at
+`ghostlock-builds/2026-11-26-kmi-guard/` with a `BUILD.txt`.
 
 ## Risks
 
