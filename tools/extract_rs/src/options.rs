@@ -583,6 +583,7 @@ fn scene_document(
         selected,
         anchor,
         geometry: Geometry::Maps(fallback_geometries),
+        facts_only: false,
     })
 }
 

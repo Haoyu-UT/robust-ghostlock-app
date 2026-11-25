@@ -501,6 +501,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                         "--format",
                         "conf",
                         "--anchor",
+                        /* A CVE-refused image still yields a facts-only
+                         * document (ghostlock = null); the timer block is
+                         * then merged and the profile is timer-only. A
+                         * vulnerable image is unaffected. */
+                        "--facts-only",
                         "--out",
                         parsedFile.absolutePath,
                         "--work-dir",

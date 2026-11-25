@@ -2652,6 +2652,46 @@ class GhostlockViewModel(
      * one can still fill the physical pair, otherwise finish the pass.
      */
     private suspend fun advancePhys(result: ParseResult.Parsed) {
+        /* A facts-only document (ghostlock = null) means the native route is
+         * patched: the extractor emitted the shared kernel block only. The
+         * 98260 timer is the engine this flow can still deliver; a
+         * DirtyFrag-feasible image is noted, not refused, because a facts-only
+         * document cannot express its ladder. */
+        val documentMap = result.documentText?.let { text ->
+            runCatching { HoconSupport.parseValue(text).asValueMap() }.getOrNull()
+        }
+        if (documentMap != null && documentMap["ghostlock"] == null) {
+            val timerOnly = if (result.timerDerived) {
+                TimerOnlyDocument.from(result.documentText)
+            } else {
+                null
+            }
+            if (timerOnly != null) {
+                /* DirtyFrag can also be statically feasible (the ESP fix is
+                 * absent), but a facts-only document has no ghostlock block
+                 * and this flow cannot build its ladder. The timer route is
+                 * what this generation can deliver, so derive it and say so —
+                 * a working profile beats a refusal. */
+                if ((documentMap["kernel"].asValueMap()?.get("dirtyfrag") as? String) == "feasible") {
+                    appendLog(
+                        "note: DirtyFrag is statically feasible, but this facts-only " +
+                            "generation cannot build it; deriving the 98260 timer route",
+                    )
+                }
+                appendLog(
+                    "warning: the native route is patched; deriving the 98260 timer route only",
+                )
+                finishTimerOnly(result, timerOnly)
+                return
+            }
+            appendLog(
+                "error: the native route is patched and no timer block was derived; " +
+                    "no profile can be generated",
+            )
+            showNotice(R.string.parse_result_title, R.string.parse_failed)
+            markGenerationFailed()
+            return
+        }
         val next = nextPhysImage(physState(result))
         if (next != null) {
             showPhysPrompt(next, after = result)

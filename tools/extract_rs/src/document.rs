@@ -131,6 +131,9 @@ pub struct DocumentInput<'a> {
     pub anchor: Option<AnchorDoc>,
     /// The selected route's geometry, used for the waiter-layout fallbacks.
     pub geometry: Geometry<'a>,
+    /// A facts-only document: the native route is patched, so emit
+    /// `ghostlock = null` and `devices = null`. The kernel block is unchanged.
+    pub facts_only: bool,
 }
 
 /// Build the document tree.
@@ -140,22 +143,33 @@ pub fn build(input: &DocumentInput<'_>) -> Node {
         ("release", Node::Str(input.facts.release.to_string())),
         (
             "devices",
-            match input.devices {
-                Some((name, load, offset)) => obj(vec![(
-                    name,
-                    obj(vec![(
-                        "phys",
-                        obj(vec![
-                            ("load", hex_or_null(load)),
-                            ("offset", hex_or_null(offset)),
-                        ]),
+            if input.facts_only {
+                Node::Null
+            } else {
+                match input.devices {
+                    Some((name, load, offset)) => obj(vec![(
+                        name,
+                        obj(vec![(
+                            "phys",
+                            obj(vec![
+                                ("load", hex_or_null(load)),
+                                ("offset", hex_or_null(offset)),
+                            ]),
+                        )]),
                     )]),
-                )]),
-                None => Node::Null,
+                    None => Node::Null,
+                }
             },
         ),
         ("kernel", kernel(input)),
-        ("ghostlock", ghostlock(input)),
+        (
+            "ghostlock",
+            if input.facts_only {
+                Node::Null
+            } else {
+                ghostlock(input)
+            },
+        ),
         ("timer", Node::Null),
     ];
     entries.shrink_to_fit();

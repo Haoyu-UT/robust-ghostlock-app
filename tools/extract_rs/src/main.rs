@@ -115,6 +115,13 @@ struct Cli {
     /// and print a report instead of offsets
     #[arg(long)]
     analysis: bool,
+    /// continue past the CVE-2026-43499 refusal and emit a facts-only document
+    /// (the shared `kernel` block only: `ghostlock = null`, `devices = null`).
+    /// The app merges the timer block and produces a timer-only profile; a
+    /// facts-only document can never run natively. A no-op on a vulnerable
+    /// image.
+    #[arg(long)]
+    facts_only: bool,
     /// with --format conf, print the per-key fact table (value/domain/source/
     /// confidence) to stderr; the profile output is unchanged
     #[arg(long)]
@@ -488,17 +495,30 @@ fn run(cli: &Cli) -> Result<i32> {
     let (rel_symbols, sorted_offsets) = relative_symbols(&symbols, base);
     // stop early when remove_waiter() is fixed; --analysis reports it instead.
     let primitive = ensure_rtmutex_43499_unpatched(&boot.kernel, &rel_symbols, &sorted_offsets);
+    /* A CVE-refused image can still be profiled when a non-native engine (the
+     * 98260 timer) is open: --facts-only continues the derivation and emits a
+     * document with `ghostlock = null`, which can never run natively. */
+    let cve_fixed = primitive.is_err();
+    let facts_only = cli.facts_only && cve_fixed;
     match &primitive {
         Ok(remove_waiter) => eprintln!(
             "info: (CVE-2026-43499 primitive present \
              (remove_waiter@{remove_waiter:#x} still uses current)"
         ),
         Err(err) => {
-            if !cli.analysis {
+            if !cli.analysis && !cli.facts_only {
                 eprintln!("error: {err}");
                 return Ok(6);
             }
-            eprintln!("warning: analysis continues: {err}");
+            if cli.facts_only && !cli.analysis {
+                eprintln!("warning: {err}");
+                eprintln!(
+                    "info: --facts-only: emitting a facts-only document \
+                     (ghostlock = null, devices = null; not runnable)"
+                );
+            } else {
+                eprintln!("warning: analysis continues: {err}");
+            }
         }
     }
 
@@ -1788,7 +1808,12 @@ fn run(cli: &Cli) -> Result<i32> {
             .iter()
             .filter(|route| route.verdict == "feasible")
             .count();
-        if cli.route.is_none() && feasible_routes > 1 {
+        if facts_only {
+            /* No native route exists on this image: a route superset would
+             * advertise routes the kernel cannot run. Emit the facts-only
+             * document instead. */
+            report::render_conf_facts_only(&inputs, cli.device.as_deref())
+        } else if cli.route.is_none() && feasible_routes > 1 {
             options::render_superset(&option_superset)
             .map(|body| {
                 format!(

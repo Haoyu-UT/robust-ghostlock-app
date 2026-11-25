@@ -459,22 +459,38 @@ pub fn render_conf(input: &ConfInputs<'_>) -> String {
 /// device-neutral; this is the cut/runnable form, and the app resolves the map
 /// for the running device.
 pub fn render_conf_with_device(input: &ConfInputs<'_>, device: Option<&str>) -> String {
+    render_conf_mode(input, device, false)
+}
+
+/// A facts-only document: the shared `kernel` block with `ghostlock = null`
+/// and `devices = null`. Emitted when the native route is patched; the app
+/// merges the timer block and produces a timer-only profile. The null
+/// `ghostlock` makes the document un-runnable natively by construction.
+pub fn render_conf_facts_only(input: &ConfInputs<'_>, device: Option<&str>) -> String {
+    render_conf_mode(input, device, true)
+}
+
+fn render_conf_mode(input: &ConfInputs<'_>, device: Option<&str>, facts_only: bool) -> String {
     let release = input.release;
     let device_label = device.unwrap_or("<device>");
-    let mut fact_sources = vec![
-        format!(
-            "devices.{device_label}.phys.load={} ({})",
-            input.phys.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
-            input.phys_source
-        ),
-        format!(
-            "devices.{device_label}.phys.offset={} ({})",
-            input.phys_offset
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "null".to_string()),
-            input.phys_source
-        ),
-    ];
+    let mut fact_sources = if facts_only {
+        Vec::new()
+    } else {
+        vec![
+            format!(
+                "devices.{device_label}.phys.load={} ({})",
+                input.phys.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
+                input.phys_source
+            ),
+            format!(
+                "devices.{device_label}.phys.offset={} ({})",
+                input.phys_offset
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "null".to_string()),
+                input.phys_source
+            ),
+        ]
+    };
     if input.kdp == Some(true) {
         fact_sources.push("kdp=1 (pipeline fact)".to_string());
     }
@@ -519,36 +535,49 @@ pub fn render_conf_with_device(input: &ConfInputs<'_>, device: Option<&str>) -> 
         Some(_) => "native",
         None => "",
     };
-    let routes = match input.route {
-        Some(route) => vec![document::RouteDoc {
-            name: route,
-            carriers: vec![document::CarrierDoc {
-                name: carrier,
-                geometry: document::Geometry::Pairs(input.route_geometry),
+    let routes = if facts_only {
+        Vec::new()
+    } else {
+        match input.route {
+            Some(route) => vec![document::RouteDoc {
+                name: route,
+                carriers: vec![document::CarrierDoc {
+                    name: carrier,
+                    geometry: document::Geometry::Pairs(input.route_geometry),
+                }],
             }],
-        }],
-        None => Vec::new(),
+            None => Vec::new(),
+        }
     };
-    let anchor = geometry("lock_anchor_image").map(|image| document::AnchorDoc {
-        image: image as u64,
-        bytes: geometry("lock_anchor_bytes").map(|value| value as u64),
-        stride: geometry("lock_anchor_stride").map(|value| value as u64),
-        scratch: input
-            .stage1
-            .as_ref()
-            .and_then(|stage1| stage1.w1_scratch)
-            .map(|scratch| scratch.image),
-    });
+    let anchor = if facts_only {
+        None
+    } else {
+        geometry("lock_anchor_image").map(|image| document::AnchorDoc {
+            image: image as u64,
+            bytes: geometry("lock_anchor_bytes").map(|value| value as u64),
+            stride: geometry("lock_anchor_stride").map(|value| value as u64),
+            scratch: input
+                .stage1
+                .as_ref()
+                .and_then(|stage1| stage1.w1_scratch)
+                .map(|scratch| scratch.image),
+        })
+    };
     let built = document::build(&document::DocumentInput {
         facts: input,
-        devices: match (device, input.phys) {
-            (Some(name), Some(load)) => Some((name, Some(load), input.phys_offset)),
-            _ => None,
+        devices: if facts_only {
+            None
+        } else {
+            match (device, input.phys) {
+                (Some(name), Some(load)) => Some((name, Some(load), input.phys_offset)),
+                _ => None,
+            }
         },
         routes,
-        selected: input.route,
+        selected: if facts_only { None } else { input.route },
         anchor,
         geometry: document::Geometry::Pairs(input.route_geometry),
+        facts_only,
     });
     format!(
         "# GhostLock kernel profile: {release} (HOCON, self-contained).\n# fact_sources: {}\n{}",
@@ -595,7 +624,8 @@ mod tests {
     use super::{
         CONF_TASK_FIELDS, ConfExtraOffsets, ConfInputs, build_report, conf_cred_5x, conf_cred_6x,
         conf_multicast_route_geometry, conf_route_geometry, conf_route_geometry_with_sigreturn,
-        pselect_waiter_shift_for, render_conf, render_conf_with_device,
+        pselect_waiter_shift_for, render_conf, render_conf_facts_only,
+        render_conf_with_device,
     };
     use crate::derive::Cred5x;
     use crate::fact::{Confidence, Domain, Fact, Source};
@@ -649,6 +679,41 @@ mod tests {
         assert!(neutral.contains("schema_version = 3"));
         assert!(neutral.contains("devices = null"));
         assert!(!neutral.contains("device="));
+    }
+
+    #[test]
+    fn facts_only_nulls_ghostlock_and_devices() {
+        let (symbols, structs) = conf_fixture();
+        let geometry: Vec<(&'static str, i64)> = vec![("waiter_shift", -2)];
+        let inputs = ConfInputs {
+            pipeline_order: &[],
+            kdp: None,
+            release: "5.10.246-android12-9-00021-gc9ff65e4f0d7-ab15866348",
+            phys: Some(0xa800_0000),
+            phys_offset: None,
+            symbols: &symbols,
+            structs: &structs,
+            route: Some("select_stack"),
+            route_geometry: &geometry,
+            cred: &conf_cred_6x(),
+            extra_offsets: &no_extra_offsets(),
+            layouts: None,
+            stage1: None,
+            phys_source: "test",
+            image_base: Some(0xffff_ffc0_0800_0000),
+        };
+        let facts = render_conf_facts_only(&inputs, Some("diting"));
+        assert!(facts.contains("ghostlock = null"), "{facts}");
+        assert!(facts.contains("devices = null"), "{facts}");
+        assert!(!facts.contains("ghostlock {"), "facts-only states no route\n{facts}");
+        assert!(!facts.contains("devices {\n"), "facts-only states no pair\n{facts}");
+        /* The shared kernel block survives: it is what the timer route needs. */
+        assert!(facts.contains("kernel {"), "{facts}");
+        assert!(facts.contains("image_base = \"0x"));
+        /* The ordinary render is unchanged by the new mode. */
+        let normal = render_conf_with_device(&inputs, Some("diting"));
+        assert!(normal.contains("ghostlock {\n  syscall = \"select_stack\""), "{normal}");
+        assert!(normal.contains("devices {\n  diting {"), "{normal}");
     }
 
     #[test]
