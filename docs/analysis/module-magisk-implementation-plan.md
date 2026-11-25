@@ -10,6 +10,24 @@ Magisk as the userspace root manager.
 The branch is rebased onto the timer-route `document` (schema v3, 2026-11-23); the profile design
 below is the surviving v3-compatible form.
 
+**2026-11-25 — the 5.4 switch wrote the wrong byte; fixed, rebuilt and gated.** The first 5.4
+device run (build 912, star `5.4.233-qgki-gbb70cde46897`) went through the whole chain — the
+libc++ page-cache patch, the init hook, the `crash_dump` bridge, the `vendor_file` delivery and the
+`vendor_modprobe` insmod — and then stamped no shell. `dfswitch.c` cleared `selinux_state+0`, which
+on 5.4 is the struct's unconditional `disabled` byte, and logged that same byte back as
+`enforcing`; `enforcing` is at **+1** on 5.4 and **+0** on 5.10/6.1 (measured on the exact Image on
+2026-11-20, and the extractor's release table and the native fallback already carried it). The
+offset is now a **required build input** — `DFSWITCH_ENFORCING_OFFSET` in
+`tools/dirtyfrag_module/build.sh`, refused when unset, consumed by the module Makefile — and the
+module prints the offset and the field. Both 5.4 pairs were rebuilt (star `ff77a91d…`, venus
+`7bb38fdb…`; 10,344 B each) and the two bundled profiles carry the new hashes. The new
+`five-four-tools/qemu-module-switch-gate.sh` loads the module into the Image with `enforcing=1` and
+reads the kernel's **own** `/sys/fs/selinux/enforce`: fixed reads 1→0 on both Images, the pre-fix
+asset reads 1→1 (the negative control), so the module's self-report is no longer a gate. Device
+evidence: `external/github_error_reports/5.4.233-qgki-gbb70cde46897/README.md`; host gate record:
+`external/port/dirtyfrag-switch-offset-2026-11-25/`. The next device step is a fresh-boot star run
+(the module stays loaded, so a same-boot retry returns `EEXIST`).
+
 First device results (diting, 5.10.236): **G2a passes** — the existing dirtyfrag pipeline with the
 Magisk handoff leaves magiskd running under Enforcing and the manager reports 31.1 installed.
 **G2b passes** — the module pipeline delivers a per-kernel module into a **vendor_file** target

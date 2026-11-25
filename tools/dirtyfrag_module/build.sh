@@ -39,6 +39,14 @@
 #                    absolute Google build-host path in
 #                    CONFIG_UNUSED_KSYMS_WHITELIST and has
 #                    CONFIG_TRIM_UNUSED_KSYMS=y, so it must be repointed.
+#   DFSWITCH_ENFORCING_OFFSET
+#                    required. The byte of `enforcing` inside
+#                    `struct selinux_state`: 1 for the 5.4 family (its
+#                    unconditional `disabled` byte comes first), 0 for
+#                    5.10/6.1. The module refuses to build without it; a wrong
+#                    offset loads cleanly and still reads as success. Then the
+#                    image keeps enforcing -- the 5.4 pair shipped that way
+#                    once (see external/github_error_reports/5.4.233*/README).
 #
 # ONDK r30.1's clang (21.0.0) is the 5.4 Images' vendor compiler; source
 # env.sh or set ANDROID_NDK_HOME when CLANG_DIR is unset.
@@ -59,6 +67,14 @@ CONFIG=$2
 SYMVERS=$3
 LOCALVERSION_VALUE=$4
 OUT=$5
+
+case "${DFSWITCH_ENFORCING_OFFSET:-}" in
+    0|1) ;;
+    *)
+        echo "set DFSWITCH_ENFORCING_OFFSET=0 (5.10/6.1) or 1 (the 5.4 family)" >&2
+        exit 2
+        ;;
+esac
 
 if [ -n "${CLANG_DIR:-}" ]; then
     [ -x "$CLANG_DIR/bin/clang" ] || {
@@ -103,8 +119,10 @@ make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
     CROSS_COMPILE=aarch64-linux-gnu- olddefconfig modules_prepare
 make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
     CROSS_COMPILE=aarch64-linux-gnu- M="$SRC" \
-    KBUILD_EXTRA_SYMBOLS="$SYMVERS" modules
+    KBUILD_EXTRA_SYMBOLS="$SYMVERS" \
+    DFSWITCH_ENFORCING_OFFSET="$DFSWITCH_ENFORCING_OFFSET" modules
 
 llvm-strip --strip-debug -o "$OUT/dfswitch.ko" "$SRC/dfswitch.ko"
 # The loader does not need the build id; the hash binds the exact bytes.
 modinfo "$OUT/dfswitch.ko" | grep -E '^(filename|vermagic|name):'
+echo "enforcing offset: $DFSWITCH_ENFORCING_OFFSET"
