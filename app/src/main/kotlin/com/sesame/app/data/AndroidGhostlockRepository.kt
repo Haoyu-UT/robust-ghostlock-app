@@ -71,9 +71,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         const val EditSessionPreferences = "ghostlock_edit_session"
         const val ExtractBinaryName = "libextract.so"
         const val NativeBinaryName = "libghostlock.so"
-        /* The timer route's generation-side analyzer (the vendored timer-extract). */
-        const val TimerExtractBinaryName = "libtimerextract.so"
-        const val TimerExtractTimeoutSeconds = 180L
 
         /* Measured database and the root phase's /proc/slabinfo capture. */
         const val MeasuredDbFileName = "measured_profiles.conf"
@@ -85,8 +82,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
          * short enough that a denied/ignored dialog still falls through. */
         const val CRASH_SHIZUKU_TIMEOUT_MS = 20_000L
         val AnsiEscape = Regex("\u001B\\[[0-9;]*m")
-        /** The generated document's release line, for the timer analyzer's template rule. */
-        val ReleasePattern = Regex("(?m)^release\\s*=\\s*\"([^\"]+)\"")
         const val PrefForceAttackTest = "force_attack_test"
         /** Tri-state vr.ko choices, stored as auto/on/off. */
         const val PrefVrKoTagClear = "vr_ko_tag_clear"
@@ -501,11 +496,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                         "--format",
                         "conf",
                         "--anchor",
-                        /* A CVE-refused image still yields a facts-only
-                         * document (ghostlock = null); the timer block is
-                         * then merged and the profile is timer-only. A
-                         * vulnerable image is unaffected. */
-                        "--facts-only",
+                        /* One extractor: a CVE-refused image still yields a
+                         * document (ghostlock = null) carrying whatever engine
+                         * is open — the 98260 timer block, in the same pass. */
                         "--out",
                         parsedFile.absolutePath,
                         "--work-dir",
@@ -522,9 +515,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 }
             }
             val captured = mutableListOf<String>()
-            /* The optional timer block derived for this image (see
-             * docs/analysis/timer-block-generation-plan.md). */
-            var timerBlock: String? = null
             /* One generation log per extractor pass: the stderr decision lines,
              * the verdict JSON and a meta summary land in the app's crash-safe
              * run store and are exportable from the log screen. Exit 7 is a
@@ -546,21 +536,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     timeoutSeconds = 1800,
                 )
                 tee("<k> extract exit code=$exit")
-                /* The timer block is an optional overlay from a separate
-                 * analyzer on the same image; its absence or failure leaves a
-                 * native-only profile and never fails generation. */
-                if (exit == 0 && parsedFile.isFile) {
-                    val release = ReleasePattern.find(parsedFile.readText())
-                        ?.groupValues?.get(1)
-                    if (release != null) {
-                        timerBlock = deriveTimerBlock(
-                            effectiveInput,
-                            release,
-                            tee,
-                            writeSidecar,
-                        )
-                    }
-                }
                 val reportText = feasibleFile.takeIf { it.isFile }?.readText()
                 val report = reportText?.let(FeasibleReport::parse)
                 if (reportText != null) {
@@ -584,14 +559,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 exit
             }
             val report = feasibleFile.takeIf { it.isFile }?.readText()?.let(FeasibleReport::parse)
-            /* The options document is the app's picker source and the cut's
-             * base: merge the timer fragment into it too, so a cut carries the
-             * timer block. */
+            /* The options envelope is the app's picker source and the cut's
+             * base; the one extractor already wrote the timer block and its
+             * evidence into it. */
             val optionsText = optionsFile.takeIf { it.isFile }?.readText()
-            val options = optionsText?.let { text ->
-                val merged = timerBlock?.let { mergeTimerFragment(text, it) } ?: text
-                OptionSuperset.parse(merged)
-            }
+            val options = optionsText?.let { text -> OptionSuperset.parse(text) }
             if (code == 7) {
                 val routes = report?.routes.orEmpty()
                 if (routes.none { it.verdict == FeasibleReport.VerdictFeasible }) {
@@ -601,9 +573,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             }
             if (code != 0 || !parsedFile.isFile) return ParseResult.Failed(code)
             val document = parsedFile.readText()
-            val generated = timerBlock?.let { block ->
-                mergeTimerFragment(document, block) ?: document
-            } ?: document
             val fresh = parseEntries(document) ?: return ParseResult.Failed(code, "invalid extractor output")
             /* The document is returned, never stored: the app keeps no profile
              * documents (measured-db-plan §1). The caller probes it in memory,
@@ -620,7 +589,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             val resolved = filtered.map { resolvedForDevice(it, deviceCandidates) }
             val missing = missingSidecarFields(resolved)
             val name = parsedDocumentName(releases)
-            val anchor = parseEntries(generated)
+            val anchor = parseEntries(document)
                 ?.firstNotNullOfOrNull { it.asValueMap() }
                 ?.let { ProfileResolver.anchorOf(it) }
             ParseResult.Parsed(
@@ -633,8 +602,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 physSource = physSourceFromLines(captured),
                 physLoadPresent = resolved.any { ProfileResolver.physOf(it).first != null },
                 physOffsetPresent = resolved.any { ProfileResolver.physOf(it).second != null },
-                timerDerived = timerBlock != null,
-                documentText = generated,
+                /* The one extractor states the timer block in the document it
+                 * wrote; its presence is the derived fact. */
+                timerDerived = filtered.any { it["timer"] != null },
+                documentText = document,
                 options = options,
             )
         } catch (error: CancellationException) {
@@ -648,77 +619,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             tempBootFile?.delete()
             tempXblFile?.delete()
         }
-    }
-
-    /**
-     * Derives the image's `timer` block (the timer route's per-image
-     * constants) with the vendored timer analyzer. The block is optional
-     * metadata: any failure logs and returns null, leaving a native-only
-     * profile. It is validated here with the same parser the timer route's
-     * loader uses, so a malformed block can never reach the document.
-     */
-    private suspend fun deriveTimerBlock(
-        input: String,
-        release: String,
-        onLog: (String) -> Unit,
-        writeSidecar: (String, ByteArray) -> Boolean,
-    ): String? {
-        val binary = File(appContext.applicationInfo.nativeLibraryDir, TimerExtractBinaryName)
-        if (!binary.isFile) {
-            onLog("timer: no analyzer binary; the profile stays native-only")
-            return null
-        }
-        val out = File(filesDir, "timer-block.tmp")
-        out.delete()
-        val args = buildList {
-            add(input)
-            add("--emit-timer-conf")
-            add(out.absolutePath)
-            add("--endgame")
-            add("real,fake")
-            timerLayoutTemplate(release)?.let { template ->
-                add("--layout-template")
-                add(template)
-            }
-        }
-        onLog("timer: deriving the block from the image")
-        val exit = runCatching {
-            runProcess(
-                ProcessBuilder(listOf(binary.absolutePath) + args)
-                    .directory(filesDir)
-                    .redirectErrorStream(true)
-                    .apply {
-                        environment()["TMPDIR"] = filesDir.absolutePath
-                        environment()["HOME"] = filesDir.absolutePath
-                    },
-                onLog = onLog,
-                timeoutSeconds = TimerExtractTimeoutSeconds,
-            )
-        }.getOrElse { error ->
-            onLog("timer: analyzer error (${error.message}); the profile stays native-only")
-            out.delete()
-            return null
-        }
-        val text = out.takeIf { it.isFile }?.readText()?.trim()
-        out.delete()
-        if (exit != 0 || text.isNullOrEmpty()) {
-            onLog("timer: analyzer exited $exit; the profile stays native-only")
-            return null
-        }
-        val value = runCatching {
-            HoconSupport.parseValue(text).asValueMap()?.get(Timer98260.BLOCK_KEY)
-        }.getOrNull()
-        val (config, errors) = Timer98260.parse(value)
-        if (config == null || errors.isNotEmpty()) {
-            onLog(
-                "timer: derived block rejected " +
-                    "(${errors.firstOrNull()?.fieldPath ?: "unparsable"}); native-only profile",
-            )
-            return null
-        }
-        writeSidecar("timer-block.conf", text.toByteArray(StandardCharsets.UTF_8))
-        onLog("timer: block derived (endgames=${config.endgameLabel})")
-        return text
     }
 
     override suspend fun probeStride(
@@ -2353,13 +2253,3 @@ internal fun releaseSupportedByProfileSources(
     bundledReleases: Set<String>,
     importedSelected: Boolean,
 ): Boolean = release in bundledReleases || importedSelected
-
-/**
- * The timer analyzer's no-BTF layout template for a release, or null when no
- * template applies. Only the 5.10 series has one (the labelled `5.10`
- * template); 6.x images carry BTF and supply their own facts. Releases spell
- * the series `5.10.<patch>-…` — the dash follows the patch level, not the
- * minor, so `startsWith("5.10-")` matches nothing.
- */
-internal fun timerLayoutTemplate(release: String): String? =
-    if (release.startsWith("5.10.")) "5.10" else null

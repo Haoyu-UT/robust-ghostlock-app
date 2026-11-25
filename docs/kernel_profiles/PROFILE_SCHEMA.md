@@ -320,10 +320,9 @@ time.
   (per codename: the pair's `phys_source`, the anchor `candidates` and the
   route `plans`; the pair is not repeated). `timer_analysis` keeps the timer
   analyzer's evidence and the fragment it merged.
-- `tools/extract_rs` — `ghostlock-extract` (the document builder).
-- `tools/timer_extract` — `timer-extract` (the timer fragment).
-- `tools/sweep_timer_store.py` — merges the timer fragment into every store
-  document.
+- `tools/extract_rs` — `ghostlock-extract` (the document builder; it also runs the
+  CVE-2026-98260 timer analysis in the same pass and writes the `timer` block and
+  `timer_analysis`).
 - `tools/ship_golden_profiles.py` — renders each bundled asset from the store
   document (its device pairs + the measured stride + the header) and keeps
   `index.conf` in step. `--check` compares facts; `--apply` / `--refresh-all`

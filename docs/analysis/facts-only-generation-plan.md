@@ -2,6 +2,9 @@
 
 Status 2026-11-25 — approved by the operator (Fix B). Changes the extractor's CVE-refusal branch
 and the app's generation flow; no native wire, no profile schema change.
+**Superseded 2026-11-26 by [`extractor-merge-plan.md`](extractor-merge-plan.md):** `--facts-only`
+is removed. The one extractor always continues past the refusal and emits the facts + timer
+document, so the mode this plan introduced is the default and the flag is no longer passed.
 
 ## Problem
 

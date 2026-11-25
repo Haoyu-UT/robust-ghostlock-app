@@ -1,6 +1,13 @@
 # Timer block in generated profiles — plan (2026-11-22)
 
-**Status 2026-11-23 — implemented and device-checked (generation + picker, 6.1 and 5.10).** The
+**Status 2026-11-23 — implemented and device-checked (generation + picker, 6.1 and 5.10).**
+**Superseded 2026-11-26 by [`extractor-merge-plan.md`](extractor-merge-plan.md):** the timer
+analyzer is no longer a separate vendored crate and native binary. `ghostlock-extract` now runs
+the 98260 analysis in the same pass, emits the `timer` block and `timer_analysis` in the document
+and options envelope, and the app's `--facts-only`, `TimerFragmentMerge`, `libtimerextract.so` and
+`tools/sweep_timer_store.py` are gone. The history below is the separate-analyzer design it
+replaced.
+ The
 vendored analyzer is built by Gradle, run by the parse path, and its block is merged when it
 validates. On the duChamp the generated document carried a `timer_98260` block field-for-field
 identical to the shipped one and the home picker listed `timer_98260（通过 Shizuku）` beside the

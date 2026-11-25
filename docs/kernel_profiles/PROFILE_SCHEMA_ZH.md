@@ -290,9 +290,8 @@ timer {
   `pipeline_facts`、`pipeline_order`、`image_base`，以及 `device_analysis[]`
   （按 codename：设备对的 `phys_source`、锚点 `candidates` 与路由 `plans`；
   设备对不重复存放）。`timer_analysis` 保留定时器分析器的证据与其合并的片段。
-- `tools/extract_rs`——`ghostlock-extract`（文档构建器）。
-- `tools/timer_extract`——`timer-extract`（定时器片段）。
-- `tools/sweep_timer_store.py`——把定时器片段合并进每个 store 文档。
+- `tools/extract_rs`——`ghostlock-extract`（文档构建器；同一次分析也运行
+  CVE-2026-98260 定时器分析，并写出 `timer` 块与 `timer_analysis`）。
 - `tools/ship_golden_profiles.py`——从 store 文档渲染每个内置资产（文档内的设备对 +
   实测步长 + 头注释），并维护 `index.conf`。`--check` 比对事实；
   `--apply` / `--refresh-all` 只重写生成的资产。

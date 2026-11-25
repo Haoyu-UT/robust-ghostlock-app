@@ -2,10 +2,12 @@
 """HOCON parser/renderer for the profile tools, plus the retired one-off converter.
 
 The shipping path is the extractor and the store (`tools/extract_rs`,
-`tools/sweep_timer_store.py`, `tools/ship_golden_profiles.py`); they use this
-module's `Parser`/`render` only. The conversion half (`convert` and its CLI)
-is the 2026-11-24 one-off that moved the bundled assets from the authored
-schema to v3; it is kept as the migration record and is no longer called.
+`tools/ship_golden_profiles.py`); they use this module's `Parser`/`render` only.
+The timer analyzer runs inside `tools/extract_rs` since 2026-11-26, so the store
+sweep that used this parser for the timer fragment is retired too. The
+conversion half (`convert` and its CLI) is the 2026-11-24 one-off that moved the
+bundled assets from the authored schema to v3; it is kept as the migration
+record and is no longer called.
 
 Usage:
     python3 tools/migrate_profile_shape.py <profilesDir> <outDir>
