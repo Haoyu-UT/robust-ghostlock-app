@@ -1,9 +1,9 @@
 # The KMI guard's scope — L-level plan
 
-**Status 2026-11-26: designed, awaiting operator approval. No code yet.** Revised the same day after
-the operator's objection that the draft mixed the handoffs: the Magisk handoff and the KernelSU
-handoff are separate cases, and one manager's (`KernelSU-Next`) optional `--kmi` is not a fact about
-the others.
+**Status 2026-11-26: implemented and host-gated; device gates outstanding.** Revised the same day
+after the operator's objection that the draft mixed the handoffs: the Magisk handoff and the
+KernelSU handoff are separate cases, and one manager's (`KernelSU-Next`) optional `--kmi` is not a
+fact about the others.
 
 ## The defect the venus report found
 
@@ -137,6 +137,76 @@ says which half was missing.
   passed the switch, so its downstream is unmeasured.
 - **diting (5.10.236)** — regression: the KernelSU handoff must still parse `android12-5.10` and
   late-load. This is the one path the guard was written for, so it is the mandatory control.
+
+## Implementation record (2026-11-26)
+
+Implemented in `src/core/attack/ops.cpp` on `document`. The generated-shell diff is exactly the
+relocation plus the strict derivation:
+
+```diff
+ if [ "$FIXUP_RC" -eq 0 ]; then rm -f "$POLICY"; fi
+-KVER=$(uname -r | cut -d. -f1-2)
+-AVER=$(uname -r | grep -o 'android[0-9]*' | head -1)
+-if [ -z "$AVER" ] || [ -z "$KVER" ]; then
+-  echo '[!] cannot parse KMI from uname -r' >>"$LOG"
+-  restore_enforce kmi-parse
+-  exit 1
+-fi
+-KMI="${AVER}-${KVER}"
+ # safe mode: disable all modules before exec ksud
+...
+ else
+   KSU_ALREADY=0
++  KMI_WHY=''
++  UNAME_R=$(uname -r)
++  kmi_v=$(echo "$UNAME_R" | cut -d- -f1)
++  kmi_maj=$(echo "$kmi_v" | cut -d. -f1)
++  kmi_min=$(echo "$kmi_v" | cut -d. -f2)
++  KVER=''
++  if [ -n "$kmi_maj" ] && [ -n "$kmi_min" ]; then
++    case "${kmi_maj}${kmi_min}" in
++      *[!0-9]*) ;;
++      *) KVER="${kmi_maj}.${kmi_min}" ;;
++    esac
++  fi
++  AVER=$(echo "$UNAME_R" | grep -o 'android[0-9][0-9]*' | head -1)
++  if [ -z "$KVER" ]; then
++    KMI_WHY='uname -r has no numeric <major>.<minor>'
++  elif [ -z "$AVER" ]; then
++    KMI_WHY='uname -r carries no android<NN> token'
++  fi
++  if [ -n "$KMI_WHY" ]; then
++    echo "[!] cannot parse KMI from uname -r ($KMI_WHY); late-load cannot pick a module" >>"$LOG"
++    restore_enforce kmi-parse
++    exit 1
++  fi
++  KMI="${AVER}-${KVER}"
+   if [ ! -x "$KSUD" ]; then
+```
+
+**Two defects were found while implementing, both from this text being an outer `snprintf` format:**
+a literal `%s` in the shell (`printf '%s\n'`) consumed one of the format arguments
+(`-Wformat-insufficient-args`), and a `%%` in `${VAR%%-*}` collapsed to `%` in the generated script.
+The block now contains no `%` at all — `cut` replaces the parameter expansions.
+
+Gates, all green:
+
+- `make -C src ghostlock` — zero warnings; `make -C src lint-tidy` rc 0; `make -C src
+  native-host-tests` all targets pass.
+- Generated script: extracted from the built source and checked with `sh -n` and `dash -n`.
+- The block exercised under `dash` with a fake `uname -r`: `5.10.236-android12-9-…` →
+  `android12-5.10`, `6.1.138-android14-11-…` → `android14-6.1`, `6.6.66-android15-8-…` →
+  `android15-6.6`, `6.12.23-android16-5-…` → `android16-6.12`, `5.15.194-android13-8-…` →
+  `android13-5.15`; `5.10.81-android-9`, `5.10.246-gki-…`, `5.4.274-qgki-…`, `5.10`, `6` and an
+  empty uname all refuse with `kmi-parse`.
+- `tools/cmp_disasm.py` baseline-vs-candidate: every target's instruction count identical, five
+  `LAYOUT-SHIFT` entries (annotated operands only — the rodata moved). The `RESULT: FAIL` is the
+  known control: the same three symbols (`run_main_route_threads`, `multicast_owner_worker`,
+  `multicast_waiter_worker`) are missing in a baseline-vs-itself run too.
+- No host test covers the generated script's text; the guard's real gate is the device one below.
+
+**Device gates outstanding:** venus (Magisk path, the report's failure), star (same image family),
+diting (KernelSU path — the mandatory regression control for `android12-5.10`).
 
 ## Risks
 

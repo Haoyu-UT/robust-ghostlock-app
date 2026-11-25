@@ -705,14 +705,11 @@ namespace ghostlock::attack {
              * debug folder on every run. A failed fixup keeps the file, which
              * is why it is worth having next to that run's other dumps. */
             "if [ \"$FIXUP_RC\" -eq 0 ]; then rm -f \"$POLICY\"; fi\n"
-            "KVER=$(uname -r | cut -d. -f1-2)\n"
-            "AVER=$(uname -r | grep -o 'android[0-9]*' | head -1)\n"
-            "if [ -z \"$AVER\" ] || [ -z \"$KVER\" ]; then\n"
-            "  echo '[!] cannot parse KMI from uname -r' >>\"$LOG\"\n"
-            "  restore_enforce kmi-parse\n"
-            "  exit 1\n"
-            "fi\n"
-            "KMI=\"${AVER}-${KVER}\"\n"
+            /* No KMI is derived here: the Magisk handoff never reads one, and
+             * the KernelSU branch derives it at the point of use. A qgki build
+             * ("5.4.274-qgki-g...") and a GKI build with a vendor localversion
+             * ("5.10.246-gki-g...") both carry no androidNN token, so making
+             * this shared would refuse a handoff that needs none. */
             "# safe mode: disable all modules before exec ksud\n"
             "if [ \"$SAFE_MODE\" = \"1\" ]; then\n"
             "  echo \"[*] safe mode: disabling all modules under /data/adb/modules\" >>\"$LOG\"\n"
@@ -746,6 +743,45 @@ namespace ghostlock::attack {
             "  echo \"[*] kernelsu already loaded; skipping late-load\" >>\"$LOG\"\n"
             "else\n"
             "  KSU_ALREADY=0\n"
+            /* KernelSU's late-load selects its module by KMI name
+             * (`<kmi>_kernelsu.ko` inside ksud's assets), so the string must be
+             * the exact GKI branch. Derive it strictly here, where it is used:
+             * the leading version must be two numeric dot fields and the token
+             * must be `android<digits>`. The old shared form
+             * `grep -o 'android[0-9]*'` matched a bare "android" and emitted
+             * the malformed "android-5.10", and it refused before the handoff
+             * branch even when the handoff was Magisk, which never reads a KMI
+             * (the 5.4 qgki module pipeline, 2026-11-26). No fallback to
+             * ksud's auto-detection: `--kmi` is optional in KernelSU-Next, but
+             * the app hands over to any of several KSU-family managers and
+             * only the `late-load --help` interface is known to be common. */
+            "  KMI_WHY=''\n"
+            "  UNAME_R=$(uname -r)\n"
+            /* cut, not ${var%%...}: this text is itself a printf format, so a
+             * literal `%%` would collapse to `%` before the shell ever saw
+             * it. Nothing below may contain a lone `%`. */
+            "  kmi_v=$(echo \"$UNAME_R\" | cut -d- -f1)\n"
+            "  kmi_maj=$(echo \"$kmi_v\" | cut -d. -f1)\n"
+            "  kmi_min=$(echo \"$kmi_v\" | cut -d. -f2)\n"
+            "  KVER=''\n"
+            "  if [ -n \"$kmi_maj\" ] && [ -n \"$kmi_min\" ]; then\n"
+            "    case \"${kmi_maj}${kmi_min}\" in\n"
+            "      *[!0-9]*) ;;\n"
+            "      *) KVER=\"${kmi_maj}.${kmi_min}\" ;;\n"
+            "    esac\n"
+            "  fi\n"
+            "  AVER=$(echo \"$UNAME_R\" | grep -o 'android[0-9][0-9]*' | head -1)\n"
+            "  if [ -z \"$KVER\" ]; then\n"
+            "    KMI_WHY='uname -r has no numeric <major>.<minor>'\n"
+            "  elif [ -z \"$AVER\" ]; then\n"
+            "    KMI_WHY='uname -r carries no android<NN> token'\n"
+            "  fi\n"
+            "  if [ -n \"$KMI_WHY\" ]; then\n"
+            "    echo \"[!] cannot parse KMI from uname -r ($KMI_WHY); late-load cannot pick a module\" >>\"$LOG\"\n"
+            "    restore_enforce kmi-parse\n"
+            "    exit 1\n"
+            "  fi\n"
+            "  KMI=\"${AVER}-${KVER}\"\n"
             "  if [ ! -x \"$KSUD\" ]; then\n"
             "    echo '[!] ksud missing; cannot late-load' >>\"$LOG\"\n"
             "    dump_debug\n"
