@@ -84,6 +84,10 @@ class BuiltinProfilesTest {
                     config.module?.asset?.let { moduleAssets += it }
                     continue
                 }
+                /* A timer-only profile selects no native route: its engine is
+                 * the 98260 timer (CVE-2026-98260), delivered over Shizuku,
+                 * so there is no route branch or native document to check. */
+                if (isTimerOnly(config)) continue
                 val route = config.route
                 assertNotNull("${entry.release}: route unresolved", route)
 
@@ -136,6 +140,11 @@ class BuiltinProfilesTest {
         "module" in config.pipelineOrder &&
             !com.sesame.app.data.profile.ProfileResolver.requiresW1(config.pipelineOrder)
 
+    /** A profile whose only engine is the 98260 timer: no route branch. */
+    private fun isTimerOnly(config: com.sesame.app.domain.model.ProfileConfig): Boolean =
+        "timer" in config.pipelineOrder &&
+            !com.sesame.app.data.profile.ProfileResolver.requiresW1(config.pipelineOrder)
+
     /** The bundled module asset exists and hashes to the block's value. */
     private fun assertModulePair(
         entry: Entry,
@@ -181,8 +190,8 @@ class BuiltinProfilesTest {
                 val controller = controllerFor(entry.file)
                 val config = controller.load(entry.release)
                 /* The editor's geometry tree is a W1-chain view; a module-only
-                 * profile carries no route geometry. */
-                if (isModuleOnly(config)) continue
+                 * or timer-only profile carries no route geometry. */
+                if (isModuleOnly(config) || isTimerOnly(config)) continue
                 val paths = leafPaths(config.roots)
                 /* The physical pair is a per-device entry; the numeric tree
                  * does not carry address strings, so the resolved pair is

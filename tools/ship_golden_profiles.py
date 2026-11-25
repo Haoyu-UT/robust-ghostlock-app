@@ -97,14 +97,25 @@ def read_options(directory):
 
 def require_feasible_route(options):
     """A store entry must have at least one feasible route; the document
-    already states which one the run uses."""
-    if not any(
+    already states which one the run uses.
+
+    A kernel whose GhostLock routes are all patched may still be exploitable
+    by the timer engine (CVE-2026-98260), which has no native route at all:
+    such an entry carries no feasible `routes` but one feasible `timer`
+    pipeline, and its bundled asset is a timer-only document."""
+    if any(
         route.get("verdict") == "feasible" for route in options.get("routes", [])
     ):
-        raise NotShippable("no feasible route")
+        return
+    if any(
+        entry.get("pipeline") == "timer" and entry.get("verdict") == "feasible"
+        for entry in options.get("pipelines", [])
+    ):
+        return
+    raise NotShippable("no feasible route")
 
 
-PIPELINES = ["ghostlock", "dirtyfrag"]
+PIPELINES = ["ghostlock", "dirtyfrag", "timer"]
 
 
 class PipelineChoiceRequired(Exception):
@@ -391,7 +402,7 @@ def asset_text(entry):
     if document is None:
         raise NotShippable("the store entry has no cleaned document")
     body = migrate_profile_shape.render(document)
-    route_label = ", ".join(entry["routes"])
+    route_label = ", ".join(entry["routes"]) or "timer"
     header = (
         "# SHIPPED GOLDEN -- test-kernels golden (QEMU tier); generated, do not edit.\n"
         f"# store: {entry['release']}; routes: {route_label}; "
