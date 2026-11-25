@@ -284,6 +284,11 @@ fn kernel(input: &DocumentInput<'_>) -> Node {
                 ("group_info", None),
             ],
         };
+        /* Only the 5.x three-reference layout has a *named* absent slot (the
+         * `ucounts` member a 5.x cred does not have); that slot is `null`. The
+         * unknown-layout case (6.x, no `ref_count`) keeps its object shape so
+         * a merged fragment can fill it without dropping the `image` key. */
+        let absent_is_null = ref_count == Some(3);
         let mut refs = Vec::new();
         for (name, index) in slots {
             match index {
@@ -300,13 +305,8 @@ fn kernel(input: &DocumentInput<'_>) -> Node {
                         ),
                     ]),
                 )),
-                /* A reference the kernel has no field for (5.x has no
-                 * `ucounts`). The facts-only document feeds the timer tool,
-                 * whose loader requires an absent ref to be `null`; the
-                 * native/store document keeps the schema's object-of-nulls
-                 * form (the native loader skips it by its null image). */
                 None => {
-                    if input.facts_only {
+                    if absent_is_null {
                         refs.push((name, Node::Null));
                     } else {
                         refs.push((

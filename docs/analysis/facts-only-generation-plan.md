@@ -56,12 +56,18 @@ the app already cannot generate. Every image that generates today keeps its exac
 - app: existing Kotlin suites; the on-device `derive_test` debug intent runs the whole path against
   the 5.10.246 Image and records `result=Parsed timerDerived=true`.
 
-## Ref encoding (added 2026-11-25 after the correctness check)
+## Ref encoding (updated 2026-11-25: universal, after the correctness check)
 
 A 5.10 `struct cred` has three references (`user`, `user_ns`, `group_info`); there is no
-`cred->ucounts` on 5.10. Both the extractor (`document::build`) and the timer analyzer
-(`timer_extract::report`) used to write the absent slot as an object of nulls, which the timer
-tool's loader rejects. On the facts-only path they now emit `ucounts = null`; the native/store
-document keeps the object-of-nulls form, which the native loader skips by its null image. The
-`deepMergeValues` used by `mergeTimerFragment` ignores nulls, so the timer fragment must also emit
-`null` (a fragment object would otherwise override the extractor's null).
+`cred->ucounts` on 5.10. Every producer encoded the absent slot as an object of nulls, which the
+timer tool's loader rejects. Now:
+
+- the extractor emits `ucounts = null` for a **5.x three-reference cred in every document**
+  (facts-only and the store/native cut). The unknown-layout case (6.x, which carries no
+  `ref_count`) keeps the object-of-nulls form, so a merged fragment cannot drop the `image` key
+  the app's validator requires;
+- the timer fragment also emits `null` for an absent ref, because `mergeTimerFragment` /
+  `merge_document` ignore a null patch value while an object patch would replace the extractor's
+  null;
+- the store was regenerated (the 5.x option documents carry the null ref) and the 14 5.10
+  native-document golden rows were re-frozen: the transport bytes moved; no value did.
