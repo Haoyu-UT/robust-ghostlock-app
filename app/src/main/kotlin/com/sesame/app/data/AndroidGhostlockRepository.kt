@@ -1290,6 +1290,12 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         mode: String,
         onLog: (String) -> Unit,
         magiskBin: File? = null,
+        /**
+         * The staged switch module's file. The root script reads its `.modinfo`
+         * for the kernel module name (`name=`), so the end-of-run unload cannot
+         * disagree with what was actually loaded. Absent on the W1 pipelines.
+         */
+        moduleKo: File? = null,
         /** Per-run root-script log; absent keeps the legacy shared file. */
         ksuLog: File? = null,
     ): Int {
@@ -1313,6 +1319,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                  * DirtyFrag stage). */
                 if (ksuLog != null) {
                     environment()["GHOSTLOCK_KSU_LOG"] = ksuLog.absolutePath
+                }
+                if (moduleKo != null) {
+                    environment()["GHOSTLOCK_MODULE_KO"] = moduleKo.absolutePath
                 }
                 environment().putAll(handoffEnv(magiskBin))
             }
@@ -1409,7 +1418,14 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     auxHelper = helper,
                 )
                 val installCode =
-                    runStage(installPlan, "aux-install", onLog, run.magiskBin, stageKsuLog)
+                    runStage(
+                        installPlan,
+                        "aux-install",
+                        onLog,
+                        magiskBin = run.magiskBin,
+                        moduleKo = run.moduleFile,
+                        ksuLog = stageKsuLog,
+                    )
                 onLog("<k> second way: bridge install code=$installCode")
                 if (installCode != 0) return 1
             }
@@ -1464,7 +1480,14 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 else -> "full"
             }
             onLog("<k> second way: mode=$dirtyfragMode")
-            return runStage(plan, dirtyfragMode, onLog, run?.magiskBin, stageKsuLog)
+            return runStage(
+                plan,
+                dirtyfragMode,
+                onLog,
+                magiskBin = run?.magiskBin,
+                moduleKo = run?.moduleFile,
+                ksuLog = stageKsuLog,
+            )
         } finally {
             runCatching { transform.close() }
             runCatching { spiObj.close() }

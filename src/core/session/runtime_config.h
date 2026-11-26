@@ -82,6 +82,11 @@ namespace ghostlock::config {
          * pipeline; empty on the W1 pipelines (W1 already made the device
          * permissive). */
         std::string module_path;
+        /* GHOSTLOCK_MODULE_KO: the staged switch module's file, read (never
+         * loaded) to learn the kernel module name for the end-of-run unload.
+         * Not the MODULE_PATH insmod bench; empty on the W1 pipelines, where
+         * there is no switch module to unload. */
+        std::string module_ko;
 
         RuntimeConfig() noexcept = default;
 

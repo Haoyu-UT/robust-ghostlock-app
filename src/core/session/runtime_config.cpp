@@ -128,6 +128,10 @@ static void runtime_config_init_paths(config::RuntimeConfig *config) {
     if (module_path) {
         config->module_path = module_path;
     }
+    const char *module_ko = getenv("GHOSTLOCK_MODULE_KO");
+    if (module_ko) {
+        config->module_ko = module_ko;
+    }
 }
 
 /* Capture all process environment and CPU/path choices exactly once. Input:
@@ -146,6 +150,7 @@ int32_t ghostlock::config::RuntimeConfig::init() {
     handoff = "kernelsu";
     magisk_bin = "/data/local/tmp/magiskbin";
     module_path.clear();
+    module_ko.clear();
 
     runtime_config_init_cpus(this);
     runtime_config_init_paths(this);
@@ -161,6 +166,6 @@ void ghostlock::config::RuntimeConfig::log() const {
     pr_info("vr.ko choices: tag_clear=%s selinux_block=%s\n",
             vr_ko_mode_name(vrko_tag_clear),
             vr_ko_mode_name(vrko_selinux_block));
-    pr_info("handoff=%s magisk_bin=%s module=%s\n", handoff.c_str(),
-            magisk_bin.c_str(), module_path.c_str());
+    pr_info("handoff=%s magisk_bin=%s module=%s module_ko=%s\n", handoff.c_str(),
+            magisk_bin.c_str(), module_path.c_str(), module_ko.c_str());
 }

@@ -314,6 +314,9 @@ namespace ghostlock::attack {
             "HANDOFF='%s'\n"
             "MAGISK_BIN='%s'\n"
             "MODULE_PATH='%s'\n"
+            /* The staged switch module's file, read (never loaded) to learn the
+             * name the kernel registered. Empty on the W1 pipelines. */
+            "MODULE_KO='%s'\n"
             "KSUD=\"$HOME_DIR/ksud\"\n"
             "echo \"[*] root script start uid=$(id -u) euid=$(id -u)\" >\"$LOG\"\n"
             "chmod 644 \"$LOG\" 2>/dev/null\n"
@@ -341,10 +344,32 @@ namespace ghostlock::attack {
             "echo \"[*] ksud=$KSUD\" >>\"$LOG\"\n"
             "echo \"[*] ksud_file=$(ls -l \"$KSUD\" 2>/dev/null)\" >>\"$LOG\"\n"
             "echo \"[*] uname=$(uname -r)\" >>\"$LOG\"\n"
-            /* W1 leaves SELinux permissive; every post-W1 failure exit restores
-             * it, so a run that cannot finish the root phase does not leave the
-             * device permissive until reboot. Dumps are written before this
-             * call: the dump path is blocked once enforcing is back. */
+            /* The switch module's kernel name, read from the staged file's
+             * .modinfo (`name=...`, a NUL-separated table). The file is the
+             * same one the stub delivered, so the name cannot disagree with
+             * what the kernel registered; nothing is assumed from the asset
+             * filename, which is per-release. Prints nothing when the file is
+             * absent or the field is missing -- the unload is then skipped. */
+            "switch_module_name() {\n"
+            "  ko=\"$MODULE_KO\"\n"
+            "  [ -n \"$ko\" ] && [ -f \"$ko\" ] || return 0\n"
+            "  tr '\\0' '\\n' <\"$ko\" 2>/dev/null | grep '^name=' | head -n 1 | cut -d= -f2\n"
+            "}\n"
+            /* The module does its only job in init (it sets enforcing = 0 and
+             * unregisters its own kprobe), so nothing needs it afterwards and
+             * leaving it loaded blocks every later run on the same boot: a
+             * second insmod is a silent EEXIST and the permissive window never
+             * opens. Unload it while still permissive, where `delete_module`
+             * cannot be denied, and bound the call. Never fatal. */
+            "unload_switch_module() {\n"
+            "  ko_name=$(switch_module_name)\n"
+            "  case \"$ko_name\" in\n"
+            "    ''|*[!A-Za-z0-9_]*) return 0 ;;\n"
+            "  esac\n"
+            "  grep -q \"^$ko_name \" /proc/modules 2>/dev/null || return 0\n"
+            "  timeout 2 rmmod \"$ko_name\" 2>/dev/null\n"
+            "  echo \"[*] switch unload: name=$ko_name rc=$?\" >>\"$LOG\"\n"
+            "}\n"
             "restore_enforce() {\n"
             "  e_reason=\"$1\"\n"
             "  e_before=$(cat /sys/fs/selinux/enforce 2>/dev/null)\n"
@@ -356,6 +381,16 @@ namespace ghostlock::attack {
              * use. It goes to stdout, which survives the enforcing restore
              * where a $LOG write does not. */
             "  echo \"ENFORCE-RESTORE reason=$e_reason before=${e_before:-unreadable} wrote=$e_wrote readback=${e_after:-unreadable}\"\n"
+            "}\n"
+            /* Ends the run: leave no switch module behind, then restore
+             * enforcing. W1 leaves SELinux permissive, so every post-W1 exit
+             * goes through here -- a run that cannot finish the root phase must
+             * not leave the device permissive (or its module loaded) until
+             * reboot. Dumps are written before this call: the dump path is
+             * blocked once enforcing is back. */
+            "finish_run() {\n"
+            "  unload_switch_module\n"
+            "  restore_enforce \"$1\"\n"
             "}\n"
             /* Page-free W1 stores a kernel address across `selinux_state`, so
              * the caps (and, below 6.6, `checkreqprot`) are damage the fixes
@@ -439,7 +474,7 @@ namespace ghostlock::attack {
             "}\n"
             "if [ \"$(id -u)\" -ne 0 ]; then\n"
             "  echo '[!] temp su unavailable; aborting' >>\"$LOG\"\n"
-            "  restore_enforce not-root\n"
+            "  finish_run not-root\n"
             "  exit 1\n"
             "fi\n"
             /* Before this script's own `checkreqprot` reset, so the line shows
@@ -628,7 +663,7 @@ namespace ghostlock::attack {
             "POLICY=\"$POLICY_DIR/ghostlock-selinux.policy\"\n"
             "printf '' >\"$POLICY\" 2>/dev/null || {\n"
             "  echo '[!] cannot create policy dump' >>\"$LOG\"\n"
-            "  restore_enforce policy-dump\n"
+            "  finish_run policy-dump\n"
             "  exit 1\n"
             "}\n"
             "trap '[ -n \"$KMSG_DRAIN_PID\" ] && kill $KMSG_DRAIN_PID 2>/dev/null; [ -n \"$KMSG_LOG\" ] && rm -f \"$KMSG_LOG.new\" 2>/dev/null; umount -l /system/bin/lmkd 2>/dev/null; rm -f \"$POLICY\"; [ \"${DUMP_DONE:-0}\" = 1 ] || dump_debug' EXIT\n"
@@ -731,9 +766,9 @@ namespace ghostlock::attack {
             "  MAGISK_READY=$?\n"
             "  dump_debug\n"
             "  DUMP_DONE=1\n"
-            "  restore_enforce magisk-handoff\n"
+            "  finish_run magisk-handoff\n"
             "  if [ \"$MAGISK_READY\" -ne 0 ]; then\n"
-            "    restore_enforce magisk-not-ready\n"
+            "    finish_run magisk-not-ready\n"
             "    exit 1\n"
             "  fi\n"
             "else\n"
@@ -778,7 +813,7 @@ namespace ghostlock::attack {
             "  fi\n"
             "  if [ -n \"$KMI_WHY\" ]; then\n"
             "    echo \"[!] cannot parse KMI from uname -r ($KMI_WHY); late-load cannot pick a module\" >>\"$LOG\"\n"
-            "    restore_enforce kmi-parse\n"
+            "    finish_run kmi-parse\n"
             "    exit 1\n"
             "  fi\n"
             "  KMI=\"${AVER}-${KVER}\"\n"
@@ -786,7 +821,7 @@ namespace ghostlock::attack {
             "    echo '[!] ksud missing; cannot late-load' >>\"$LOG\"\n"
             "    dump_debug\n"
             "    DUMP_DONE=1\n"
-            "    restore_enforce ksud-missing\n"
+            "    finish_run ksud-missing\n"
             "    exit 1\n"
             "  fi\n"
             "  echo \"[*] late-load kmi=$KMI\" >>\"$LOG\"\n"
@@ -840,11 +875,11 @@ namespace ghostlock::attack {
             "DUMP_DONE=1\n"
             "if [ \"$KSU_ALREADY\" -eq 1 ]; then\n"
             "  echo \"[*] kernelsu already loaded; restoring enforcing\" >>\"$LOG\"\n"
-            "  restore_enforce already-loaded\n"
+            "  finish_run already-loaded\n"
             "elif [ \"$KSU_READY\" -eq 1 ]; then\n"
             /* The module re-enforces at the end of its init; this write is a
              * no-op then, and the corrective one if it did not. */
-            "  restore_enforce late-loaded\n"
+            "  finish_run late-loaded\n"
             "fi\n"
             /* Unredirected so the native's script-output carries the verdict
              * even when the app's log path was not writable. The dmesg tail
@@ -858,7 +893,7 @@ namespace ghostlock::attack {
             "  timeout 2 dmesg 2>/dev/null | command grep -i -E 'defex|kdp|rkp|kernelsu' | tail -n 15\n"
             "fi\n"
             "if [ \"$KSU_READY\" -ne 1 ]; then\n"
-            "  restore_enforce ksu-not-loaded\n"
+            "  finish_run ksu-not-loaded\n"
             "  exit 1\n"
             "fi\n"
             "fi\n"
@@ -866,7 +901,7 @@ namespace ghostlock::attack {
             "  echo '[!] fixup failed; restoring enforcing' >>\"$LOG\"\n"
             "  dump_debug\n"
             "  DUMP_DONE=1\n"
-            "  restore_enforce fixup-failed\n"
+            "  finish_run fixup-failed\n"
             "  exit 1\n"
             "fi\n",
             (config::runtime_config_snapshot().home_dir.c_str()),
@@ -876,6 +911,7 @@ namespace ghostlock::attack {
             config::runtime_config_snapshot().handoff.c_str(),
             config::runtime_config_snapshot().magisk_bin.c_str(),
             config::runtime_config_snapshot().module_path.c_str(),
+            config::runtime_config_snapshot().module_ko.c_str(),
             (config::runtime_config_snapshot().debug_dir.c_str()));
         if (n < 0 || n >= static_cast<int32_t>(script.size())) {
             pr_warning("root script too long\n");
