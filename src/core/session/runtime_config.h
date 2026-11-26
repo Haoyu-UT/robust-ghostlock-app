@@ -18,6 +18,21 @@ namespace ghostlock::config {
         Off = 2,
     };
 
+    /* One wire entry per line, empty lines dropped; a trailing newline is
+     * legal. Pure, so the split has a host fixed-vector test. */
+    inline std::vector<std::string> split_handoff_targets(std::string_view value) {
+        std::vector<std::string> entries;
+        while (!value.empty()) {
+            const size_t newline = value.find('\n');
+            const std::string_view line =
+                    newline == std::string_view::npos ? value : value.substr(0, newline);
+            if (!line.empty()) entries.emplace_back(line);
+            if (newline == std::string_view::npos) break;
+            value.remove_prefix(newline + 1);
+        }
+        return entries;
+    }
+
     constexpr const char *vr_ko_mode_name(VrKoMode mode) noexcept {
         switch (mode) {
             case VrKoMode::On: return "on";

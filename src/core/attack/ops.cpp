@@ -484,7 +484,10 @@ namespace ghostlock::attack {
             "  echo \"[*] vr.ko selinux block: bind rc=$rc node=$(stat -c '%%F' /proc/vrp 2>/dev/null) mi=$(grep -c ' /proc/vrp ' /proc/self/mountinfo 2>/dev/null)\" >>\"$LOG\"\n"
             "  stopped=\"\"\n"
             "  for e in $pre; do\n"
-            "    p=${e%%%%|*}; ns=$(echo \"$e\" | cut -d'|' -f3); fd=$(echo \"$e\" | cut -d'|' -f4)\n"
+            /* `cut`, not ${v%%|*}: the device's sh treats a bare `|` in the
+             * pattern as an empty alternative (the same trap the handoff
+             * core documents). */
+            "    p=$(echo \"$e\" | cut -d'|' -f1); ns=$(echo \"$e\" | cut -d'|' -f3); fd=$(echo \"$e\" | cut -d'|' -f4)\n"
             "    if [ \"$rc\" -ne 0 ] || [ \"$ns\" != \"$myns\" ] || [ \"$fd\" -gt 0 ] || [ ! -c /proc/vrp ]; then\n"
             "      kill -STOP \"$p\" 2>/dev/null && stopped=\"$stopped $p\"\n"
             "    fi\n"

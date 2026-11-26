@@ -116,19 +116,9 @@ static void runtime_config_init_paths(config::RuntimeConfig *config) {
         config->vrko_selinux_block = ghostlock::config::parse_vr_ko_mode(selinux_block);
     }
 
-    /* Newline-separated wire entries, in attempt order. A trailing newline is
-     * legal; empty lines are dropped. */
     const char *targets = getenv("GHOSTLOCK_HANDOFF_TARGETS");
     if (targets && targets[0]) {
-        std::string_view rest(targets);
-        while (!rest.empty()) {
-            const size_t newline = rest.find('\n');
-            const std::string_view line =
-                    newline == std::string_view::npos ? rest : rest.substr(0, newline);
-            if (!line.empty()) config->handoff_targets.emplace_back(line);
-            if (newline == std::string_view::npos) break;
-            rest.remove_prefix(newline + 1);
-        }
+        config->handoff_targets = ghostlock::config::split_handoff_targets(targets);
     }
     const char *module_path = getenv("GHOSTLOCK_MODULE");
     if (module_path) {
