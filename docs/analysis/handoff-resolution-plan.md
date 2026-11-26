@@ -75,6 +75,28 @@ sealed interface RootManager {
 - No persistent cache (same rule as `ManagerScanner`: a stale "capable" verdict is the one
   failure worth avoiding).
 
+**Package visibility (measured 2026-11-26, diting, Android 15).** The detector does not
+need `QUERY_ALL_PACKAGES`: a probe app (`targetSdk` 31) with **no permissions** and only
+`<queries>` entries resolved `com.topjohnwu.magisk` and `com.resukisu.resukisu` via
+`PackageManager.getPackageInfo`, while an undeclared installed user app
+(`com.rifsxd.ksunext`) was HIDDEN and `getInstalledPackages(0)` returned 273 of the
+shell's 356 packages. (The visible-set count confirms the filter is active; system
+packages such as Settings are auto-visible and are not a valid negative control.
+`run-as <app> pm path <pkg>` is **not** a faithful probe — it resolves undeclared
+packages; use the app-context `PackageManager` call.)
+
+Consequences:
+
+- The manifest must declare both Magisk packages in `<queries>`:
+  `com.topjohnwu.magisk` and `io.github.vvb2060.magisk` (the six KSU packages are already
+  declared). Without the entries, `getPackageInfo` throws and `MagiskStage` reads as
+  "manager not installed".
+- If `QUERY_ALL_PACKAGES` is removed (decision §4.6), `ManagerScanner`'s enumeration
+  shrinks to the visible set: the declared builtins still scan normally, but an
+  undeclared KSU fork becomes invisible — the detector is a known-list check. File access
+  to the manager's APK/libs is unaffected by visibility; it was never the permission that
+  allowed the staging copy.
+
 ### 2.2 One resolver
 
 ```kotlin
@@ -151,7 +173,8 @@ early and named; the guard still fails closed if a handoff is ever forced.
 Files: `ManagerScanner.kt` (unified candidates, Magisk detection, keep `resolve` for the
 package choice), new `HandoffResolver.kt`, `MagiskStage.kt` (split lookup from staging),
 `AndroidGhostlockRepository.kt` (`handoffEnv(plan)`, the module block, the preflight,
-logs/meta), `runtime_config` untouched.
+logs/meta), `app/src/main/AndroidManifest.xml` (add the two Magisk `<queries>` entries;
+§4.6 decides `QUERY_ALL_PACKAGES`), `runtime_config` untouched.
 The v1 preference table reproduces today's mapping exactly.
 Gates: host tests over fake candidates and releases (`5.4.233…`, `5.10.236…`,
 `6.1.138…`); app/profile-core suites; device smoke that the logged plan matches the
@@ -204,6 +227,11 @@ requirement of the chain.
    static / missing); Magisk's is a file inventory. The picker must show them as different
    kinds of evidence ("interface confirmed" vs "binaries present"), so it never promises
    more than the resolver checks.
+6. **`QUERY_ALL_PACKAGES`.** The operator's constraint is not to ask for package-listing
+   visibility. v1 removes the permission and relies on the `<queries>` declarations
+   (§2.1), accepting that an undeclared KSU fork is invisible. Keeping the permission
+   would restore arbitrary-fork discovery; that is a product decision, not a detector
+   detail.
 
 ## 5. Risks
 
