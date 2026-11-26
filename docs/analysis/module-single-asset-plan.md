@@ -111,6 +111,17 @@ module {
 Keys are the module's import names, exactly. `sha256` keeps binding the canonical
 (unpatched) asset.
 
+The block carries **numbers, not claims**. `crcs` is the loader's input, not a statement
+the app can verify: at run time it cannot read the running kernel's `module_layout` or
+struct layouts, so no field here can be checked against the device. `module_layout` is the
+one entry that is a layout proof, and it is always the target Image's own value, never
+hand-edited. The block does **not** carry a layout assertion, `struct kprobe` offsets, or
+CFI facts — a field the app cannot check would read as verification while verifying nothing
+(the same reasoning as §2's quoted comment). What the app can derive locally is the asset's
+own build-time value: it reads `__versions.module_layout` from the asset and compares it
+with the profile's, which tells it whether the profile overrides the layout hash. That
+comparison is logged (§3.3), not enforced; the QEMU gate (§3.1, S4) is the license.
+
 Schema work:
 
 - `ModuleBlock.kt`: add `crcs` to `BlockKeys`; require it whenever the block is present; each
@@ -132,7 +143,10 @@ sha256 check and before the file is written:
 4. refuse on any name mismatch in either direction, a missing/duplicate entry, or a short
    section;
 5. write the patched bytes under a release-qualified name (`dfswitch-<release>.ko`) and log
-   canonical hash, delivered hash, and the five applied values.
+   canonical hash, delivered hash, and the five applied values;
+6. log the layout comparison derived from the asset and the profile:
+   `module layout: asset=0x… profile=0x… patched=0|1`. The same line goes to the run-store
+   meta. It is a record for triage, not a gate: the bundled layer is the license.
 
 The existing delivery (`AndroidGhostlockRepository.kt:1405-1448`) is unchanged: it reads the
 staged file, pads it, and builds the 16-byte IV plan. The patcher must be an in-place
@@ -187,6 +201,11 @@ refused), and log `offset=… guard=develop`.
 | every crc non-zero, name valid | `ModuleBlock` | config error |
 | DEVELOP (`sel_write_enforce` present) | module init | `-EOPNOTSUPP`, nothing written |
 | ABI (vermagic suffix, `module_layout`, remaining CRCs) | kernel loader | `ENOEXEC`, device stays up |
+| `module_layout` override (`profile ≠ asset's built value`) | S4 ship check | `--check` fails without a gate record for that release + image sha |
+
+This last rule is the only build-time one: the app cannot check it at run time, so the ship
+check recomputes `profile.crcs.module_layout` against the asset's `__versions` entry and
+requires the gate record only when they differ.
 
 ## 4. Slices
 
@@ -210,7 +229,7 @@ regeneration unchanged for every non-module profile.
 
 **S3 — delivery patcher.**
 Files: new `app/.../data/ModulePatch.kt`; `BundledModule.kt`; `BundledModuleTest.kt`; a
-`RunStore` meta line (`module crcs=… delivered=…`).
+`RunStore` meta line (`module crcs=… delivered=… layout: asset=0x… profile=0x… patched=…`).
 Gates: unit tests over the real assets — star CRCs, venus CRCs, wrong name set,
 duplicate/missing entry, idempotence; a host end-to-end test that stages the asset, patches
 it, and re-reads the five entries. No native change ⇒ `cmp_disasm` not applicable (state
@@ -221,6 +240,11 @@ Files: replace the two `.ko` assets with `modules/5.4-line.ko`; the two document
 `module.asset`/`sha256`; `tools/ship_golden_profiles.py` (`--check` verifies, per module
 profile: asset exists, hash matches, crcs names equal the asset's `__versions` names, and
 — where a recorded symvers exists — the values); `BuiltinProfilesTest`.
+`--check` also derives `profile.crcs.module_layout` against the asset's `__versions` entry:
+equal → nothing further; different → require a gate record for that exact release and image
+sha (`external/test-kernels/<release>/gate-<release>.txt` with its console) and fail
+otherwise. That is the build-time home of the "was this pair gated" rule; the profile does
+not carry it.
 The 5.4 documents are hand-finished (there is no 5.4 store entry); the values come from
 `external/port/dirtyfrag-5x-gate-2026-11-21/g4d-switch-modules/*.symvers`. Future lines use
 the same recorded-symvers procedure.
@@ -239,7 +263,10 @@ push if an APK is cut (`BUILD.txt`).
 
 1. **`module_layout` is a conservative hash.** Star and venus differ while the loader-visible
    layout matches; an equality check would break the feature. The line asset's coverage is
-   exactly its QEMU-gated image set, recorded per pair.
+   exactly its QEMU-gated image set, recorded per pair. A profile-side layout assertion was
+   considered and rejected (2026-11-26): it could only repeat `image_sha256` and a prose
+   evidence string, neither verifiable at run time, and would read as verification. The rule
+   lives in S4's ship check instead.
 2. **A wrong profile now fails at load, not at build.** Intended, but it moves the failure
    from CI to the device: the QEMU gate and the ship check are the only pre-device nets.
 3. **The patcher is on the attack path** (bytes entering a vendor_file before insmod). It is
