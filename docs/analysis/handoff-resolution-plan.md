@@ -1,259 +1,551 @@
-# Handoff resolution — one detector, one selected manager, one explicit plan
+# Handoff resolution — one detector, one rule set, one precondition per run
 
-**Status:** design for operator approval, 2026-11-26. L-level (the delivery path's
-selection). No code yet. Slices and gates below are the implementation contract.
+**Status:** design for approval, revised 2026-11-27 after review. L-level (the delivery path's
+selection). No code yet. The slices and gates below are the implementation contract.
 
 **Question.** The root manager is currently chosen by an inference — the module pipeline
 stages Magisk, and `handoffEnv(magiskBin)` reads a non-null directory as "hand off to
 Magisk"; every other run gets the `kernelsu` default. Is that good enough, and what should
 replace it before a second KernelSU path exists?
 
-**Answer.** No, it is a v1 accident that happened to be correct. Replace it with: one
-detector that enumerates **both** manager families, one resolver that turns
-`(release, selected manager)` into a `HandoffPlan` with a feasibility verdict and a
-**reason**, and the native reads the plan (the `GHOSTLOCK_HANDOFF` transport stays). The
-pipeline stops constraining the family; the version gate for KernelSU becomes a named
-feasibility fact, not an implicit failure after the exploit.
+**Answer.** No, it is an accident that happened to be correct. Replace it with **one
+precondition, implemented once in the app process and called by every route before it does
+anything**: a detector that enumerates both manager families, a rule set that turns
+`(release, user choice, candidates)` into a `HandoffResolution` — a verdict per discovered
+manager, a derived per-family summary, and an ordered target list — and a transport that stages
+those targets. The native reads the plan (the `GHOSTLOCK_HANDOFF*` env transport stays; it now
+carries the ordered list). KernelSU's kernel-line limit becomes a named feasibility fact
+evaluated before the exploit, and every route's handoff script attempts the same two families in
+the same order.
 
-## 1. What exists today, and why it holds only by accident
+**Decisions taken in the review (operator, 2026-11-26/27):**
 
-- **`ManagerScanner`** (`app/.../data/ManagerScanner.kt`) enumerates KernelSU-family
-  managers only: an ELF prefilter, a `late-load`/`allow_shell` token scan, and a
-  `late-load --help` probe. `Candidate.suitable` is that verdict; `resolve(candidates,
-  selected)` picks the stored `manager_package` or the first suitable. Two call sites:
-  the run-start preflight (`AndroidGhostlockRepository.kt:823-845`) and the Shizuku
-  service.
-- **`MagiskStage`** (`app/.../data/MagiskStage.kt`) separately looks up
-  `com.topjohnwu.magisk` / `io.github.vvb2060.magisk`, and stages
-  `magisk`/`magiskinit`/`magiskpolicy` (+ four optional) from the APK's native libs.
-- **The switch**: `handoffEnv(magiskBin)` (`AndroidGhostlockRepository.kt:1263-1271`)
-  sets `GHOSTLOCK_HANDOFF=magisk` iff `magiskBin != null`; the two DirtyFrag stage calls
-  pass `run?.magiskBin` (`:1421`, `:1483`). `run` is the `ModuleRun`, created only in the
-  module-pipeline resolver block (`:1603-1647`, which today *requires*
-  `MagiskStage.stage` to succeed). Otherwise the env is absent and the native's
-  `RuntimeConfig` default `"kernelsu"` applies (`src/core/session/runtime_config.h:73`,
-  parsed at `runtime_config.cpp:119`), baked into the script at `ops.cpp:314`/`:911`.
-- **The script** keeps two branches under one `if [ "$HANDOFF" = magisk ]`
-  (`ops.cpp:763`): `magisk_handoff()` (`:420-473`) and the KernelSU late-load branch
-  (`:776-860`), whose KMI derivation fails closed on a tokenless 5.4 kernel.
+- Magisk is a handoff target on **every** route; there is no per-route manager special-casing.
+  Magisk's handoff is device-proven (the module chain, several runs), so it is not treated as a
+  risky option.
+- The timer route is not an exception. Its `fake` endgame writes `selinux_state` and verifies
+  `enforce == 0` (`src/timer/timer.c`, the `stage_write(SELINUX_STATE_STATIC + slide - 7, …)`
+  block) before the handoff script runs, so it has the permissive window `magisk_handoff()`
+  needs. What it lacks is the script branch and the staging (S3).
+- **The feasibility check is a precondition, implemented the same way for every route** —
+  direct, Shizuku, timer — in the app process. A route does not get its own verdict, its own
+  visibility, or a later decision. If the check says no, the run does not start.
+- **No preference order beyond a no-choice default.** The stored choice wins when it is
+  feasible; with nothing stored the detector's order runs — KSU candidates first, then Magisk
+  (today's W1 default). Nothing is written when the user has not chosen (Auto = no key).
+- **`QUERY_ALL_PACKAGES` stays.** A normal permission: granted at install, no prompt, no user
+  action. It keeps the detector a whole-device scan instead of a known list; the two Magisk
+  `<queries>` are added anyway as the explicit support list.
+- **No manager ⇒ refuse.** No feasible manager blocks the run at the precondition, with a reason
+  naming both families. `NONE` ("root shell, no manager") is deferred to the day the app owns a
+  root mechanism to hand to.
+- **Fail-closed on a detector error.** A detector that throws blocks with its error as the
+  reason, exactly like a detector that found nothing (§2.5).
+- **`module + KSU` is not a special case.** The rules are route-free; there is no ≥5.10 module to
+  exercise the pair with today, so nothing needs a gate. The first ≥5.10 module profile is
+  device-gated by the standing new-profile rule like any other profile.
 
-The defects that follow:
+## 1. What exists today
 
-1. **Inference, not decision.** "A Magisk directory exists" means "hand off to Magisk"
-   only because the module branch is the only thing that stages one. A second capable
-   manager makes the inference wrong, silently.
-2. **Asymmetric feasibility.** Module ⇒ Magisk is checked before the exploit; W1 ⇒ KSU is
-   a compile-time default with no resolution-time check. A device with no suitable ksud
-   fails after the exploit, not before.
-3. **No reason on record.** The script logs which branch ran; the app and run store do
-   not say why it was chosen or why the alternative was rejected.
-4. **One branch, two contracts.** The venus KMI bug (2026-11-26) was a precondition only
-   one handoff needed, shared by both; the fix moved it into the KSU branch. The
-   structural form of that lesson is not yet taken: each handoff should own its
-   preconditions.
+Four decision points and two scripts:
+
+1. **Run-start preflight** (`AndroidGhostlockRepository.preflight`) scans KernelSU-family
+   managers only and blocks with `NO_ROOT_MANAGER` when none is suitable. The manager scan does
+   **not** look at the profile (only the anchor check does), so it applies to every direct and
+   Shizuku run.
+2. **`PipelineResolver`'s module entry** (the module lambda in `AndroidGhostlockRepository`)
+   calls `MagiskStage.stage` and rejects the entry when it returns null.
+3. **`stageKsud`** scans again for every non-module run and stages the chosen KSU binary.
+4. **The Shizuku service** scans and stages ksud again, in the service process (the W1 path and
+   the timer path), and sets **no** handoff env, so the native's `kernelsu` default applies.
+   The picker (`managerCandidates`) is a fifth scan.
+
+The switch: `handoffEnv(magiskBin)` sets `GHOSTLOCK_HANDOFF=magisk` iff the module chain staged
+a Magisk directory; otherwise the env is absent and `RuntimeConfig`'s default `"kernelsu"`
+applies (`src/core/session/runtime_config.h`), baked into the root script by `ops.cpp`.
+
+The scripts: `src/core/attack/ops.cpp` serves the module and W1 pipelines (`magisk_handoff()`
+and the KSU late-load branch under one `if [ "$HANDOFF" = magisk ]`); `src/timer/timer.c`'s
+`write_ksu_script()` serves the timer route, KernelSU only.
+
+### The defects
+
+1. **Inference, not decision.** "A Magisk directory exists" means "hand off to Magisk" only
+   because the module branch is the only thing that stages one.
+2. **Asymmetric feasibility — and inverted on 5.4.** Module ⇒ Magisk is checked before the
+   exploit; W1 ⇒ KSU is a compile-time default with no resolution-time check. Worse, because the
+   preflight does not look at the profile, a **module-only 5.4 device needs a KSU manager to
+   start at all** and Magisk to stage; a device with only Magisk is refused at run start with
+   "No usable ksud found", and a device with only KSU fails the module entry. Only a device with
+   neither gets an honest refusal.
+3. **No reason on record.** The script logs which branch ran; the app and run store do not say
+   why it was chosen or why the alternative was rejected.
+4. **One branch, two contracts.** The venus KMI bug (2026-11-26) was a precondition only one
+   handoff needed, shared by both; the fix moved it into the KSU branch. Each handoff should own
+   its preconditions.
+5. **Per-process, per-route verdicts.** The app and the service each scan, with different
+   visibility and different code paths; the timer does not go through the app's check at all.
+   Nothing owns "which manager this run uses".
 
 ## 2. Design
 
 ### 2.1 One detector
 
-A `RootManagerDetector` returns candidates from both families, read-only:
+A `RootManagerDetector` returns candidates from both families, read-only, **in the app
+process**. The services stop scanning: they receive the chosen plan and stage it (§2.3). The
+model is defined once in §2.2.
 
-```kotlin
-sealed interface RootManager {
-    val packageName: String; val label: String
-    data class Ksu(val ksudPath: String, val interfaceOk: Boolean?, ...) : RootManager
-    data class Magisk(val nativeLibDir: String, val required: Set<String>) : RootManager
-}
-```
-
-- The KSU pipeline is today's `scan()` unchanged (ELF prefilter → tokens → `late-load
-  --help`); `interfaceOk == null` (probe unavailable) keeps its static-token fallback.
-- The Magisk branch is `MagiskStage`'s lookup minus the staging: the package exists and
-  its `nativeLibraryDir` carries `magisk`, `magiskinit`, `magiskpolicy`. **Detection must
-  not stage** — `MagiskStage.stage` deletes and rewrites its destination directory, so
-  staging belongs to the selected candidate only.
+- The KSU **candidate discovery** is today's `ManagerScanner.scan()` (ELF prefilter → tokens →
+  `late-load --help`); the KMI probes (§2.4) are a separate feasibility step over the suitable
+  candidates, added in S2. A candidate is usable exactly when `Candidate.suitable` is true — that
+  is `interfaceOk == true`, or probe-unavailable with both static tokens (`lateLoadToken &&
+  allowShellToken`). `suitable` is the candidacy gate; §2.4 adds feasibility on top of it, never a
+  second candidacy predicate.
+- The Magisk branch is `MagiskStage`'s lookup minus the staging, over both packages in `PACKAGES`
+  order (`com.topjohnwu.magisk`, then `io.github.vvb2060.magisk`): each installed package whose
+  `nativeLibraryDir` (or APK members) carries `magisk`, `magiskinit`, `magiskpolicy` is a row.
+  Today's `managerInfo` returns only the first; the detector enumerates both. **Detection must
+  not stage** — `MagiskStage.stage` deletes and rewrites its destination directory, so staging
+  belongs to the selected candidate only.
 - No persistent cache (same rule as `ManagerScanner`: a stale "capable" verdict is the one
-  failure worth avoiding).
+  failure worth avoiding). The returned plan is the only reuse: `stageKsud` and the service
+  consume it instead of scanning again.
 
-**Package visibility (measured 2026-11-26, diting, Android 15).** The detector does not
-need `QUERY_ALL_PACKAGES`: a probe app (`targetSdk` 31) with **no permissions** and only
-`<queries>` entries resolved `com.topjohnwu.magisk` and `com.resukisu.resukisu` via
-`PackageManager.getPackageInfo`, while an undeclared installed user app
-(`com.rifsxd.ksunext`) was HIDDEN and `getInstalledPackages(0)` returned 273 of the
-shell's 356 packages. (The visible-set count confirms the filter is active; system
-packages such as Settings are auto-visible and are not a valid negative control.
-`run-as <app> pm path <pkg>` is **not** a faithful probe — it resolves undeclared
-packages; use the app-context `PackageManager` call.)
+**Package visibility.** `QUERY_ALL_PACKAGES` is a **normal** permission: the system grants it
+at install, with no prompt and no user action. It is **kept** (decision, 2026-11-26): it is what
+makes the detector a whole-device scan rather than a known list — `ManagerScanner` walks every
+installed app's native lib dir, and `getPackageInfo` works for a manager whose package name this
+app has never shipped. The only cost is disclosure (the manifest states the app can read the
+installed-app list), plus a Play justification requirement if the app ever ships there; the
+distribution is GitHub/NAS.
+
+Measured 2026-11-26 on the diting (Android 15), for the case where the permission is ever
+dropped: a probe app (`targetSdk` 31) with **no permissions** and only `<queries>` entries
+resolved `com.topjohnwu.magisk` and `com.resukisu.resukisu` via `PackageManager.getPackageInfo`,
+while an undeclared installed user app (`com.rifsxd.ksunext`) was HIDDEN and
+`getInstalledPackages(0)` returned 273 of the shell's 356 packages. (`run-as <app> pm path
+<pkg>` is **not** a faithful probe — it resolves undeclared packages; use the app-context
+`PackageManager` call.)
 
 Consequences:
 
-- The manifest must declare both Magisk packages in `<queries>`:
-  `com.topjohnwu.magisk` and `io.github.vvb2060.magisk` (the six KSU packages are already
-  declared). Without the entries, `getPackageInfo` throws and `MagiskStage` reads as
-  "manager not installed".
-- If `QUERY_ALL_PACKAGES` is removed (decision §4.6), `ManagerScanner`'s enumeration
-  shrinks to the visible set: the declared builtins still scan normally, but an
-  undeclared KSU fork becomes invisible — the detector is a known-list check. File access
-  to the manager's APK/libs is unaffected by visibility; it was never the permission that
-  allowed the staging copy.
+- The manifest declares both Magisk packages in `<queries>` (`com.topjohnwu.magisk`,
+  `io.github.vvb2060.magisk`); the six KSU packages are already declared. Today's code path does
+  not need them (the permission covers it), but they make the support list explicit and keep
+  Magisk detection working if the permission is ever removed.
+- With the permission, the app process and the shell uid see the same package set, so the single
+  detector has no visibility gap against the service.
 
-### 2.2 One resolver
+### 2.2 One rule set, no product ranking
 
 ```kotlin
-data class HandoffPlan(
-    val kind: Kind,              // KSU | MAGISK          (NONE is an open decision, §4.1)
-    val state: State,            // FEASIBLE | INFEASIBLE
-    val reason: String,          // required; user-facing and written to the run store
-    val manager: RootManager?,
-    val payload: Payload,        // ksu: ksud path; magisk: staged bin dir
+enum class Kind { KSU, MAGISK }
+enum class State { FEASIBLE, INFEASIBLE }
+
+/** A discovered manager. Identity: package + payload path — the scanner emits one row per
+ *  executable-shaped ELF, so the same package can appear more than once. */
+sealed interface RootManager {
+    val kind: Kind
+    val packageName: String
+    val label: String
+    data class Ksu(val ksudPath: String, val interfaceOk: Boolean?) : RootManager
+    data class Magisk(val nativeLibDir: String, val required: Set<String>) : RootManager
+}
+
+/** One row per discovered manager. Key: `manager` — it is never null. */
+data class HandoffVerdict(
+    val manager: RootManager,
+    val state: State,
+    val reason: String,          // required; doubles as the evidence line
 )
+
+/** The precondition's result: every candidate judged, nothing staged yet. */
+data class HandoffResolution(
+    /** One row per discovered candidate, detector order. */
+    val verdicts: List<HandoffVerdict>,
+    /** Feasible rows in attempt order: the stored choice first, then detector order. */
+    val feasible: List<HandoffVerdict>,
+)
+
+/** The transport's result: a feasible manager, the staged payload, and (KSU) the KMI to pass. */
+data class HandoffTarget(val manager: RootManager, val source: String, val kmi: String?)
 ```
+
+One table and one transport list:
+
+- **`verdicts`** — one row per discovered candidate, in detector order, keyed by the **manager**
+  (package + path).
+  A rejected candidate keeps its row and reason; `manager` is never null. A reason can come from
+  the manager itself (`Failed to get KMI from boot/modules`) or from the fallback rule
+  (`kernel line <5.10`); either way it is attached to each candidate row it rejects, so nothing is
+  lost by not storing a family row.
+- **`targets`** — built by the transport from the feasible rows, in order, each with the staged
+  source the script will read. The list's head is the manager the run uses if nothing fails.
+
+The **family lines** (app log, refusal, picker headers) are a projection computed where they are
+printed, never stored:
+
+- a feasible row of that kind exists → `feasible via <package>`;
+- rows exist but none is feasible → the first row's reason;
+- no rows at all → a fixed per-kind line **in the projection** (`KSU: no ksud with late-load
+  --help`, `Magisk: not installed`) — a constant, not resolver data.
 
 Feasibility rules, evaluated **before the exploit**:
 
 | family | feasible when | infeasible reason (examples) |
 |---|---|---|
-| KSU | release `major.minor >= 5.10` **and** a suitable ksud is staged (`interfaceOk != false`) | `ksu: kernel line <5.10 has no late-load module` (the temporary gate, §2.4); `ksu: no ksud with late-load --help` |
-| Magisk | the manager package exists and all required native libs are present | `magisk: manager not installed`; `magisk: native libs incomplete (missing magiskpolicy)` |
+| KSU | the candidate is `suitable`, `boot-info supported-kmis` succeeds, and `boot-info current-kmi` exits 0 with output in that list (the release rule is the fallback when the manager cannot answer) | `Failed to get KMI from boot/modules`; `supported KMI list does not contain android11-5.10`; `no ksud with late-load --help` |
+| MAGISK | the candidate's package resolved and all required native libs are present | `manager not installed`; `native libs incomplete (missing magiskpolicy)` |
 
-Selection: the stored package (`ManagerScanner.PREF_KEY = "manager_package"`) if it
-resolves to a **feasible** candidate; otherwise a defined auto order, with the stored
-choice self-healing (cleared, like the route/carrier choices, when the package is gone).
+**Route conditions: none.** The signature has no route or pipeline parameter; a route cannot
+narrow a family, and the timer's `fake` endgame opens the same permissive window (§2.6).
 
-Auto order is a **product preference table**, not a feasibility fact, so it can change
-without touching the rules:
+Selection produces `feasible` in this order; the transport then turns it into targets:
 
-| pipeline | v1 order | why |
+1. the stored `manager_package`'s row first, if it is feasible;
+2. the rest in the detector's order (below);
+3. no feasible row ⇒ `feasible.isEmpty()` ⇒ the run is refused with the family lines' reasons.
+
+A stored choice that is infeasible but installed is **kept** and logged (`selected: … infeasible
+— using …`); only a choice whose package no longer exists is cleared. That is deliberately
+stronger than the route/carrier self-healing in `AndroidProfileConfigController`, which clears
+any name outside the viable set: a manager is a user choice, not a derived one.
+
+The detector's order — **KSU candidates first (today's ranking: `suitable`, `interfaceOk`,
+`builtin`, label), then Magisk** — is the no-choice default, decided 2026-11-26. The picker's
+"Auto" stores nothing (the preference key is absent), so the order applies only when the user
+has never chosen; it preserves today's W1 default. A stored choice is a **preference, not an
+exclusion**: the chosen manager's row goes first, and every other feasible candidate remains a
+fallback.
+
+**`module + KSU` is allowed** like any other pair: the rules are route-independent, so there is
+no per-route exception. On 5.4 the manager's own `current-kmi` fails (or the fallback line rule
+refuses), so the module route keeps handing off to Magisk; on ≥5.10 both families can be feasible
+and the order applies like any other pair. No bundled module profile is ≥5.10 yet, so nothing
+exercises that pair today; the first one will be device-gated by the standing new-profile rule
+like any other profile.
+
+### 2.3 One transport rule
+
+`env(targets)` — the transport's list, not the resolution — carries the order in one variable:
+`GHOSTLOCK_HANDOFF_TARGETS` = newline-separated entries, first = the selection —
+`magisk:<dir>` for the Magisk libs, `ksu:<kmi>:<source>` for a ksud and the KMI to pass.
+It replaces `GHOSTLOCK_HANDOFF`/`GHOSTLOCK_MAGISK_BIN`; `RuntimeConfig` parses the list, and the
+binary that writes the script materializes it — with the script's other parameters — into a
+sidecar beside the script (§2.6). The process environment cannot carry them: the DirtyFrag init
+shell does not inherit it, and the timer child has a fixed `envp`.
+
+- **Direct routes**: the app stages each target's payload into `filesDir` (a ksud copy per KSU
+  target, the Magisk libs once) and passes `env(targets)` to `runStage` — the two DirtyFrag stage
+  calls, module and W1.
+- **Shizuku routes**: the app passes the ordered **managers** and their KMI over the existing
+  AIDL (`managerPackage` becomes the ordered list), and the service stages each into
+  `/data/local/tmp/ghostlock-app` **without re-deciding**. The app's filesDir is not readable by
+  the shell uid, so the service copies from each manager's own origin path.
+- **Timer**: the same as Shizuku, plus the targets passed to `libtimer`, which writes the sidecar
+  (S3).
+
+The `source` in a `HandoffTarget` is process-local: each staging site produces its own copy (the
+app's `filesDir`, the service's working dir, the timer workdir); what travels is the manager's
+origin path and the KMI, never a path from another uid's sandbox.
+
+A target whose payload cannot be staged is **dropped before the exploit** and logged; if none
+remains the run fails before the native (past the precondition, so it is a run-start failure,
+not a dialog). That is a transport refinement, not a re-decision by the script: the script only
+attempts the list it was given (§2.6).
+
+The app log prints the derived **family** lines and the effective target; the run-store meta
+keeps every **candidate** verdict, alongside `module pair`:
+
+```
+handoff=magisk state=feasible reason=selected:com.topjohnwu.magisk
+handoff=ksu state=feasible reason=available (2 candidates)
+handoff-target=ksu effective=2/2 (1-based; target 1 magisk: magiskd did not start)
+```
+
+### 2.4 Feasibility is early and named: the manager's own KMI interface
+
+The primary rule is the **manager's own interface**, not a derivation of ours. `ksud boot-info`
+(verified 2026-11-26 on three rigs: ReSukiSU 4.2.0-rc3 and KernelSU-Next 3.4.2) offers:
+
+- `boot-info current-kmi` → one KMI line — `android12-5.10` on the diting, `android14-6.1` on the
+  duchamp, `android15-6.6` on the OnePlus 13s — exit 0;
+- `boot-info supported-kmis` → the embedded `*_kernelsu.ko` asset names, one per line; the same
+  eight on both managers, with **no 5.4 line and no `android11-5.10`**.
+
+A KSU candidate is feasible when it is `suitable` **and** `supported-kmis` succeeds **and**
+`current-kmi` exits 0 **and** its output is a member of that list. `supported-kmis` doubles as the
+capability probe: if it fails, the manager cannot answer and the fallback rule applies. The reason
+is the manager's own stderr (`Failed to get KMI from boot/modules`) or a named `supported KMI list
+does not contain <kmi>`; nothing is parsed by us. Two extra execs per suitable candidate, in the
+rule step.
+
+**Why not validate the KMI against `uname -r`.** It is tempting, but the manager's source
+(`boot_patch::get_current_kmi`) parses `uname -r` first and — when that fails — falls back to a
+kernel module's `vermagic` under `/vendor/lib/modules`. On exactly the kernels where uname parsing
+fails, the KMI can legitimately not appear in uname at all, so "split the KMI and search uname"
+would refuse a handoff that works. When the KMI did come from uname, the check is tautological.
+The two parts may feed a **diagnostic log line** only (`KMI from vermagic, not uname`), never the
+verdict.
+
+**Fallback: the release mirror.** A manager that cannot answer — `boot-info` absent, or
+`supported-kmis` failing — falls back to the release rule. Its parse and token rows are
+`ops.cpp`'s old derivation (`:793-819`); the `major.minor < 5.10` row is **new** — the script
+never compared versions and refused a 5.4 qgki kernel only because its uname carried no
+`android<NN>` token:
+
+| condition (in this order) | verdict | reason |
 |---|---|---|
-| module (5.4 line) | `magisk → ksu` | Magisk needs no kernel module; KSU is infeasible below 5.10 anyway |
-| W1 (5.10+) | `ksu → magisk` | today's default; KSU is the managed root the chain expects |
+| `<major>.<minor>` does not parse | infeasible | `uname -r has no numeric <major>.<minor>` |
+| `major.minor < 5.10` | infeasible | `kernel line <5.10 has no late-load module` |
+| no `android<NN>` token | infeasible | `uname -r carries no android<NN> token` |
+| otherwise | feasible | — |
 
-The module chain's hard `MagiskStage.stage` requirement (`:1603-1647`) is replaced by
-"resolve a feasible plan, then stage that candidate". On 5.4 this is observably
-identical; it becomes a real generalization only after §4.2's gate.
+The table is pinned by a Kotlin unit test. There is no shell counterpart to mirror once S2
+deletes the script's derivation; it is not the primary path.
 
-### 2.3 The selected plan goes down the existing wire
+**The KMI travels with the target.** The resolver passes the KMI it used — the manager's
+`current-kmi` answer, or the value the fallback mirror derived — inside the KSU target, and the
+script passes it verbatim (`late-load --kmi "$kmi" --allow-shell`). The script must **not** re-derive it: its
+old derivation reads only `uname -r`, so it would refuse a KMI the manager legitimately took from
+vermagic. Defence in depth becomes the readiness check (`kernelsu` in `/proc/modules`) and the
+ordered fallback, not a second derivation.
 
-`handoffEnv(plan)` replaces `handoffEnv(magiskBin)` and serialises the plan:
-`GHOSTLOCK_HANDOFF=…`, `GHOSTLOCK_MAGISK_BIN=…` (Magisk), and nothing new for KSU
-(ksud is already `$HOME_DIR/ksud` + the six `/data/app` patterns). The native's
-`RuntimeConfig` is unchanged; the script's two branches are unchanged. The `none` value
-is not added in v1 (§4.1).
+### 2.5 The precondition, and the run
 
-Every plan is logged and recorded:
+**One entry point, one process, every route.** The precondition **is** `preflight()`; it calls
+`resolveHandoff(release, storedChoice)` internally and returns the plan. Every route calls the
+same function, before anything else:
+
+| route | call site | on no feasible row |
+|---|---|---|
+| direct (module, ghostlock, dirtyfrag) | `preflight(useShizuku = false)` in `runExploit` | `PreflightFailure`, no run store, no native |
+| Shizuku W1 | `preflight(useShizuku = true)` in `runExploit`, before dispatch | same refusal |
+| timer (`fake`/`zero`) | `preflight(useShizuku = true)` from `onRunTimer`, before the service call | same refusal, logged |
+| timer `probe` | not a handoff run — no check | — |
+
+The refusal names **both** families and appends their reasons — `no feasible manager:
+KSU: Failed to get KMI from boot/modules; Magisk: not installed` — as a new string replacing
+`manager_picker_empty` for the run refusal (the picker's empty toast keeps the old one).
+
+The timer passes the Shizuku flag because that flag already selects the anchor rule that
+applies to it: no anchor check (the timer uses no lock anchor, and the direct chain's anchor
+state file is not the service's to judge). A route enum would state that more directly, but it
+is not required for this change.
+
+The plan is **returned** (`PreflightResult.Passed(plan)`), replacing today's `preflightManager`
+stash and its TTL, and passed explicitly rather than stored: `runExploit(config, plan)`,
+`runExploitWithShizuku(config, plan)` and `runTimerRoute(plan, onLog)` — through
+`RunExploitUseCase` and the ViewModel — so the direct run, the Shizuku dispatch and the timer
+dispatch all consume the same object and a plan cannot outlive its preflight.
+
+Properties it must keep:
+
+- **Detection and rules only; no staging.** Staging belongs to the transport (§2.3).
+- **Fail-closed on both a detector error and an empty result.** A scan that throws blocks with
+  the exception as the refusal's reason — the same dialog path as a genuinely missing manager.
+  Today's fail-open existed because `stageKsud` re-scanned independently ("let stageKsud report
+  it"); with one detector there is no second scan, so an errored scan can only yield an empty
+  plan the transport cannot stage, and the run would die later with a worse message.
+- **No pipeline parameter.** The manager is decided before the pipeline walk; the walk no longer
+  changes it. (`PipelineResolver` still chooses the route; it consumes the manager the
+  precondition chose, and the family follows from it.)
+- **One verdict for the picker and the run.** The picker calls `resolveHandoff` (detection and
+  rules only, no anchor), so what it shows is what the run enforces.
+
+Staging order inside a run is unchanged: the module entry builds the targets (stages the
+feasible rows) to decide the entry — a row that cannot be staged is dropped, none left rejects
+the entry and falls through, as today; a non-module run stages before the native. Nothing
+re-decides the manager or reorders the list.
+
+### 2.6 The handoff scripts
+
+| route | wrapper | handoff core |
+|---|---|---|
+| module, W1 (ghostlock, dirtyfrag) | `ops.cpp` — fixup/vr.ko/dumps prologue, sidecar, report | shared |
+| timer | `timer.c` — write the core + sidecar, run it as the fake-cred child | shared (Magisk with S3) |
+
+**One core, two wrappers.** The handoff is implemented once: `src/core/handoff/` carries a real
+`.sh` file, embedded at build time into a C-compatible header and compiled into both binaries
+(`src/Makefile` gains the generated header and a `sh -n` check). Writing bytes instead of a
+printf format removes the `%`-escaping layer the venus KMI bug lived in. The wrappers may only
+add route-specific prologue/epilogue; they may not grow their own handoff steps.
+
+The core owns the ordered attempt loop:
 
 ```
-handoff=magisk reason=selected:com.topjohnwu.magisk feasible=1
-handoff=ksu state=infeasible reason=kernel-line<5.10
+for t in targets:                     # from the sidecar, never the environment
+    magisk -> magisk_handoff "<dir>"
+    ksu    -> "<src>" late-load --kmi "<kmi>" --allow-shell
+    readiness: magisk -> magiskd alive; ksu -> `kernelsu` in /proc/modules
+    log handoff-attempt idx=N kind=… rc=… ready=…
+    if ready: handoff-target=<kind> idx=N ; break
+handoff_before_restore                # wrapper hook: ops dumps + module unload; timer nop
+restore enforce (once, after the last attempt)
+report <handoff ok | manager-not-ready>
 ```
 
-app log + run-store meta, alongside the existing `module pair` line.
+The KSU invocation is exactly what the probe guarantees (`--allow-shell` and `--kmi`).
+`--package-name` and the auto-detected KMI both go: the ops invocation, which passes neither, has
+carried the handoff on ReSukiSU (diting, `20261109-002934`) and KernelSU-Next 3.4.2 (the OnePlus
+DirtyFrag gate), both from a copied ksud. If a future manager needs the flag, that is a probe
+contract change, not a per-route one.
 
-### 2.4 The temporary KernelSU gate
+**Parameters travel in a sidecar.** The script cannot read the process environment: the
+DirtyFrag init shell does not inherit ours, and the timer's child has a fixed `envp[]`
+(`timer.c`). So the binary that writes the script also writes its parameters into a file beside
+it — the same `GHOSTLOCK_HANDOFF_TARGETS` entries, plus `LOG`, `SAFE_MODE`, the vr.ko mode and
+`MODULE_PATH`/`MODULE_KO`. The core derives the directory from `$0`, which is the script path in
+all three executors (`execl`, the DirtyFrag init shell, the timer child).
 
-> **KSU is infeasible on kernels < 5.10.** Late-load selects `<kmi>_kernelsu.ko` from the
-> manager's embedded assets; the official builds ship `android12-5.10` and later, and a
-> vendor `5.4 qgki` has no KMI token at all.
+Readiness is strict (a pid / a `/proc/modules` line), so a half-started Magisk never coexists
+with a KSU load. The restore and the single report sit **outside** the loop — today ops calls
+`finish_run`/exit inside a branch and the timer script exits before its restore; moving them out
+is the cost of the fallback, and it fixes the timer's leak in passing.
 
-Encoded as a pure `ksuFeasibility(release)` reason in the resolver, so:
+**The script's own discovery goes.** With the targets carrying every source, `ops.cpp`'s `KSUD`
+search — `$HOME_DIR/ksud`, the six `/data/app` `find` patterns, `/data/local/tmp/ksud`,
+`/data/adb/ksu/bin/ksud` — and the timer script's `pm path` loop are **deleted**, not kept as a
+fallback. Two things stay, and neither is discovery: the Samsung DEFEX retry, which bind-mounts
+the *target's* source over `/system/bin/lmkd` and re-runs it, and the readiness check (`kernelsu`
+in `/proc/modules`). A missing or empty target list fails closed with a named reason — the app
+always supplies one, so that would be a bug, not a case to guess at. The timer script's other
+divergences — `--package-name`, the absent `--kmi`, its own readiness check — go with the same
+change; the shared core is what stops them coming back.
 
-- the 5.4 module chain is unchanged (Magisk is the only feasible family);
-- a 5.4 device with no Magisk is **refused before the exploit** with that reason, instead
-  of failing at `ksud-missing` or at the KMI guard afterwards;
-- lifting it later is a deliberate change tied to a gated compatible build (a fork with an
-  embedded 5.4 module, or a user-supplied hash-pinned `.ko` via `insmod`), not deleting a
-  string compare.
+The timer's `fake` endgame is its permissive-window route: it writes `selinux_state` (with
+retries and a read-back of `enforce == 0`) and `panic_on_warn`, then runs the script as the
+fake-cred child (full caps, `u:r:shell:s0`). `magisk_handoff()` needs exactly that state, so S3
+is a **second consumer and a staging path, not a mechanism**: the tool writes the shared core
+plus the sidecar and executes it, and the core's single restore covers the failure exits the
+current timer script misses (a missing ksud exits before its `echo 1 > enforce`).
 
-The script's KMI guard stays as defence in depth: the Kotlin gate makes the common case
-early and named; the guard still fails closed if a handoff is ever forced.
+## 3. Slices
 
-## 3. Files and slices
+**S1 — detector + resolver + one precondition, a strict refactor.**
+Files: `ManagerScanner.kt` (family + Magisk detection; `resolve` unchanged), `MagiskStage.kt`
+(split detection from staging), new `HandoffResolver.kt`, `AndroidGhostlockRepository.kt`
+(`preflight` calls `resolveHandoff` and **returns** the plan; `runExploit` /
+`runExploitWithShizuku` take it; `stageKsud` consumes it — the `preflightManager` stash and its
+TTL go; one log/meta line), `GhostlockRepository.kt` (interface), `GhostlockUseCases.kt`,
+`GhostlockViewModel.kt` (`Passed(plan)` → the run call), `ShizukuExploitRunner.kt` (the ordered
+list replaces `managerPackage`), `GhostlockUserService.kt` (consume the plan; drop the
+`runExploit` scan only — the timer path keeps its scan and staging until S3),
+`IGhostlockUserService.aidl` (`runExploit`'s `managerPackage` → the plan; the timer call is
+unchanged until S3), `AndroidManifest.xml` (add the two Magisk `<queries>`; `QUERY_ALL_PACKAGES`
+stays).
+Selection in S1 is **KSU only** (today's rule; Magisk is detected but not yet selectable), so
+no outcome moves and the preflight still blocks a Magisk-only device. The module block keeps its
+explicit Magisk staging; the timer is untouched. The env stays today's
+`GHOSTLOCK_HANDOFF`/`GHOSTLOCK_MAGISK_BIN` — S1 changes no native code; the ordered list and the
+attempt loop arrive with S2.
+Gates: host tests over the pure resolver; app/profile-core suites; a diting W1 smoke whose
+logged plan matches the branch that ran; a manifest assertion (both queries present,
+`QUERY_ALL_PACKAGES` still declared).
 
-**S1 — detector + plan + resolver, no behaviour change.**
-Files: `ManagerScanner.kt` (unified candidates, Magisk detection, keep `resolve` for the
-package choice), new `HandoffResolver.kt`, `MagiskStage.kt` (split lookup from staging),
-`AndroidGhostlockRepository.kt` (`handoffEnv(plan)`, the module block, the preflight,
-logs/meta), `app/src/main/AndroidManifest.xml` (add the two Magisk `<queries>` entries;
-§4.6 decides `QUERY_ALL_PACKAGES`), `runtime_config` untouched.
-The v1 preference table reproduces today's mapping exactly.
-Gates: host tests over fake candidates and releases (`5.4.233…`, `5.10.236…`,
-`6.1.138…`); app/profile-core suites; device smoke that the logged plan matches the
-branch that ran (diting: ksu; star/venus: magisk).
+**S2 — the rules: KSU via `boot-info`, Magisk selectable, W1 Magisk, the attempt loop.**
+Files: `ManagerScanner.kt` (probe `boot-info supported-kmis` as the capability check, then
+`current-kmi`, over the suitable candidates; cache the answers for the run), `HandoffResolver.kt`
+(the KSU rule and its release fallback, the verdict list and the feasible order, the stored-choice
+rule),
+`src/core/handoff/` (the one core script, its build embed and the `sh -n` check),
+`src/core/attack/ops.cpp` (the wrapper: sidecar write, `KSUD` search and KMI derivation deleted,
+one restore and one report), `src/Makefile`, a host harness with stub `ksud`/`magisk`,
+`AndroidGhostlockRepository.kt` (the module entry consumes the plan, refusal text, meta),
+`GhostlockUserService.kt` (W1 staging through the one staging helper), `PreflightFailure` and the
+strings (EN+ZH), `runtime_config` (parse the list), tests.
+Behaviour change: a Magisk-only 5.4 device becomes runnable; a kernel with no matching KMI (5.4,
+or an unparseable/unlisted one) is refused **at run start** with the manager's own reason; W1
+gains the Magisk fallback; the core attempts the targets in order and records the effective one;
+a selected-but-infeasible manager is logged and skipped, not cleared.
+Gates: unit tests for every rule branch — including the release fallback and the probe's
+absent/failed cases, fed as fake outputs to the pure resolver; the two real managers on the
+diting (ReSukiSU) and the OnePlus (KernelSU-Next) reading `current-kmi` inside their supported
+list; a Magisk-only module run (none in hand — the star reporter is the out-of-band confirmation);
+and the 5.4 failure mode of `current-kmi`, which still needs a 5.4 unit with a ksud (the star, if
+its preflight's passing manager is a KSU one). The W1 Magisk branch is the same `magisk_handoff()`
+body under the same window as the module route; with no Magisk-only W1 unit in hand it is recorded
+as body-identical, not claimed as a separate device pass. Forcing a family while both are
+installed needs the picker (S4) or a debug hook — recommend a `--ez handoff_manager <pkg>` hook
+following the `fallback_test` precedent, retired with S4.
 
-**S2 — feasibility rules and the <5.10 gate.**
-Files: `HandoffResolver.kt` (the table, `ksuFeasibility`), picker strings
-(`FieldLabels` EN+ZH), the preflight refusal text, the run-store meta line.
-Behaviour change: a no-Magisk 5.4 device is refused early with the named reason; a
-selected-but-infeasible manager self-heals to auto.
-Gates: unit tests for every rule branch; the star/venus rig (module+Magisk completes);
-the diting (KSU feasible); a no-manager rig (refusal); a 5.4 rig with KSU selected
-(infeasible reason, no exploit run).
+**S3 — the timer route: the same precondition and the Magisk handoff.**
+Files: `src/timer/timer.c` (`write_ksu_script` becomes "write the shared core + sidecar and run
+it"; the `pm path` loop, `--package-name`, the auto-KMI and its own readiness are deleted, not
+ported), `GhostlockUserService.kt` (stage the plan's targets into the timer workdir through the
+same staging helper), `GhostlockViewModel.kt` (`onRunTimer` calls `preflight(useShizuku = true)`
+and passes the plan to the service), `GhostlockRepository.kt` (`runTimerRoute(plan, onLog)`),
+`ShizukuExploitRunner.kt` (the timer call carries the targets), strings/logs.
+Gates: `sh -n` on the generated script; a host test for the env; a diting timer `fake` run with
+Magisk forced (KSU control beside it): `MAGISK-PHASE`, magiskd, `enforce=1` restored, run-store
+verdict.
 
-**S3 — picker and stored selection.**
-Files: the root-manager picker (extend the existing Advanced entry), preference
-migration from the KSU-only key, `ManagerScannerTest`-style host tests for the pure parts.
-Gates: app suites; a device pass selecting each family and reading the logged plan.
+**S4 — picker and stored selection.**
+Files: the Advanced picker over both families with the evidence kinds (§4.3), the stored choice
+and its self-heal, host tests. Retires the S2 debug hook.
+Gates: a device pass selecting each family and reading the logged plan.
 
-**S4 — the future compatible fork (not in scope).**
-The extension point is one new KSU feasibility source in the resolver: an embedded KMI
-listed by `boot-info supported-kmis` (matched by an explicit rule or the user's choice),
-or `insmod` + a user-supplied `.ko`. Each carries its evidence; the `<5.10` rule is lifted
-only for a gated build, and the outcome is "root shell, manager best-effort", never a
-requirement of the chain.
+**S5 — the future compatible fork (not in scope).**
+The `supported-kmis` membership test already covers the common case: a fork that ships a 5.4
+`<kmi>_kernelsu.ko` becomes feasible with no code change, because the rule asks the manager rather
+than the release string — provided its `current-kmi` can answer on that kernel; if it cannot, the
+fallback's `<5.10` row refuses, as today. What remains is `insmod` + a user-supplied `.ko` (hash-pinned, opt-in) —
+its evidence is the file's hash and the kernel's module-load verdict — and the outcome is "root
+shell, manager best-effort", never a requirement of the chain.
 
-## 4. Decisions to make with this plan
+## 4. Decisions and open points
 
-1. **"No manager" policy.** Today the run-start preflight refuses when no suitable ksud
-   exists. With Magisk detected, a Magisk-only device becomes runnable (intended). A
-   device with neither: keep the refusal (v1), or add a `NONE` plan ("root shell, no
-   manager", the Samsung shape)? v1 keeps the refusal; `NONE` is a later decision that
-   touches the script (a third branch) and the run verdict.
-2. **Module chain + KSU on ≥5.10 is untested.** The switch module makes the device
-   permissive; KSU's late-load then re-enforces from its own init (`late_load.rs`'s
-   comment). The version gate does not prove that pair — it needs its own bench gate
-   before the preference table offers it (v1's table prefers Magisk for the module chain
-   for this reason).
-3. **The Shizuku path.** `GhostlockUserService` scans managers in its own process and sets
-   no handoff env today; the module pipeline is direct-only (the resolver is called only
-   from the repository). In v1 the service resolves the same plan for KSU candidates and
-   inherits the `<5.10` refusal; Magisk staging from the service is a separate question
-   and is not claimed.
-4. **Failure semantics.** The module chain currently ends `exit 1` when
-   `magisk_handoff` is not ready, although the init shell existed. With a selectable
-   manager this should become a distinct outcome ("root shell achieved, manager not
-   ready") rather than reading as a chain failure. v1 keeps the exit code and records the
-   plan + reason; the verdict change is a separate, small design.
-5. **Probe honesty.** KSU's verdict is an interface probe (`late-load --help`, confirmed /
-   static / missing); Magisk's is a file inventory. The picker must show them as different
-   kinds of evidence ("interface confirmed" vs "binaries present"), so it never promises
-   more than the resolver checks.
-6. **`QUERY_ALL_PACKAGES`.** The operator's constraint is not to ask for package-listing
-   visibility. v1 removes the permission and relies on the `<queries>` declarations
-   (§2.1), accepting that an undeclared KSU fork is invisible. Keeping the permission
-   would restore arbitrary-fork discovery; that is a product decision, not a detector
-   detail.
+1. **module + KSU on ≥5.10 — settled: not a special case.** The rules are route-free, so the
+   pair is permitted like any other. No bundled module profile is ≥5.10 (the two are 5.4, where
+   KSU is infeasible and Magisk is used as now), so nothing exercises it yet; the first ≥5.10
+   module profile is device-gated by the standing "a new profile needs a device run" rule, with
+   no separate bench record.
+2. **Failure semantics.** The module chain ends `exit 1` when the handoff is not ready although
+   the init shell existed. With an ordered target list this now means *every* target was
+   attempted. It should read as a distinct outcome ("root shell achieved, manager not ready").
+   This cut keeps the exit code and records the attempts; the outcome split is a separate, small
+   design.
+3. **Probe honesty.** KSU's verdict is the manager's own interface (`supported-kmis` /
+   `current-kmi`); Magisk's is a file inventory. The picker must show them as different kinds of
+   evidence ("interface confirmed" vs "binaries present").
 
 ## 5. Risks
 
-- **Preference drift.** The v1 table reproduces today's mapping; if it silently diverges
-  (e.g. W1 to Magisk without a gate), the change is a product behaviour change, not a
-  refactor. The device smoke in S1 exists to catch exactly that.
 - **Refusal timing.** Moving the no-manager refusal before the exploit changes user-visible
-  behaviour on 5.4 devices without Magisk: they now fail fast with a reason instead of a
-  post-exploit `ksud-missing`. Intended, and it is the reason S2 is its own slice.
-- **A stale stored package.** A family/package pair that disappears must self-heal, or a
-  user's old selection silently disables the run; the resolver clears and logs.
+  behaviour on 5.4 devices without Magisk (they fail fast with a reason). Intended; it is why
+  S2 is its own slice.
+- **A stale stored package.** A family/package pair that disappears must self-heal, or an old
+  selection silently disables the run; a choice that is merely infeasible is kept and logged.
+- **Wrapper drift.** One core implements the handoff and the two wrappers may only add
+  prologue/epilogue. A wrapper that grows its own handoff step is a bug, not a rule.
+- **A third-party text interface.** `boot-info` is ksud's CLI; a fork can rename or drop it. Any
+  `supported-kmis` failure means "cannot answer" and falls back to the release mirror; the two
+  managers in hand (ReSukiSU 4.2.0-rc3, KernelSU-Next 3.4.2) are gated, and the probe answers are
+  cached per run (two extra execs per candidate).
+- **A failed attempt leaves state.** A Magisk attempt that never reached magiskd leaves
+  `/data/adb/magisk`, a `/debug_ramdisk` tmpfs mount and the live policy patch before a KSU
+  fallback runs. Boot-scoped except the files; the attempt and the fallback are both logged, and
+  the strict readiness check (§2.6) is what stops a half-started Magisk from coexisting with a
+  KSU load in one boot.
 - **Trust.** Magisk and KSU are both third-party managers; the plan selects among what is
-  installed and never downloads or ships one. A user-supplied KSU module remains out of
-  scope (§3 S4) and, when it comes, is opt-in and hash-pinned.
+  installed and never downloads or ships one. A user-supplied KSU module stays out of scope
+  (S5) and, when it comes, is opt-in and hash-pinned.
 
 ## 6. Approval checklist
 
-- [ ] One detector, one `HandoffPlan`, `handoffEnv(plan)` replacing the `magiskBin`
-      inference.
-- [ ] The v1 preference table (module: magisk→ksu; W1: ksu→magisk) as an explicit product
-      choice.
-- [ ] The `<5.10` KSU feasibility gate as a resolver reason (temporary, with the lift path
-      named).
-- [ ] The preflight refusal and the `handoff=… reason=…` log/meta line.
-- [ ] S4's extension point acknowledged as out of scope.
+- [ ] One detector, one `HandoffResolution` with a verdict per candidate and an ordered target
+      list, `env(targets)` replacing the `magiskBin` inference.
+- [ ] One precondition — `preflight()` — called in the app process by every route (direct,
+      Shizuku, timer), returning the plan.
+- [ ] Magisk selectable on module, W1 and timer; no per-route rule, no product ranking — only
+      the detector's order when nothing is stored.
+- [ ] The manager's own `boot-info supported-kmis`/`current-kmi` as the KSU rule, with the
+      release mirror as the fallback and the uname cross-check as a diagnostic only.
+- [ ] The shared core attempts the targets in order, restores enforcing once, and records the
+      effective target; the `handoff=…` / `handoff-target=…` log and meta lines. The wrappers
+      stay thin.
+- [ ] The no-manager refusal at the precondition, with a message naming both families and their
+      reasons.
+- [ ] S3's timer consumer (the shared core + sidecar) and the S2 debug hook (or S4 first) as the
+      bench path.
+- [ ] S5 acknowledged as out of scope.
