@@ -1,8 +1,8 @@
 # Handoff resolution — one detector, one rule set, one precondition per run
 
 **Status:** design approved; **S1–S4 implemented and device-gated 2026-11-27** (all six
-route×manager combinations ran, plus the picker and the no-Magisk paths). The deferred items in
-§4 (the failure-semantics split) remain. L-level (the delivery path's selection).
+route×manager combinations ran, plus the picker and the no-Magisk paths). All §4 points are
+settled. L-level (the delivery path's selection).
 
 **Question.** The root manager is currently chosen by an inference — the module pipeline
 stages Magisk, and `handoffEnv(magiskBin)` reads a non-null directory as "hand off to
@@ -593,11 +593,16 @@ shell, manager best-effort", never a requirement of the chain.
    KSU is infeasible and Magisk is used as now), so nothing exercises it yet; the first ≥5.10
    module profile is device-gated by the standing "a new profile needs a device run" rule, with
    no separate bench record.
-2. **Failure semantics.** The module chain ends `exit 1` when the handoff is not ready although
-   the init shell existed. With an ordered target list this now means *every* target was
-   attempted. It should read as a distinct outcome ("root shell achieved, manager not ready").
-   This cut keeps the exit code and records the attempts; the outcome split is a separate, small
-   design.
+2. **Failure semantics — settled 2026-11-27: the log is the record.** The module chain still
+   ends `exit 1` when no target became ready although the root shell existed, and that outcome is
+   documented from what the run wrote, not re-encoded: the run log carries
+   `handoff-attempt idx=N kind=… package=… rc=… ready=…`, the manager's own output,
+   `HANDOFF-SUMMARY handoff=manager-not-ready targets=N` and `HANDOFF-DIAG`; the run-store meta
+   carries the family lines and every candidate verdict, including the transport's dropped
+   targets. A distinct outcome code was considered and dropped: the case is rare by construction
+   (the precondition refuses the structural failures before the exploit, and a multi-target list
+   falls back), and a reader of the log can already tell "root achieved, manager not ready" from
+   "never rooted". Revisit only if a device class turns out to hit it regularly.
 3. **Probe honesty — implemented (S4).** KSU's verdict is the manager's own interface
    (`supported-kmis`/`current-kmi`); Magisk's is a file inventory. The picker shows the
    resolver's evidence line per row, and an infeasible row is not selectable.
