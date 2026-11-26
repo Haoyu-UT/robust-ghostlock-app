@@ -49,7 +49,7 @@ class BundledModuleTest {
 
             val file = BundledModule.stage(context, spec(), dest)
             assertNotNull("the bundled asset did not stage", file)
-            assertEquals(10_344L, file!!.length())
+            assertEquals(10_528L, file!!.length())
 
             val badHash = BundledModule.stage(
                 context,
@@ -79,7 +79,7 @@ class BundledModuleTest {
             )) {
                 val file = BundledModule.stage(context, spec(release), dest)
                 assertNotNull("$release did not stage", file)
-                assertEquals("$release size", 10_344L, file!!.length())
+                assertEquals("$release size", 10_528L, file!!.length())
             }
         } finally {
             dest.deleteRecursively()

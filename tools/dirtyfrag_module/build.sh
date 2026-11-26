@@ -39,14 +39,16 @@
 #                    absolute Google build-host path in
 #                    CONFIG_UNUSED_KSYMS_WHITELIST and has
 #                    CONFIG_TRIM_UNUSED_KSYMS=y, so it must be repointed.
-#   DFSWITCH_ENFORCING_OFFSET
-#                    required. The byte of `enforcing` inside
-#                    `struct selinux_state`: 1 for the 5.4 family (its
-#                    unconditional `disabled` byte comes first), 0 for
-#                    5.10/6.1. The module refuses to build without it; a wrong
-#                    offset loads cleanly and still reads as success. Then the
-#                    image keeps enforcing -- the 5.4 pair shipped that way
-#                    once (see external/github_error_reports/5.4.233*/README).
+#   DFSWITCH_LINE   required. The kernel line, which fixes the `enforcing`
+#                   byte: `54` for the 5.4 family (its unconditional `disabled`
+#                   field puts `enforcing` at +1) and `gki` for 5.10/6.1
+#                   (`disabled` exists only with CONFIG_SECURITY_SELINUX_DISABLE,
+#                   so the module resolves `selinux_disable` at run time). Every
+#                   line also refuses to run without
+#                   CONFIG_SECURITY_SELINUX_DEVELOP (`sel_write_enforce`
+#                   absent). A wrong byte loads cleanly and reads back as
+#                   success -- the class the 5.4 pair shipped once
+#                   (see external/github_error_reports/5.4.233*/README).
 #
 # ONDK r30.1's clang (21.0.0) is the 5.4 Images' vendor compiler; source
 # env.sh or set ANDROID_NDK_HOME when CLANG_DIR is unset.
@@ -68,10 +70,25 @@ SYMVERS=$3
 LOCALVERSION_VALUE=$4
 OUT=$5
 
-case "${DFSWITCH_ENFORCING_OFFSET:-}" in
-    0|1) ;;
+# The kernel resolves KBUILD_EXTRA_SYMBOLS after `make -C` has changed the
+# working directory, so a relative path silently yields a module with no
+# `__versions` (every CRC check degrades to a warning). Absolutise every input
+# and fail on a missing one.
+[ -d "$TREE" ] || { echo "not a tree: $TREE" >&2; exit 2; }
+[ -f "$CONFIG" ] || { echo "no config: $CONFIG" >&2; exit 2; }
+[ -f "$SYMVERS" ] || { echo "no Module.symvers: $SYMVERS" >&2; exit 2; }
+TREE=$(cd "$TREE" && pwd)
+SYMVERS=$(cd "$(dirname "$SYMVERS")" && pwd)/$(basename "$SYMVERS")
+case "$CONFIG" in
+    /*) ;;
+    *) CONFIG=$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG") ;;
+esac
+
+case "${DFSWITCH_LINE:-}" in
+    54) DFSWITCH_LINE_NUM=54 ;;
+    gki) DFSWITCH_LINE_NUM=510 ;;
     *)
-        echo "set DFSWITCH_ENFORCING_OFFSET=0 (5.10/6.1) or 1 (the 5.4 family)" >&2
+        echo "set DFSWITCH_LINE=54 (the 5.4 family) or gki (5.10/6.1)" >&2
         exit 2
         ;;
 esac
@@ -120,9 +137,19 @@ make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
 make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
     CROSS_COMPILE=aarch64-linux-gnu- M="$SRC" \
     KBUILD_EXTRA_SYMBOLS="$SYMVERS" \
-    DFSWITCH_ENFORCING_OFFSET="$DFSWITCH_ENFORCING_OFFSET" modules
+    DFSWITCH_LINE="$DFSWITCH_LINE_NUM" modules
 
 llvm-strip --strip-debug -o "$OUT/dfswitch.ko" "$SRC/dfswitch.ko"
 # The loader does not need the build id; the hash binds the exact bytes.
+# A module without `__versions` entries loads anyway and skips every CRC check
+# (the kernel warns and accepts), which is the failure this assertion catches.
+VERS=$(mktemp "${TMPDIR:-/tmp}/dfswitch-versions.XXXXXX")
+llvm-objcopy --dump-section __versions="$VERS" "$OUT/dfswitch.ko" 2>/dev/null || true
+if [ ! -s "$VERS" ]; then
+    echo "error: __versions is empty (KBUILD_EXTRA_SYMBOLS not resolved)" >&2
+    rm -f "$VERS"
+    exit 1
+fi
+rm -f "$VERS"
 modinfo "$OUT/dfswitch.ko" | grep -E '^(filename|vermagic|name):'
-echo "enforcing offset: $DFSWITCH_ENFORCING_OFFSET"
+echo "line: $DFSWITCH_LINE"
