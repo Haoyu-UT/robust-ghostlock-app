@@ -5,8 +5,6 @@ import com.sesame.app.data.profile.ModuleBlock
 import com.sesame.app.data.profile.ModuleConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,7 +18,9 @@ import java.nio.file.Files
 class BundledModuleTest {
     private val context: Application = RuntimeEnvironment.getApplication()
 
-    private fun spec(release: String = "5.4.233-qgki-gbb70cde46897"): ModuleConfig {
+    private val starRelease = "5.4.233-qgki-gbb70cde46897"
+
+    private fun spec(release: String = starRelease): ModuleConfig {
         val document = HoconSupport.parseValue(
             AssetConfigLoader(context).load("kernel_profiles/$release.conf"),
         ).asValueMap() ?: error("$release: unreadable profile")
@@ -48,23 +48,40 @@ class BundledModuleTest {
                 BundledModule.verify(context, spec().copy(asset = "modules/does-not-exist.ko")),
             )
 
-            val file = BundledModule.stage(context, spec(), dest)
-            assertNotNull("the bundled asset did not stage", file)
-            assertEquals(10_528L, file!!.length())
+            val staged = BundledModule.stage(context, spec(), starRelease, dest)
+            assertTrue(
+                "the bundled asset did not stage: $staged",
+                staged is BundledModule.StageResult.Ok,
+            )
+            staged as BundledModule.StageResult.Ok
+            assertEquals(10_528L, staged.staged.file.length())
+            assertEquals("dfswitch-$starRelease.ko", staged.staged.file.name)
+            assertFalse("the shipped CRCs equal the asset's", staged.staged.patched)
+            assertEquals(0x4e974a74L, staged.staged.profileLayout)
+            assertEquals(0x4e974a74L, staged.staged.assetLayout)
+            assertEquals(64, staged.staged.deliveredSha256.length)
 
             val badHash = BundledModule.stage(
                 context,
                 spec().copy(assetSha256 = "0".repeat(64)),
+                starRelease,
                 dest,
             )
-            assertNull("a wrong hash must not stage", badHash)
+            assertTrue(
+                "a wrong hash must not stage",
+                badHash is BundledModule.StageResult.Failed,
+            )
 
             val missing = BundledModule.stage(
                 context,
                 spec().copy(asset = "modules/does-not-exist.ko"),
+                starRelease,
                 dest,
             )
-            assertNull("a missing asset must not stage", missing)
+            assertTrue(
+                "a missing asset must not stage",
+                missing is BundledModule.StageResult.Failed,
+            )
         } finally {
             dest.deleteRecursively()
         }
@@ -78,9 +95,14 @@ class BundledModuleTest {
                 "5.4.233-qgki-gbb70cde46897",
                 "5.4.274-qgki-g76ac0b265f44",
             )) {
-                val file = BundledModule.stage(context, spec(release), dest)
-                assertNotNull("$release did not stage", file)
-                assertEquals("$release size", 10_528L, file!!.length())
+                val staged = BundledModule.stage(context, spec(release), release, dest)
+                assertTrue(
+                    "$release did not stage: $staged",
+                    staged is BundledModule.StageResult.Ok,
+                )
+                staged as BundledModule.StageResult.Ok
+                assertEquals("$release size", 10_528L, staged.staged.file.length())
+                assertEquals("dfswitch-$release.ko", staged.staged.file.name)
             }
         } finally {
             dest.deleteRecursively()

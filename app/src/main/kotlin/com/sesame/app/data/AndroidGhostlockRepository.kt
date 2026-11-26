@@ -1622,28 +1622,46 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                                     val staged = BundledModule.stage(
                                         appContext,
                                         spec,
+                                        config.release,
                                         File(filesDir, "modules"),
                                     )
-                                    if (staged == null) {
-                                        "module asset missing or asset_sha256 mismatch"
-                                    } else {
-                                        val magisk = MagiskStage.stage(
-                                            appContext,
-                                            File(filesDir, "magiskbin"),
-                                        )
-                                        if (magisk == null) {
-                                            "Magisk manager is not installed or cannot be staged"
-                                        } else {
-                                            onLog(
-                                                "<k> module pair: ${spec.asset} " +
-                                                    "(sha256 ok), magisk=${magisk.packageName}",
+                                    when (staged) {
+                                        is BundledModule.StageResult.Failed -> staged.reason
+                                        is BundledModule.StageResult.Ok -> {
+                                            val pair = staged.staged
+                                            val magisk = MagiskStage.stage(
+                                                appContext,
+                                                File(filesDir, "magiskbin"),
                                             )
-                                            moduleRun = ModuleRun(
-                                                moduleFile = staged,
-                                                vendorFiles = spec.vendorFiles,
-                                                magiskBin = magisk.dir,
-                                            )
-                                            null
+                                            if (magisk == null) {
+                                                "Magisk manager is not installed or cannot be staged"
+                                            } else {
+                                                onLog(
+                                                    "<k> module pair: ${spec.asset} " +
+                                                        "(sha256 ok, patched=" +
+                                                        "${if (pair.patched) 1 else 0}), " +
+                                                        "magisk=${magisk.packageName}",
+                                                )
+                                                onLog(
+                                                    "<k> module layout: asset=0x%08x " +
+                                                        "profile=0x%08x patched=%d".format(
+                                                            pair.assetLayout,
+                                                            pair.profileLayout,
+                                                            if (pair.patched) 1 else 0,
+                                                        ),
+                                                )
+                                                onLog(
+                                                    "<k> module delivered: " +
+                                                        "sha256=${pair.deliveredSha256} " +
+                                                        "(canonical ${pair.canonicalSha256})",
+                                                )
+                                                moduleRun = ModuleRun(
+                                                    moduleFile = pair.file,
+                                                    vendorFiles = spec.vendorFiles,
+                                                    magiskBin = magisk.dir,
+                                                )
+                                                null
+                                            }
                                         }
                                     }
                                 }
