@@ -538,9 +538,14 @@ reverted after the runs. Timer runs used the POCO's bundled 6.1.138 profile firs
 installed there for the pair; Shizuku started with its own adb `start.sh`) and then the diting's
 own 5.10.236 timer block — the diting's tool pins its victim to CPU 7, which the vendor's prime
 core parks, so the run needs `min_cpus=1` on `cpu7/core_ctl` first (an environment fact of the
-tool, not the handoff). The KSU handoff on these rigs is the "already loaded" readiness path
-(both carry root from boot); `late-load` itself was not re-proven here (it is the 2026-11-09
-record). The OnePlus 6.6.66 KernelSU-Next probe is in the S4 record below.
+tool, not the handoff). The KSU handoff in the matrix mostly takes the "already loaded" readiness path
+(both rigs carry root from boot), so the real `late-load` was proven separately: the diting was
+RAM-booted on the **stock** `external/boot.img` (no KernelSU, no `su`; `fastboot boot`, nothing
+written) and run `20261127-022303` shows the shared core's own invocation —
+`late-load kmi=android12-5.10 source=/data/user/0/com.sesame.app/files/ksu-0`, `late-load exit=0`,
+`[+] KernelSU module loaded`, `handoff-target=ksu idx=1`, `RESULT=OK script=0 enforce=1`, store
+`completed` — with `su` returning `u:r:ksu:s0` afterwards; a normal reboot returned the rig to
+`boot_a`. The OnePlus 6.6.66 KernelSU-Next probe is in the S4 record below.
 
 The stored choice was exercised through the debug hook (`--es handoff_manager <pkg>`, retired
 with S4); with it the family order flips and the other family stays a fallback, as specified.
