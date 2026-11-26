@@ -134,6 +134,55 @@ object ManagerScanner {
         candidates.firstOrNull { it.packageName == selected && it.suitable }
             ?: candidates.firstOrNull { it.suitable }
 
+    /**
+     * The manager's own KMI interface (handoff-resolution-plan §2.4):
+     * `boot-info supported-kmis` doubles as the capability probe, then
+     * `boot-info current-kmi`. Nothing is re-derived from uname here — the
+     * manager's `current-kmi` is authoritative, and a manager that cannot
+     * answer falls back to the release mirror in the resolver.
+     */
+    data class KmiAnswer(
+        /** The embedded `*_kernelsu.ko` names; null = the manager cannot answer. */
+        val supported: List<String>?,
+        /** The KMI to pass to `late-load --kmi`; null = it failed. */
+        val current: String?,
+        /** The manager's own message when [current] is null. */
+        val failure: String?,
+    )
+
+    /** Two extra execs per suitable candidate; call from Dispatchers.IO. */
+    fun probeKmi(candidate: Candidate): KmiAnswer {
+        val file = File(candidate.path)
+        val supported = run(file, "boot-info", "supported-kmis")
+        if (supported.unavailable || supported.exit != 0) {
+            return KmiAnswer(supported = null, current = null, failure = null)
+        }
+        val names = supported.output.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toList()
+        if (names.isEmpty()) {
+            return KmiAnswer(supported = null, current = null, failure = null)
+        }
+        val current = run(file, "boot-info", "current-kmi")
+        if (current.unavailable || current.exit != 0) {
+            return KmiAnswer(
+                supported = names,
+                current = null,
+                failure = firstLine(current.output) ?: "Failed to get KMI from boot/modules",
+            )
+        }
+        val value = firstLine(current.output)
+        return if (value == null) {
+            KmiAnswer(names, null, "boot-info current-kmi printed nothing")
+        } else {
+            KmiAnswer(names, value, null)
+        }
+    }
+
+    private fun firstLine(text: String): String? =
+        text.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
+
     private data class Tokens(
         val lateLoad: Boolean,
         val allowShell: Boolean,

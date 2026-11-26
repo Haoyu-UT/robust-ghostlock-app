@@ -26,9 +26,19 @@ object HandoffWire {
             is RootManager.Ksu -> manager.ksudPath
             is RootManager.Magisk -> manager.nativeLibDir.orEmpty()
         }
-        return listOf(manager.kind.wire, manager.packageName, origin, kmi.orEmpty())
-            .joinToString(SEPARATOR)
+        return entry(manager.kind.wire, manager.packageName, origin, kmi)
     }
+
+    /** The wire entry for an already-staged target (this process's copy). */
+    fun encodeTarget(target: HandoffTarget): String =
+        entry(target.manager.kind.wire, target.manager.packageName, target.source, target.kmi)
+
+    /** One `GHOSTLOCK_HANDOFF_TARGETS` value in attempt order. */
+    fun encodeTargets(targets: List<HandoffTarget>): String =
+        targets.joinToString("\n") { encodeTarget(it) }
+
+    private fun entry(kind: String, packageName: String, source: String, kmi: String?): String =
+        listOf(kind, packageName, source, kmi.orEmpty()).joinToString(SEPARATOR)
 
     /** The transport list, in attempt order. */
     fun encode(resolution: HandoffResolution): List<String> =

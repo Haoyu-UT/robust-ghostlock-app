@@ -35,5 +35,5 @@ interface IGhostlockUserService {
      * profile document, run it as shell, and stream its log. The tool parks
      * on success and on several failures, so the service reports a verdict
      * from the log markers and never kills the process. */
-    void runTimer(in String profileJson, in String mode, @nullable String managerPackage, IGhostlockCallback callback) = 7;
+    void runTimer(in String profileJson, in String mode, in String[] targets, IGhostlockCallback callback) = 7;
 }

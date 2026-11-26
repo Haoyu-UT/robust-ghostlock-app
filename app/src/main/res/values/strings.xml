@@ -359,6 +359,7 @@
     <string name="manager_summary_auto">Auto (recommended)</string>
     <string name="manager_picker_title">Root manager</string>
     <string name="manager_picker_empty">No usable ksud found. Install a KernelSU-family root manager.</string>
+    <string name="preflight_no_manager">No usable root manager for this run:</string>
     <string name="preflight_anchor_title">Anchor state unavailable</string>
     <string name="preflight_anchor_boot">Installed after this boot; anchor slots unknown. Reboot, then run.</string>
     <string name="preflight_anchor_spent">Anchor slots are spent; continuing could corrupt kernel data. Reboot.</string>

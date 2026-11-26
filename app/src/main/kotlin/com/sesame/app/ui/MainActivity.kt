@@ -114,6 +114,14 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG && intent?.hasExtra("derive_test") == true) {
             intent.getStringExtra("derive_image")?.let { viewModel.runDeriveTest(it) }
         }
+        /* Debug-only bench hook: `am start --es handoff_manager <package>`
+         * pins the handoff manager for the next runs (an empty value restores
+         * Auto), so each route can be exercised against each family. */
+        if (BuildConfig.DEBUG) {
+            intent?.getStringExtra("handoff_manager")?.let {
+                viewModel.setHandoffManagerForTest(it)
+            }
+        }
         setContent {
             GhostlockRoute(viewModel, ::handleEffect)
         }

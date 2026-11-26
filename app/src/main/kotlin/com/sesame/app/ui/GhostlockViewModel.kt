@@ -1517,6 +1517,24 @@ class GhostlockViewModel(
     /** The timer run, with the same operation/status plumbing as the native run. */
     private fun runTimerNow() {
         viewModelScope.launch {
+            /* The same precondition as every other route, in the app process:
+             * the timer's fake endgame opens the permissive window the
+             * manager handoff needs, so a run with no feasible manager is
+             * refused here with both families' reasons. */
+            val plan = when (
+                val preflight = withContext(Dispatchers.IO) {
+                    repository.preflight(useShizuku = true)
+                }
+            ) {
+                is PreflightResult.Blocked -> {
+                    appendLog("<s> error: no feasible root manager")
+                    preflight.reasons.forEach { appendLog("<s> $it") }
+                    showPreflightNotice(preflight)
+                    return@launch
+                }
+
+                is PreflightResult.Passed -> preflight.plan
+            }
             if (!beginOperation()) return@launch
             clearLog()
             send(GhostlockEffect.KeepScreenAwake(true))
@@ -1535,7 +1553,7 @@ class GhostlockViewModel(
             )
             withContext(Dispatchers.IO) {
                 try {
-                    val code = runCatching { repository.runTimerRoute(::appendLog) }
+                    val code = runCatching { repository.runTimerRoute(plan, ::appendLog) }
                         .getOrElse { error ->
                             appendLog("<s> error: ${error.message}")
                             1
@@ -1619,8 +1637,21 @@ class GhostlockViewModel(
      */
     fun runTimerRouteCheck() {
         viewModelScope.launch {
+            val plan = when (
+                val preflight = withContext(Dispatchers.IO) {
+                    repository.preflight(useShizuku = true)
+                }
+            ) {
+                is PreflightResult.Blocked -> {
+                    appendLog("<s> error: no feasible root manager")
+                    preflight.reasons.forEach { appendLog("<s> $it") }
+                    return@launch
+                }
+
+                is PreflightResult.Passed -> preflight.plan
+            }
             val code = runCatching {
-                withContext(Dispatchers.IO) { repository.runTimerRoute(::appendLog) }
+                withContext(Dispatchers.IO) { repository.runTimerRoute(plan, ::appendLog) }
             }.getOrElse { error ->
                 appendLog("<s> error: ${error.message}")
                 1
@@ -1677,7 +1708,7 @@ class GhostlockViewModel(
              * the run, never stored. */
             val plan = when (val preflight = withContext(Dispatchers.IO) { repository.preflight(useShizuku) }) {
                 is PreflightResult.Blocked -> {
-                    showPreflightNotice(preflight.failure)
+                    showPreflightNotice(preflight)
                     return@launch
                 }
 
@@ -1720,6 +1751,8 @@ class GhostlockViewModel(
         val dirtyfrag = text.contains("pipeline=dirtyfrag")
         val rooted = code == 0 && (
             text.contains("KernelSU ready") ||
+                text.contains("root manager ready") ||
+                text.contains("HANDOFF-SUMMARY handoff=ok") ||
                 text.contains("RESULT=OK") ||
                 /* The timer route's own success markers: the module loaded and
                  * the tool parked holding the fake cred page. */
@@ -1818,7 +1851,24 @@ class GhostlockViewModel(
         ) }
     }
 
-    private fun showPreflightNotice(failure: PreflightFailure) {
+    private fun showPreflightNotice(blocked: PreflightResult.Blocked) {
+        if (blocked.failure == PreflightFailure.NO_ROOT_MANAGER && blocked.reasons.isNotEmpty()) {
+            /* The refusal names both families and why each was rejected; the
+             * picker's empty toast keeps its old string. */
+            val intro = application.getString(R.string.preflight_no_manager)
+            mutableState.update {
+                it.copy(
+                    overlay = it.overlay.copy(
+                        dialog = AppDialog.Notice(
+                            titleRes = R.string.manager_picker_title,
+                            message = intro + "\n" + blocked.reasons.joinToString("\n"),
+                        ),
+                    ),
+                )
+            }
+            return
+        }
+        val failure = blocked.failure
         val title: Int
         val message: Int
         when (failure) {
@@ -2110,12 +2160,26 @@ class GhostlockViewModel(
     }
 
     /**
+     * Debug-only bench hook (`am start --ez handoff_manager <pkg>`): pin the
+     * stored manager choice so a run can exercise one family while both are
+     * installed. An empty value restores Auto. The stored choice is a
+     * preference, not an exclusion — the other feasible targets stay
+     * fallbacks, exactly like the picker's. Retired with the picker slice.
+     */
+    fun setHandoffManagerForTest(packageName: String) {
+        repository.setSelectedManagerPackage(packageName.ifBlank { null })
+        appendLog(
+            "<k> handoff test: manager pinned to " +
+                (packageName.ifBlank { "auto" }),
+        )
+    }
+
+    /**
      * Root-manager picker: scan now (no cache), then list the candidates with
      * their verdict plus Auto. Selecting one only records a preference; the
      * run re-scans and refuses to start if nothing suitable is found.
      */
-    fun onOpenManagerPicker() {
-        viewModelScope.launch {
+    fun onOpenManagerPicker() {        viewModelScope.launch {
             /* Only suitable candidates are offered; a scan that found a
              * mis-shaped or non-late-load binary is not a choice the user can
              * act on. The run log still records every scanned candidate. */

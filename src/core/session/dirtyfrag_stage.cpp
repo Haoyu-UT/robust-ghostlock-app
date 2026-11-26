@@ -615,13 +615,34 @@ namespace ghostlock::session {
             }
         }
 
-        /* The module pipeline's handoff is Magisk, not KernelSU: report it as
-         * its own verdict line so the run log names the daemon, the policy
-         * phase and the delivered target the way the KSU path names its
-         * late-load. It is printed even when the init shell never connected,
-         * so a handoff that did not happen is named as such. The final
-         * enforce state still comes from RESULT. */
-        if (!no_script && config::runtime_config_snapshot().handoff == "magisk") {
+        /* The handoff plan's Magisk side: report it as its own verdict line so
+         * the run log names the daemon, the policy phase and the delivered
+         * target the way the KSU path names its late-load. It is printed when
+         * Magisk was attempted but the overall handoff failed, and when Magisk
+         * was the effective target; a KSU fallback success suppresses it. The
+         * final enforce state still comes from RESULT. */
+        std::string first_kind;
+        std::string first_magisk_dir;
+        for (const auto &entry: config::runtime_config_snapshot().handoff_targets) {
+            const auto cut = [&entry](size_t index) {
+                std::string_view rest(entry);
+                for (size_t i = 0; i < index; ++i) {
+                    const auto sep = rest.find('|');
+                    if (sep == std::string_view::npos) return std::string{};
+                    rest.remove_prefix(sep + 1);
+                }
+                const auto sep = rest.find('|');
+                return std::string(sep == std::string_view::npos ? rest : rest.substr(0, sep));
+            };
+            if (first_kind.empty()) first_kind = cut(0);
+            if (first_magisk_dir.empty() && cut(0) == "magisk") first_magisk_dir = cut(2);
+        }
+        const bool magisk_first = first_kind == "magisk";
+        const bool magisk_effective =
+            script_output.find("HANDOFF-SUMMARY handoff=ok target=magisk") != std::string::npos;
+        const bool handoff_done =
+            script_output.find("HANDOFF-SUMMARY handoff=ok") != std::string::npos;
+        if (!no_script && (magisk_effective || (magisk_first && !handoff_done))) {
             dirtyfrag_verdict::MagiskSummary magisk{};
             const bool reported = shell_uid0 &&
                 dirtyfrag_verdict::parse_magisk_summary(script_output, &magisk);
@@ -629,7 +650,6 @@ namespace ghostlock::session {
                                      ? "no-shell"
                                      : (!reported ? "no-summary"
                                                   : (magisk.ready() ? "ok" : "magiskd-none"));
-            const auto &runtime = config::runtime_config_snapshot();
             std::printf(
                 "dirtyfrag: T+%lldms MAGISK-HANDOFF %s reason=%s magiskd=%s policy=%s "
                 "policy_rc=%s enforce=%s bin=%s module=%s\n",
@@ -640,7 +660,7 @@ namespace ghostlock::session {
                 reported ? magisk.policy.c_str() : "none",
                 reported ? magisk.policy_rc.c_str() : "none",
                 reported ? magisk.enforce.c_str() : "unknown",
-                runtime.magisk_bin.c_str(),
+                first_magisk_dir.empty() ? "none" : first_magisk_dir.c_str(),
                 plan.vendor_lib.empty() ? "none" : plan.vendor_lib.c_str());
         }
 

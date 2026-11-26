@@ -116,13 +116,19 @@ static void runtime_config_init_paths(config::RuntimeConfig *config) {
         config->vrko_selinux_block = ghostlock::config::parse_vr_ko_mode(selinux_block);
     }
 
-    const char *handoff = getenv("GHOSTLOCK_HANDOFF");
-    if (handoff && handoff[0]) {
-        config->handoff = handoff;
-    }
-    const char *magisk_bin = getenv("GHOSTLOCK_MAGISK_BIN");
-    if (magisk_bin && magisk_bin[0]) {
-        config->magisk_bin = magisk_bin;
+    /* Newline-separated wire entries, in attempt order. A trailing newline is
+     * legal; empty lines are dropped. */
+    const char *targets = getenv("GHOSTLOCK_HANDOFF_TARGETS");
+    if (targets && targets[0]) {
+        std::string_view rest(targets);
+        while (!rest.empty()) {
+            const size_t newline = rest.find('\n');
+            const std::string_view line =
+                    newline == std::string_view::npos ? rest : rest.substr(0, newline);
+            if (!line.empty()) config->handoff_targets.emplace_back(line);
+            if (newline == std::string_view::npos) break;
+            rest.remove_prefix(newline + 1);
+        }
     }
     const char *module_path = getenv("GHOSTLOCK_MODULE");
     if (module_path) {
@@ -147,8 +153,7 @@ int32_t ghostlock::config::RuntimeConfig::init() {
     anchor_trusted = false;
     vrko_tag_clear = VrKoMode::Auto;
     vrko_selinux_block = VrKoMode::Auto;
-    handoff = "kernelsu";
-    magisk_bin = "/data/local/tmp/magiskbin";
+    handoff_targets.clear();
     module_path.clear();
     module_ko.clear();
 
@@ -166,6 +171,6 @@ void ghostlock::config::RuntimeConfig::log() const {
     pr_info("vr.ko choices: tag_clear=%s selinux_block=%s\n",
             vr_ko_mode_name(vrko_tag_clear),
             vr_ko_mode_name(vrko_selinux_block));
-    pr_info("handoff=%s magisk_bin=%s module=%s module_ko=%s\n", handoff.c_str(),
-            magisk_bin.c_str(), module_path.c_str(), module_ko.c_str());
+    pr_info("handoff_targets=%zu module=%s module_ko=%s\n", handoff_targets.size(),
+            module_path.c_str(), module_ko.c_str());
 }

@@ -359,6 +359,7 @@
     <string name="manager_summary_auto">自动（推荐）</string>
     <string name="manager_picker_title">root管理器</string>
     <string name="manager_picker_empty">未找到可用的 ksud。请安装 KernelSU 系 root 管理器。</string>
+    <string name="preflight_no_manager">本次运行没有可用的 root 管理器：</string>
     <string name="preflight_anchor_title">锚点状态不可用</string>
     <string name="preflight_anchor_boot">本次开机后安装，锚点槽位未知；请重启后再运行。</string>
     <string name="preflight_anchor_spent">锚点槽位已用尽，继续可能损坏内核；请重启。</string>

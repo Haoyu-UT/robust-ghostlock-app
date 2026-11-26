@@ -62,6 +62,20 @@ OBJS := $(C_OBJS) $(CXX_OBJS)
 # Native interface and target headers also trigger a rebuild.
 HDRS := $(wildcard core/*.h core/*.hpp core/*/*.h core/*/*.hpp)
 
+# --- the shared handoff core ------------------------------------------------
+# One real shell script carries the root-manager handoff for both binaries.
+# It is embedded as a C string at build time (never as a printf format, which
+# is where the venus KMI bug lived), and `sh -n` gates it before embedding.
+HANDOFF_SH := core/handoff/handoff.sh
+HANDOFF_HDR := $(NATIVE_BUILD_DIR)/handoff_script.h
+
+$(HANDOFF_HDR): $(HANDOFF_SH) Makefile
+	@mkdir -p $(dir $@)
+	@sh -n $(HANDOFF_SH) || { echo "handoff.sh: syntax error"; exit 1; }
+	@{ printf 'static const char kHandoffScript[] =\n'; \
+	   sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/  "/' -e 's/$$/\\n"/' $(HANDOFF_SH); \
+	   printf ';\n'; } > $@
+
 # --- compat carrier helper (AArch32) ---------------------------------------
 # A static armv7 executable shipped as libghostlock32.so beside the arm64
 # payload in the same ABI directory. The 64-bit native execs it; it is never
@@ -85,7 +99,7 @@ TARGET_CONFIG ?= kernel/target.h
 
 COMMON_FLAGS := -O2 -flto -Wall -Wextra -Wconversion -Wsign-conversion \
   -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function \
-  -Icore -DTARGET_CONFIG_H=\"$(TARGET_CONFIG)\"
+  -Icore -I$(NATIVE_BUILD_DIR) -DTARGET_CONFIG_H=\"$(TARGET_CONFIG)\"
 CFLAGS := $(COMMON_FLAGS) -std=gnu11
 CXXFLAGS := $(COMMON_FLAGS) -std=c++23 -fno-rtti
 LDFLAGS := -fPIE -pie -pthread -flto -static-libstdc++
@@ -131,11 +145,11 @@ ghostlock: $(GHOSTLOCK_BIN)
 
 timer: $(TIMER_BIN)
 
-$(TIMER_BIN): $(TIMER_SRC) $(TIMER_HDR) Makefile
+$(TIMER_BIN): $(TIMER_SRC) $(TIMER_HDR) $(HANDOFF_HDR) Makefile
 	@echo "Using timer compiler: $(TIMER_CC)"
 	@mkdir -p $(dir $@)
 	$(TIMER_CC) -O2 -g -Wall -Wextra -Wno-unused-parameter -static \
-	  -Itimer -Icore -o $@ $(TIMER_SRC) -lz -pthread
+	  -Itimer -Icore -I$(NATIVE_BUILD_DIR) -o $@ $(TIMER_SRC) -lz -pthread
 
 dfprobe: $(DFPROBE_BIN)
 
@@ -158,6 +172,9 @@ $(NATIVE_BUILD_DIR)/%.o: %.c $(HDRS)
 $(NATIVE_BUILD_DIR)/%.o: %.cpp $(HDRS)
 	@mkdir -p $(dir $@)
 	$(NDK_CXX) $(CXXFLAGS) -c $< -o $@
+
+# The script's own object rebuilds when the embedded core changes.
+$(NATIVE_BUILD_DIR)/core/attack/ops.o: $(HANDOFF_HDR)
 
 .PHONY: compat-helper
 compat-helper: $(COMPAT_BIN)
@@ -194,8 +211,13 @@ NATIVE_HOST_TESTS := \
   run_state_test address_space_test cpp_link_probe_test compat_bitmap_test dirtyfrag_verdict_test \
   anchor_align_test cpu_select_test
 
-native-host-tests: $(addprefix $(HOST_BUILD_DIR)/,$(NATIVE_HOST_TESTS))
-	@status=0; for test in $^; do $$test || status=1; done; exit $$status
+native-host-tests: $(addprefix $(HOST_BUILD_DIR)/,$(NATIVE_HOST_TESTS)) handoff-script-test
+	@status=0; for test in $(addprefix $(HOST_BUILD_DIR)/,$(NATIVE_HOST_TESTS)); do $$test || status=1; done; exit $$status
+
+# The shared handoff core's attempt loop, ordering, readiness and report,
+# with stub managers (its manager bodies are device-gated).
+handoff-script-test:
+	sh core/handoff/handoff_test.sh
 
 # Host tests must rebuild whenever any production header changes.
 $(addprefix $(HOST_BUILD_DIR)/,$(NATIVE_HOST_TESTS)): $(HDRS)
@@ -240,12 +262,12 @@ $(HOST_BUILD_DIR)/host_attack_dataflow_test: $(HOST_ATTACK_DATAFLOW_SOURCES) $(H
 # CPP14 selected clang-tidy subset; the check list and its reviewed
 # exclusions live in .clang-tidy. Requires the NDK so the Android and
 # libc++ headers resolve.
-lint-tidy:
+lint-tidy: $(HANDOFF_HDR)
 	@test -n "$(NDK_ROOT)" || { echo "NDK_ROOT is not set"; exit 1; }
 	@status=0; for f in $(CXX_SRCS); do \
 	  $(NDK_ROOT)/toolchains/llvm/prebuilt/$(PREBUILT)/bin/clang-tidy "$$f" \
 	    --warnings-as-errors='*' -- \
-	    -std=c++23 -fno-rtti -Icore \
+	    -std=c++23 -fno-rtti -Icore -I$(NATIVE_BUILD_DIR) \
 	    --target=aarch64-linux-android$(API) \
 	    --sysroot=$(NDK_ROOT)/toolchains/llvm/prebuilt/$(PREBUILT)/sysroot \
 	    -DTARGET_CONFIG_H=\"$(TARGET_CONFIG)\" || status=1; \

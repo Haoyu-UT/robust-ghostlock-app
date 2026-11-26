@@ -11,7 +11,7 @@ import com.sesame.app.data.BugreportzOutput
 import com.sesame.app.data.CrashEvidenceStore
 import com.sesame.app.data.DropboxKmsg
 import com.sesame.app.data.HandoffWire
-import com.sesame.app.data.ManagerScanner
+import com.sesame.app.data.MagiskStage
 import com.sesame.app.domain.model.HandoffTarget
 import com.sesame.app.domain.model.RootManager
 import java.io.File
@@ -81,8 +81,8 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
                  * only stages the list it was given, from each manager's own
                  * origin path (it cannot read the app's sandbox). */
                 val plan = HandoffWire.decodeAll(targets.toList())
-                val chosen = stageHandoffTargets(plan, workDir, callback)
-                    ?: error("no handoff target could be staged")
+                val staged = stageHandoffTargets(plan, workDir, callback)
+                require(staged.isNotEmpty()) { "no handoff target could be staged" }
                 callback.onLog("<s> Shizuku ready: uid=${Process.myUid()} Seccomp=0")
                 callback.onLog("<s> kernel: $release")
                 val nativeLog = File(workDir, ".ghostlock_native.log")
@@ -114,6 +114,7 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
                         environment()["TMPDIR"] = workDir.absolutePath
                         environment()["HOME"] = workDir.absolutePath
                         environment()["GHOSTLOCK_KSU_LOG"] = ksuLog.absolutePath
+                        environment()[HandoffWire.EnvTargets] = HandoffWire.encodeTargets(staged)
                         /* Computed by the app (this service cannot read the
                          * package's install time); see InstallClock. */
                         if (anchorTrusted) {
@@ -165,62 +166,75 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
     }
 
     /**
-     * Stages the plan's first usable KSU target into [workDir]/ksud, in the
-     * app's attempt order. Magisk entries cannot occur in this slice (the app's
-     * selection is KSU-only); the rule set and their staging land together.
-     * Returns the staged entry, or null when none could be staged.
+     * Stages every target, in the app's attempt order, into this process's
+     * work dir: a ksud copy per KSU entry and the Magisk libs for a Magisk
+     * entry. A target that cannot be staged is dropped (and logged); the
+     * returned list — each entry's source rewritten to this uid's copy — is
+     * what the native's script attempts.
      */
     private fun stageHandoffTargets(
         plan: List<HandoffTarget>,
         workDir: File,
         callback: IGhostlockCallback,
-    ): HandoffTarget? {
+    ): List<HandoffTarget> {
         if (plan.isEmpty()) {
             callback.onLog("<s> error: the handoff plan is empty")
-            return null
+            return emptyList()
         }
-        val ksud = File(workDir, "ksud")
-        for (target in plan) {
-            val manager = target.manager
-            if (manager !is RootManager.Ksu) {
-                callback.onLog(
-                    "<s> handoff: skipped ${manager.kind.wire}:${manager.packageName} " +
-                        "(Magisk staging lands with the rule set)",
-                )
-                continue
-            }
-            val origin = File(manager.ksudPath)
-            if (!origin.isFile) {
-                callback.onLog(
-                    "<s> handoff: dropped ${manager.packageName} " +
-                        "(payload missing: ${manager.ksudPath})",
-                )
-                continue
-            }
-            val staged = runCatching {
-                ksud.delete()
-                origin.inputStream().use { input ->
-                    ksud.outputStream().use { input.copyTo(it) }
+        val staged = ArrayList<HandoffTarget>(plan.size)
+        for ((index, target) in plan.withIndex()) {
+            when (val manager = target.manager) {
+                is RootManager.Ksu -> {
+                    val origin = File(manager.ksudPath)
+                    val dest = File(workDir, "ksu-$index")
+                    if (!origin.isFile) {
+                        callback.onLog(
+                            "<s> handoff: dropped ${manager.packageName} " +
+                                "(payload missing: ${manager.ksudPath})",
+                        )
+                        continue
+                    }
+                    val ok = runCatching {
+                        origin.inputStream().use { input ->
+                            dest.outputStream().use { input.copyTo(it) }
+                        }
+                        Os.chmod(dest.absolutePath, 448)
+                    }.isSuccess
+                    if (!ok) {
+                        callback.onLog(
+                            "<s> handoff: dropped ${manager.packageName} (staging failed)",
+                        )
+                        continue
+                    }
+                    callback.onLog(
+                        "<s> ksud selected: ${manager.packageName} ${manager.ksudPath} " +
+                            "kmi=${target.kmi ?: "none"}",
+                    )
+                    staged += HandoffTarget(manager, dest.absolutePath, target.kmi)
                 }
-                Os.chmod(ksud.absolutePath, 448)
+
+                is RootManager.Magisk -> {
+                    val dest = File(workDir, "magiskbin")
+                    val result = MagiskStage.stage(context, dest, manager.packageName)
+                    if (result == null) {
+                        callback.onLog(
+                            "<s> handoff: dropped ${manager.packageName} " +
+                                "(cannot stage the manager binaries)",
+                        )
+                        continue
+                    }
+                    callback.onLog("<s> magisk selected: ${result.packageName}")
+                    staged += HandoffTarget(manager, result.dir.absolutePath, null)
+                }
             }
-            if (staged.isFailure) {
-                callback.onLog(
-                    "<s> handoff: dropped ${manager.packageName} " +
-                        "(staging failed: ${staged.exceptionOrNull()?.message})",
-                )
-                continue
-            }
-            callback.onLog("<s> ksud selected: ${manager.packageName} ${manager.ksudPath}")
-            if (plan.size > 1) {
-                callback.onLog(
-                    "<s> handoff: ${plan.size} target(s); using " +
-                        "${manager.kind.wire}:${manager.packageName}",
-                )
-            }
-            return target
         }
-        return null
+        if (staged.size > 1) {
+            callback.onLog(
+                "<s> handoff: ${staged.size} target(s); using " +
+                    "${staged.first().manager.kind.wire}:${staged.first().manager.packageName}",
+            )
+        }
+        return staged
     }
 
     /**
@@ -234,7 +248,7 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
     override fun runTimer(
         profileJson: String,
         mode: String,
-        managerPackage: String?,
+        targets: Array<String>,
         callback: IGhostlockCallback,
     ) {
         if (!running.compareAndSet(false, true)) {
@@ -243,7 +257,7 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
             return
         }
         Thread({
-            val outcome = runCatching { runTimerBlocking(profileJson, mode, managerPackage, callback) }
+            val outcome = runCatching { runTimerBlocking(profileJson, mode, targets, callback) }
                 .getOrElse { error ->
                     runCatching { callback.onLog("<s> error: ${error.message}") }
                     1
@@ -256,7 +270,7 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
     private fun runTimerBlocking(
         profileJson: String,
         mode: String,
-        managerPackage: String?,
+        targets: Array<String>,
         callback: IGhostlockCallback,
     ): Int {
         require(Process.myUid() == Process.SHELL_UID) {
@@ -288,25 +302,27 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
         )
         /* probe reads and validates the document; it never reaches the root
          * handoff, so a missing manager must not block the delivery gate. */
+        var handoffTargetsFile: File? = null
         if (mode != "probe") {
-            val candidates = ManagerScanner.scan(context)
-            val suitable = candidates.count { it.suitable }
-            val chosen = ManagerScanner.resolve(candidates, managerPackage)
-                ?: error("no suitable ksud found; refusing to start the timer route")
-            val bytes = File(chosen.path).readBytes()
-            /* The tool's own handoff script probes /data/local/tmp/ksud when
-             * the installed manager's libksud.so has no late-load (e.g.
-             * com.sukisu.ultra); stage the app's choice there and in the work
-             * directory. */
-            for (target in listOf(File(workDir, "ksud"), File("/data/local/tmp/ksud"))) {
-                target.writeBytes(bytes)
-                runCatching { Os.chmod(target.absolutePath, 448) }
-            }
-            callback.onLog("<s> ksud scan: ${candidates.size} candidate(s), $suitable suitable")
-            callback.onLog("<s> ksud selected: ${chosen.packageName} ${chosen.path} [${chosen.verdict}]")
+            /* The app resolved the handoff; this process stages the ordered
+             * targets and hands the tool the staged list. The tool writes it
+             * into the sidecar its shared core reads (its child has a fixed
+             * envp, so the list cannot ride the environment). */
+            val plan = HandoffWire.decodeAll(targets.toList())
+            val staged = stageHandoffTargets(plan, workDir, callback)
+            require(staged.isNotEmpty()) { "no handoff target could be staged" }
+            val targetsFile = File(workDir, "timer-targets.txt")
+            targetsFile.writeText(HandoffWire.encodeTargets(staged))
+            runCatching { Os.chmod(targetsFile.absolutePath, 420) } // 0644
+            handoffTargetsFile = targetsFile
         }
         val logFile = File(workDir, "timer-${System.currentTimeMillis()}.log")
-        val argv = listOf(timer.absolutePath, "--profile", profileFile.absolutePath, mode)
+        val argv = mutableListOf(timer.absolutePath, "--profile", profileFile.absolutePath)
+        handoffTargetsFile?.let {
+            argv += "--handoff-targets"
+            argv += it.absolutePath
+        }
+        argv += mode
         callback.onLog("<b> starting timer: ${argv.joinToString(" ")}")
         val process = ProcessBuilder(argv)
             .directory(workDir)

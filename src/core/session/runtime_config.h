@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ghostlock::config {
     /* User-authoritative tri-state for a vr.ko behaviour. Auto consults the
@@ -70,14 +71,14 @@ namespace ghostlock::config {
          * write. Auto recommends it only for 5.10.198 + the node. */
         VrKoMode vrko_selinux_block = VrKoMode::Auto;
 
-        /* GHOSTLOCK_HANDOFF: the root manager the root script installs after
-         * the exploit. "kernelsu" (default) late-loads ksud; "magisk" runs the
-         * userspace late install — the bundled module pipeline, or a bench
-         * switch on the existing W1 pipelines. */
-        std::string handoff = "kernelsu";
-        /* GHOSTLOCK_MAGISK_BIN: the directory holding the staged Magisk
-         * binaries (magisk, magisk32, magiskpolicy, busybox, ...). */
-        std::string magisk_bin = "/data/local/tmp/magiskbin";
+        /* GHOSTLOCK_HANDOFF_TARGETS: the resolver's feasible managers in
+         * attempt order, one `kind|package|source|kmi` wire entry per line
+         * (HandoffWire). The app stages every source for this process before
+         * the native starts, and the root script's shared core attempts the
+         * list in this order. Empty fails closed with a named reason: the app
+         * refuses the run before this point, so an empty list is a bug, not a
+         * case to guess at. */
+        std::vector<std::string> handoff_targets;
         /* GHOSTLOCK_MODULE: the staged per-kernel module for the module
          * pipeline; empty on the W1 pipelines (W1 already made the device
          * permissive). */

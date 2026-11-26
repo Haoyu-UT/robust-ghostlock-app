@@ -94,6 +94,17 @@ namespace ghostlock::session {
         return opened ? (loaded || failed) : false;
     }
 
+    bool scan_handoff_log(std::string_view path, bool &ok, bool &failed) noexcept {
+        std::array < char, kKsuLogPathMax > resolved{};
+        snprintf(resolved.data(), resolved.size(), "%.*s", static_cast<int32_t>(path.size()),
+                 path.data());
+        const bool opened = for_each_line(resolved.data(), [&](std::string_view line) {
+            if (line.contains("HANDOFF-SUMMARY handoff=ok")) ok = true;
+            if (line.contains("HANDOFF-SUMMARY handoff=manager-not-ready")) failed = true;
+        });
+        return opened ? (ok || failed) : false;
+    }
+
     HandoffProbeResult handoff_probe_run(const HandoffPollPolicy &policy,
                                          std::string_view ksu_log_path) noexcept {
         HandoffProbeResult result;
@@ -110,15 +121,18 @@ namespace ghostlock::session {
      * markers can never satisfy this poll. */
         for (uint32_t i = 0;
              i < policy.log_poll_attempts &&
-             !(result.ksu_log_loaded || result.ksu_log_failed); i++) {
+             !(result.ksu_log_loaded || result.ksu_log_failed || result.handoff_ok ||
+               result.handoff_failed); i++) {
             scan_ksu_log(ksu_log_path, result.ksu_log_loaded, result.ksu_log_failed);
-            if (!(result.ksu_log_loaded || result.ksu_log_failed)) {
+            scan_handoff_log(ksu_log_path, result.handoff_ok, result.handoff_failed);
+            if (!(result.ksu_log_loaded || result.ksu_log_failed || result.handoff_ok ||
+                  result.handoff_failed)) {
                 usleep(policy.log_poll_interval_ms * 1000U);
             }
         }
 
         for (uint32_t i = 0;
-             result.ksu_log_loaded && !result.enforce_ok &&
+             (result.ksu_log_loaded || result.handoff_ok) && !result.enforce_ok &&
              i < policy.enforce_poll_attempts; i++) {
             result.enforce_ok = read_enforce_enforcing();
             if (!result.enforce_ok) {

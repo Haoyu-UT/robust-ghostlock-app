@@ -192,7 +192,7 @@ interface GhostlockRepository {
      * `TimerBootContract`). Returns the tool verdict, or -2 when the run never
      * started.
      */
-    suspend fun runTimerRoute(onLog: (String) -> Unit): Int
+    suspend fun runTimerRoute(plan: HandoffResolution, onLog: (String) -> Unit): Int
 
     /** False when a timer attempt already ran on this boot; a reboot is required. */
     fun timerRunAllowed(): Boolean
