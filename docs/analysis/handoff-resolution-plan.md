@@ -1,7 +1,8 @@
 # Handoff resolution — one detector, one rule set, one precondition per run
 
-**Status:** design for approval, revised 2026-11-27 after review. L-level (the delivery path's
-selection). No code yet. The slices and gates below are the implementation contract.
+**Status:** design approved; **S1 implemented 2026-11-27** (app-side detector, resolver and
+the one precondition; no native change). S2–S4 are the remaining implementation contract.
+L-level (the delivery path's selection).
 
 **Question.** The root manager is currently chosen by an inference — the module pipeline
 stages Magisk, and `handoffEnv(magiskBin)` reads a non-null directory as "hand off to
@@ -157,6 +158,9 @@ data class HandoffVerdict(
     val manager: RootManager,
     val state: State,
     val reason: String,          // required; doubles as the evidence line
+    /** The KMI the resolver used for this row (§2.4); KSU only. The transport
+     *  copies it into the target — the script must not re-derive it. */
+    val kmi: String? = null,
 )
 
 /** The precondition's result: every candidate judged, nothing staged yet. */
@@ -442,6 +446,27 @@ attempt loop arrive with S2.
 Gates: host tests over the pure resolver; app/profile-core suites; a diting W1 smoke whose
 logged plan matches the branch that ran; a manifest assertion (both queries present,
 `QUERY_ALL_PACKAGES` still declared).
+
+**S1 landed 2026-11-27** (build 936). `Handoff.kt` (model), `HandoffResolver.kt` (rules and the
+family-line projection), `HandoffWire.kt` (the `kind|package|origin|kmi` entry), Magisk detection
+split out as `MagiskStage.detect` (§2.1's "the lookup minus the staging"), `Candidate.toManager()`
+in the scanner, `Passed(plan)` through the repository / use case / ViewModel, and the AIDL's
+`managerPackage` replaced by `String[] targets`. Three implementation notes:
+
+- **The KMI rides on the verdict.** `HandoffVerdict.kmi` (above) is how the resolver's answer
+  reaches the transport, since the transport builds `HandoffTarget` from the feasible rows.
+- **The run-store meta spells the family key `handoff.<kind>`.** `RunLogStore.appendMeta` is
+  replace-by-key, so two `handoff=` lines collapsed to the last one (found by the gate's first
+  run); the run log keeps the `handoff=<kind>` form. The first S1 run is the evidence.
+- **Magisk detection lives in `MagiskStage`, not `ManagerScanner`** — it owns the package list
+  and the lib inventory, and §2.1 calls the branch "`MagiskStage`'s lookup minus the staging".
+
+Gates read: app **293/0** (1 skip; 15 new: resolver 9, wire 4, manifest 2), profile-core 62/0
+(1 skip), and two direct runs on the diting (build 936, 5.10.236): `handoff=ksu state=feasible
+reason=available (1 candidate)` → `ksud selected: com.resukisu.resukisu [late-load interface
+confirmed]`, the native's `handoff=kernelsu`, `dirtyfrag: RESULT=OK script=0 enforce=1`, store
+`completed`; the meta carries both family lines and all four candidate rows (the rig has Magisk
+installed, reported infeasible as designed).
 
 **S2 — the rules: KSU via `boot-info`, Magisk selectable, W1 Magisk, the attempt loop.**
 Files: `ManagerScanner.kt` (probe `boot-info supported-kmis` as the capability check, then

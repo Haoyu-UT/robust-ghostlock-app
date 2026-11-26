@@ -3,6 +3,7 @@ package com.sesame.app.data
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import com.sesame.app.domain.model.RootManager
 import java.io.File
 import java.io.FileInputStream
 import java.util.concurrent.TimeUnit
@@ -74,6 +75,15 @@ object ManagerScanner {
 
         /** Label shown in the picker. */
         fun displayName(): String = "$label ($packageName) — $verdict"
+
+        /** The handoff model's view of this candidate: one discovered manager. */
+        fun toManager(): RootManager.Ksu = RootManager.Ksu(
+            packageName = packageName,
+            label = label,
+            ksudPath = path,
+            interfaceOk = interfaceOk,
+            suitable = suitable,
+        )
     }
 
     /** Scan installed managers. Blocking I/O and probes: call from Dispatchers.IO. */

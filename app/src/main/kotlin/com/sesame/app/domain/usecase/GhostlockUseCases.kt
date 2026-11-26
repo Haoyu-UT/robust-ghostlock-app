@@ -1,5 +1,6 @@
 package com.sesame.app.domain.usecase
 
+import com.sesame.app.domain.model.HandoffResolution
 import com.sesame.app.domain.model.ProfileConfig
 import com.sesame.app.domain.repository.GhostlockRepository
 
@@ -25,11 +26,12 @@ class RunExploitUseCase(private val repository: GhostlockRepository) {
     suspend operator fun invoke(
         config: ProfileConfig,
         useShizuku: Boolean,
+        plan: HandoffResolution,
         onLog: (String) -> Unit,
     ) = if (useShizuku) {
-        repository.runExploitWithShizuku(config, onLog)
+        repository.runExploitWithShizuku(config, plan, onLog)
     } else {
-        repository.runExploit(config, onLog)
+        repository.runExploit(config, plan, onLog)
     }
 }
 

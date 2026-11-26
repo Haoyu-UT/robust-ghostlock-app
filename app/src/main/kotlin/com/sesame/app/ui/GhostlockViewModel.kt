@@ -1672,13 +1672,16 @@ class GhostlockViewModel(
         }
         viewModelScope.launch {
             /* Run-start pre-flight: class-1 checks stop the run before the log
-             * sheet opens, so no run-store entry and no native are created. */
-            when (val preflight = withContext(Dispatchers.IO) { repository.preflight(useShizuku) }) {
+             * sheet opens, so no run-store entry and no native are created.
+             * The plan it returns is the run's handoff decision — passed to
+             * the run, never stored. */
+            val plan = when (val preflight = withContext(Dispatchers.IO) { repository.preflight(useShizuku) }) {
                 is PreflightResult.Blocked -> {
                     showPreflightNotice(preflight.failure)
                     return@launch
                 }
-                PreflightResult.Passed -> Unit
+
+                is PreflightResult.Passed -> preflight.plan
             }
             if (!beginOperation()) return@launch
             /* A new run is a new log: the sheet must never open on the
@@ -1698,7 +1701,7 @@ class GhostlockViewModel(
             appendLog("==== start ${if (useShizuku) "Shizuku/V20" else "base"} ====")
             withContext(Dispatchers.IO) {
                 try {
-                    val code = runExploitUseCase(config, useShizuku, ::appendLog)
+                    val code = runExploitUseCase(config, useShizuku, plan, ::appendLog)
                     appendLog(if (code == 0) "result: exploit completed" else "result: exploit failed (exit code=$code)")
                     appendLog("exit code=$code")
                     finishRunStatus(code)

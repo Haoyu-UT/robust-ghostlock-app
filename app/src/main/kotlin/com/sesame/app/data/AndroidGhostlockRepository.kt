@@ -16,6 +16,8 @@ import com.sesame.app.BuildConfig
 import com.sesame.app.BuildInfo
 import com.sesame.app.domain.model.CrashEvidenceInfo
 import com.sesame.app.domain.model.DebugSettings
+import com.sesame.app.domain.model.HandoffKind
+import com.sesame.app.domain.model.HandoffResolution
 import com.sesame.app.domain.model.ImportedEvidence
 import com.sesame.app.domain.model.KernelSnapshot
 import com.sesame.app.domain.model.physSourceFromLines
@@ -35,6 +37,7 @@ import com.sesame.app.domain.model.ProfileConfig
 import com.sesame.app.domain.model.ProfileImportResult
 import com.sesame.app.domain.model.ProfileDiffRow
 import com.sesame.app.domain.model.RunLogEntry
+import com.sesame.app.domain.model.RootManager
 import com.sesame.app.domain.model.RootManagerCandidate
 import com.sesame.app.domain.model.RunLogState
 import com.sesame.app.domain.model.ShizukuStatus
@@ -116,9 +119,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
          * /data/local/tmp/ghostlock-app, outside the app sandbox. */
         const val AnchorStateFileName = ".ghostlock_anchor"
 
-        /* A pre-flight manager choice is reused only this soon, and only while
-         * the chosen binary still exists. */
-        const val PreflightManagerMaxAgeMs = 15_000L
+        const val LogTag = "GhostlockRepository"
     }
 
     private val appContext = context.applicationContext
@@ -818,10 +819,13 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     /* --- run-start pre-flight (class 1 of the 2026-11-07 exit audit) ------ */
 
-    /** Candidate the pre-flight selected; consumed once by [stageKsud]. */
-    @Volatile
-    private var preflightManager: Pair<Long, ManagerScanner.Candidate>? = null
-
+    /**
+     * The one precondition every route calls: the anchor judgement (direct
+     * path only) and the handoff resolution — both manager families detected,
+     * judged by the route-free rule set, the plan returned to the caller.
+     * Fail-closed: a detector that throws blocks exactly like one that found
+     * nothing, because no later stage re-scans to tell the difference.
+     */
     override suspend fun preflight(useShizuku: Boolean): PreflightResult =
         withContext(Dispatchers.IO) {
             /* The anchor state file lives under GHOSTLOCK_HOME: for the Shizuku
@@ -832,17 +836,25 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             if (!useShizuku) {
                 anchorFailure()?.let { return@withContext PreflightResult.Blocked(it) }
             }
-            /* A scan that throws is not proof of "no manager": fail open and
-             * let stageKsud report it (the class-2 pattern covers that). */
-            val candidates = runCatching { ManagerScanner.scan(appContext) }.getOrNull()
-            if (candidates != null) {
-                val chosen = ManagerScanner.resolve(candidates, selectedManagerPackage())
-                    ?: return@withContext PreflightResult.Blocked(
-                        PreflightFailure.NO_ROOT_MANAGER,
-                    )
-                preflightManager = SystemClock.elapsedRealtime() to chosen
+            val ksu = try {
+                ManagerScanner.scan(appContext)
+            } catch (error: Throwable) {
+                Log.w(LogTag, "handoff: KSU detector failed", error)
+                return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER)
             }
-            PreflightResult.Passed
+            val magisk = try {
+                MagiskStage.detect(appContext)
+            } catch (error: Throwable) {
+                Log.w(LogTag, "handoff: Magisk detector failed", error)
+                return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER)
+            }
+            val plan = HandoffResolver.resolve(ksu, magisk, selectedManagerPackage())
+            if (plan.isEmpty) {
+                HandoffResolver.familyLines(plan, selectedManagerPackage())
+                    .forEach { Log.i(LogTag, "handoff: $it") }
+                return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER)
+            }
+            PreflightResult.Passed(plan)
         }
 
     /**
@@ -877,10 +889,19 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override suspend fun runExploit(
         config: ProfileConfig,
+        plan: HandoffResolution,
         onLog: (String) -> Unit,
     ): Int =
         withDebugAttackLog("direct", onLog, measure = true) { archivedLog, debugDir, runDir, writeSidecar ->
-            runExploitBinary(config, "libghostlock.so", archivedLog, debugDir, runDir, writeSidecar)
+            runExploitBinary(
+                config,
+                plan,
+                "libghostlock.so",
+                archivedLog,
+                debugDir,
+                runDir,
+                writeSidecar,
+            )
         }
 
     override fun timerProfileDocument(): String? =
@@ -982,6 +1003,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override suspend fun runExploitWithShizuku(
         config: ProfileConfig,
+        plan: HandoffResolution,
         onLog: (String) -> Unit,
     ): Int {
         /* The Shizuku service runs as uid 2000 and cannot write the app's run
@@ -1031,11 +1053,12 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     }
                     logProfileDigest(archivedLog, profileBlob)
                     dumpRuntimeProfile(archivedLog, writeSidecar, release, profileBlob)
+                    logHandoff(plan, archivedLog, runDir)
                     archivedLog("<b> starting UserService")
                     resetRunState()
                     shizukuRunner.run(
                         safeModeEnabled, forceAttackTest, profileBlob, debugDir,
-                        selectedManagerPackage(), archivedLog,
+                        HandoffWire.encode(plan), archivedLog,
                     ) { step, status ->
                         if (status == "disabled") clearRunState() else applyRunStatus(step, status)
                     }
@@ -1497,6 +1520,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     private suspend fun runExploitBinary(
         config: ProfileConfig,
+        plan: HandoffResolution,
         binaryName: String,
         onLog: (String) -> Unit,
         debugDir: String?,
@@ -1510,11 +1534,16 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             /* A module-only profile hands off to Magisk, not KernelSU: its
              * chain never runs the native W1 or the ksud late-load, so a
              * device without a KernelSU manager is not refused. A hybrid order
-             * (module plus a W1 entry) still stages the manager. */
+             * (module plus a W1 entry) still stages the manager. The module
+             * entry keeps its explicit Magisk staging until the rules land, so
+             * it does not consume the plan and does not log it. */
             val moduleOnly = config.module != null &&
                 config.pipelineOrder.isNotEmpty() &&
                 config.pipelineOrder.all { it == "module" }
-            if (!moduleOnly && !stageKsud(workDir, onLog)) return 1
+            if (!moduleOnly) {
+                logHandoff(plan, onLog, runDir)
+                if (!stageKsud(workDir, plan, onLog)) return 1
+            }
             // U01-S14: a per-run KernelSU log path so a previous run's markers
             // can never satisfy the handoff probe; passed to the native process.
             val ksuLog = File(workDir, ksuLogName(System.currentTimeMillis()))
@@ -2098,61 +2127,95 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private fun firstValidProperty(vararg keys: String): String? = keys.asSequence().firstNotNullOfOrNull { validDeviceName(systemProperty(it)) }
 
     /**
-     * Find a late-load-capable ksud and stage it into [workDir]/ksud.
-     *
-     * Returns false when no suitable manager exists; the caller must then
-     * refuse to start the exploit (and say why in the run log).
+     * The handoff family lines (one per family) into the run log and the run
+     * store's meta, plus every candidate verdict into the meta. A projection
+     * of the plan, never stored state.
      */
-    private suspend fun stageKsud(workDir: File, onLog: (String) -> Unit): Boolean = withContext(Dispatchers.IO) {
-        val preflight = preflightManager.also { preflightManager = null }
-        val chosen = if (preflight != null &&
-            SystemClock.elapsedRealtime() - preflight.first <= PreflightManagerMaxAgeMs &&
-            File(preflight.second.path).isFile
-        ) {
-            /* The pre-flight just ran the same scan; reuse its choice instead of
-             * paying the package/ELF scan twice per run. The freshness and
-             * existence checks above fall back to a fresh scan. */
-            onLog(
-                "<k> ksud: using pre-flight selection ${preflight.second.packageName} " +
-                    "${preflight.second.path} [${preflight.second.verdict}]",
-            )
-            preflight.second
-        } else {
-            val candidates = runCatching { ManagerScanner.scan(appContext) }.getOrElse {
-                onLog("<k> error: ksud scan failed: ${it.message}")
-                return@withContext false
+    private fun logHandoff(plan: HandoffResolution, onLog: (String) -> Unit, runDir: String?) {
+        val stored = selectedManagerPackage()
+        val lines = HandoffResolver.familyLines(plan, stored)
+        for ((kind, line) in HandoffKind.entries.zip(lines)) {
+            onLog("<k> $line")
+            /* The meta store replaces a line by its key, so the one key per
+             * family is spelled `handoff.<kind>`; the run log keeps the
+             * `handoff=<kind>` form. */
+            runDir?.let {
+                RunLogStore.appendMeta(
+                    File(it),
+                    "handoff.${kind.wire}=${line.substringAfter("state=")}",
+                )
             }
-            val suitable = candidates.filter { it.suitable }
-            onLog("<k> ksud scan: ${candidates.size} candidate(s), ${suitable.size} suitable")
-            candidates.forEach {
-                onLog("<k>   ${it.packageName}: ${it.path} [${it.verdict}]")
+        }
+        if (runDir != null) {
+            val meta = File(runDir)
+            for ((index, verdict) in plan.verdicts.withIndex()) {
+                val path = when (val manager = verdict.manager) {
+                    is RootManager.Ksu -> manager.ksudPath
+                    is RootManager.Magisk -> manager.nativeLibDir.orEmpty()
+                }
+                RunLogStore.appendMeta(
+                    meta,
+                    "handoff-candidate.$index=${verdict.manager.kind.wire}:" +
+                        "${verdict.manager.packageName} path=$path " +
+                        "state=${verdict.state.name.lowercase()} reason=${verdict.reason}",
+                )
             }
-            val resolved = ManagerScanner.resolve(candidates, selectedManagerPackage())
-            if (resolved == null) {
-                onLog("<k> error: no suitable ksud found; refusing to start the exploit")
-                return@withContext false
-            }
-            if (suitable.size > 1) {
+        }
+    }
+
+    /**
+     * Stages the plan's first usable KSU target into [workDir]/ksud.
+     *
+     * The plan already decided — this only refines it: a payload that has
+     * vanished is dropped and the next feasible target is tried. Returns false
+     * when none can be staged (a run-start failure past the precondition).
+     */
+    private suspend fun stageKsud(
+        workDir: File,
+        plan: HandoffResolution,
+        onLog: (String) -> Unit,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val targets = plan.feasibleOf(HandoffKind.KSU)
+        if (targets.isEmpty()) {
+            onLog("<k> error: no feasible KernelSU manager in the handoff plan")
+            return@withContext false
+        }
+        val output = File(workDir, "ksud")
+        for (verdict in targets) {
+            val manager = verdict.manager as RootManager.Ksu
+            val origin = File(manager.ksudPath)
+            if (!origin.isFile) {
                 onLog(
-                    "<k> ksud: ${suitable.size} suitable; using ${resolved.packageName} " +
+                    "<k> handoff: dropped ${manager.packageName} " +
+                        "(payload missing: ${manager.ksudPath})",
+                )
+                continue
+            }
+            val staged = runCatching {
+                output.delete()
+                origin.inputStream().use { input ->
+                    output.outputStream().use { input.copyTo(it) }
+                }
+                Os.chmod(output.absolutePath, 448)
+            }
+            if (staged.isFailure) {
+                onLog(
+                    "<k> handoff: dropped ${manager.packageName} " +
+                        "(staging failed: ${staged.exceptionOrNull()?.message})",
+                )
+                continue
+            }
+            onLog("<k> ksud selected: ${manager.packageName} ${manager.ksudPath} [${verdict.reason}]")
+            if (targets.size > 1) {
+                onLog(
+                    "<k> ksud: ${targets.size} feasible; using ${manager.packageName} " +
                         "(Advanced -> Root manager to change)",
                 )
             }
-            resolved
+            return@withContext true
         }
-        val output = File(workDir, "ksud")
-        runCatching {
-            output.delete()
-            File(chosen.path).inputStream().use { input ->
-                output.outputStream().use { input.copyTo(it) }
-            }
-            Os.chmod(output.absolutePath, 448)
-        }.onFailure {
-            onLog("<k> error: cannot stage ksud from ${chosen.path}: ${it.message}")
-            return@withContext false
-        }
-        onLog("<k> ksud selected: ${chosen.packageName} ${chosen.path} [${chosen.verdict}]")
-        true
+        onLog("<k> error: no handoff target could be staged; refusing to start the exploit")
+        false
     }
 
     private suspend fun runProcess(

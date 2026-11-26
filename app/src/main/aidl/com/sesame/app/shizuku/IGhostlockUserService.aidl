@@ -6,7 +6,10 @@ import com.sesame.app.shizuku.IGhostlockStatusCallback;
 
 interface IGhostlockUserService {
     void destroy() = 16777114;
-    void runExploit(boolean safeMode, boolean forceAttack, boolean anchorTrusted, in byte[] profileBlob, @nullable String debugDir, @nullable String managerPackage, IGhostlockCallback callback, IGhostlockStatusCallback statusCallback) = 2;
+    /* `targets` is the app's handoff plan: the feasible managers in attempt
+     * order, one `HandoffWire` line each (kind|package|origin|kmi). The
+     * service stages from each origin — it never re-decides. */
+    void runExploit(boolean safeMode, boolean forceAttack, boolean anchorTrusted, in byte[] profileBlob, @nullable String debugDir, in String[] targets, IGhostlockCallback callback, IGhostlockStatusCallback statusCallback) = 2;
 
     /* Crash evidence: the shell can read the boot-reason properties and the
      * pstore nodes that an app cannot. The pstore names are a fixed allowlist

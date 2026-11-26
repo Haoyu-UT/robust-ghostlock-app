@@ -10,7 +10,10 @@ import androidx.annotation.Keep
 import com.sesame.app.data.BugreportzOutput
 import com.sesame.app.data.CrashEvidenceStore
 import com.sesame.app.data.DropboxKmsg
+import com.sesame.app.data.HandoffWire
 import com.sesame.app.data.ManagerScanner
+import com.sesame.app.domain.model.HandoffTarget
+import com.sesame.app.domain.model.RootManager
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
@@ -47,7 +50,7 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
         anchorTrusted: Boolean,
         profileBlob: ByteArray,
         debugDir: String?,
-        managerPackage: String?,
+        targets: Array<String>,
         callback: IGhostlockCallback,
         statusCallback: IGhostlockStatusCallback,
     ) {
@@ -74,18 +77,12 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
                 val workDir = File("/data/local/tmp/ghostlock-app").apply {
                     require(isDirectory || mkdirs()) { "cannot create $absolutePath" }
                 }
-                val candidates = ManagerScanner.scan(context)
-                val suitable = candidates.count { it.suitable }
-                val chosen = ManagerScanner.resolve(candidates, managerPackage)
-                    ?: error("no suitable ksud found; refusing to start the exploit")
-                val ksud = File(workDir, "ksud")
-                ksud.delete()
-                File(chosen.path).inputStream().use { input ->
-                    ksud.outputStream().use { input.copyTo(it) }
-                }
-                runCatching { Os.chmod(ksud.absolutePath, 448) }
-                callback.onLog("<s> ksud scan: ${candidates.size} candidate(s), $suitable suitable")
-                callback.onLog("<s> ksud selected: ${chosen.packageName} ${chosen.path} [${chosen.verdict}]")
+                /* The app resolved the handoff before dispatch; this process
+                 * only stages the list it was given, from each manager's own
+                 * origin path (it cannot read the app's sandbox). */
+                val plan = HandoffWire.decodeAll(targets.toList())
+                val chosen = stageHandoffTargets(plan, workDir, callback)
+                    ?: error("no handoff target could be staged")
                 callback.onLog("<s> Shizuku ready: uid=${Process.myUid()} Seccomp=0")
                 callback.onLog("<s> kernel: $release")
                 val nativeLog = File(workDir, ".ghostlock_native.log")
@@ -165,6 +162,65 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
             running.set(false)
             runCatching { callback.onComplete(exitCode) }
         }, "ghostlock-shizuku-runner").start()
+    }
+
+    /**
+     * Stages the plan's first usable KSU target into [workDir]/ksud, in the
+     * app's attempt order. Magisk entries cannot occur in this slice (the app's
+     * selection is KSU-only); the rule set and their staging land together.
+     * Returns the staged entry, or null when none could be staged.
+     */
+    private fun stageHandoffTargets(
+        plan: List<HandoffTarget>,
+        workDir: File,
+        callback: IGhostlockCallback,
+    ): HandoffTarget? {
+        if (plan.isEmpty()) {
+            callback.onLog("<s> error: the handoff plan is empty")
+            return null
+        }
+        val ksud = File(workDir, "ksud")
+        for (target in plan) {
+            val manager = target.manager
+            if (manager !is RootManager.Ksu) {
+                callback.onLog(
+                    "<s> handoff: skipped ${manager.kind.wire}:${manager.packageName} " +
+                        "(Magisk staging lands with the rule set)",
+                )
+                continue
+            }
+            val origin = File(manager.ksudPath)
+            if (!origin.isFile) {
+                callback.onLog(
+                    "<s> handoff: dropped ${manager.packageName} " +
+                        "(payload missing: ${manager.ksudPath})",
+                )
+                continue
+            }
+            val staged = runCatching {
+                ksud.delete()
+                origin.inputStream().use { input ->
+                    ksud.outputStream().use { input.copyTo(it) }
+                }
+                Os.chmod(ksud.absolutePath, 448)
+            }
+            if (staged.isFailure) {
+                callback.onLog(
+                    "<s> handoff: dropped ${manager.packageName} " +
+                        "(staging failed: ${staged.exceptionOrNull()?.message})",
+                )
+                continue
+            }
+            callback.onLog("<s> ksud selected: ${manager.packageName} ${manager.ksudPath}")
+            if (plan.size > 1) {
+                callback.onLog(
+                    "<s> handoff: ${plan.size} target(s); using " +
+                        "${manager.kind.wire}:${manager.packageName}",
+                )
+            }
+            return target
+        }
+        return null
     }
 
     /**
