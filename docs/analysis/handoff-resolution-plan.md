@@ -509,7 +509,7 @@ Gates: `sh -n` on the generated script; a host test for the env; a diting timer 
 Magisk forced (KSU control beside it): `MAGISK-PHASE`, magiskd, `enforce=1` restored, run-store
 verdict.
 
-**S2/S3 landed 2026-11-27** (build 938, commit with this note). The core, both wrappers, the
+**S2/S3 landed 2026-11-27** (build 938, commit `4ff4c213`). The core, both wrappers, the
 wire transport and the rules are in: `src/core/handoff/handoff.sh` (embedded as bytes into both
 binaries by `src/Makefile`, `sh -n`-gated, with the `handoff_test.sh` loop harness in
 `native-host-tests`), `ops.cpp` (prologue, `dump_debug`/unload hooks, sidecar; the KSUD search
