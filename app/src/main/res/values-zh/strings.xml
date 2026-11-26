@@ -460,6 +460,7 @@
     <string name="field_sigret_waiter_off_plain">sigreturn waiter（plain）</string>
     <string name="field_sigret_waiter_off_sve">sigreturn waiter（sve）</string>
     <string name="field_module_asset">模块文件</string>
+    <string name="field_module_crcs">模块 CRC</string>
     <string name="field_module_sha256">模块 sha256</string>
     <string name="field_module_vendor_files">模块 vendor 文件</string>
     <string name="field_timer_trigger">定时器触发</string>

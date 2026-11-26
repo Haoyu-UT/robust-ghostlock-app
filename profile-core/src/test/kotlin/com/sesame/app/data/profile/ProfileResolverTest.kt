@@ -331,6 +331,7 @@ class ProfileResolverTest {
             (this["ghostlock"] as ValueMap)["module"] = valueMapOf(
                 "asset" to "modules/x.ko",
                 "sha256" to "a".repeat(64),
+                "crcs" to valueMapOf("module_layout" to "0x4e974a74"),
                 "vendor_files" to listOf("/vendor/lib64/libx.so"),
             )
         }
@@ -362,8 +363,9 @@ class ProfileResolverTest {
                 "anchor" to null,
                 "syscalls" to null,
                 "module" to valueMapOf(
-                    "asset" to "modules/x.ko",
+                    "asset" to "modules/5.4-line.ko",
                     "sha256" to "a".repeat(64),
+                    "crcs" to valueMapOf("module_layout" to "0x4e974a74"),
                     "vendor_files" to listOf("/vendor/lib64/libx.so"),
                 ),
                 "execution" to null,
@@ -373,6 +375,45 @@ class ProfileResolverTest {
         assertEquals(emptyList<String>(), errorsOf(moduleOnly).map { it.toString() })
         assertEquals(listOf("module"), ProfileResolver.pipelineOrder(moduleOnly))
         assertFalse(ProfileResolver.requiresW1(ProfileResolver.pipelineOrder(moduleOnly)))
+    }
+
+    @Test
+    fun `a module asset must name the document's kernel line`() {
+        fun moduleOnly(asset: String): ValueMap = valueMapOf(
+            "schema_version" to 3L,
+            "release" to "5.4.233-qgki-gbb70cde46897",
+            "devices" to null,
+            "kernel" to valueMapOf(
+                "image_base" to null,
+                "symbols" to null,
+                "struct" to null,
+                "heap" to null,
+                "dirtyfrag" to "unknown",
+                "kdp" to false,
+            ),
+            "ghostlock" to valueMapOf(
+                "syscall" to null,
+                "carrier" to null,
+                "anchor" to null,
+                "syscalls" to null,
+                "module" to valueMapOf(
+                    "asset" to asset,
+                    "sha256" to "a".repeat(64),
+                    "crcs" to valueMapOf("module_layout" to "0x4e974a74"),
+                    "vendor_files" to listOf("/vendor/lib64/libx.so"),
+                ),
+                "execution" to null,
+            ),
+            "timer" to null,
+        )
+        assertEquals(
+            emptyList<String>(),
+            errorsOf(moduleOnly("modules/5.4-line.ko")).map { it.toString() },
+        )
+        assertTrue(
+            errorsOf(moduleOnly("modules/5.10-line.ko"))
+                .any { it.fieldPath == "ghostlock.module.asset" },
+        )
     }
 
     @Test

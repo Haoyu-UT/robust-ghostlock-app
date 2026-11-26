@@ -12,6 +12,10 @@ class ModuleBlockTest {
     private fun block(overrides: Map<String, Any?> = emptyMap()): Map<String, Any?> = valueMapOf(
         "asset" to "modules/$release.ko",
         "sha256" to "a".repeat(64),
+        "crcs" to valueMapOf(
+            "module_layout" to "0x4e974a74",
+            "printk" to "0xc5850110",
+        ),
         "vendor_files" to listOf("/vendor/lib64/libbinderdebug.so"),
     ) + overrides
 
@@ -24,7 +28,30 @@ class ModuleBlockTest {
         assertTrue(errors.isEmpty())
         assertEquals("modules/$release.ko", config?.asset)
         assertEquals("a".repeat(64), config?.assetSha256)
+        assertEquals(0x4e974a74L, config?.crcs?.get("module_layout"))
+        assertEquals(0xc5850110L, config?.crcs?.get("printk"))
         assertEquals(listOf("/vendor/lib64/libbinderdebug.so"), config?.vendorFiles)
+    }
+
+    @Test
+    fun `the crc map is required and validated`() {
+        assertTrue("ghostlock.module.crcs" in errors(mapOf("crcs" to null)))
+        assertTrue("ghostlock.module.crcs" in errors(mapOf("crcs" to "nope")))
+        assertTrue("ghostlock.module.crcs" in errors(mapOf("crcs" to emptyMap<String, Any>())))
+        for (bad in listOf(
+            valueMapOf("module_layout" to "0"),
+            valueMapOf("module_layout" to "0x100000000"),
+            valueMapOf("module_layout" to "not-a-number"),
+            valueMapOf("9layout" to "0x1"),
+            valueMapOf("bad-name" to "0x1"),
+            valueMapOf("x".repeat(56) to "0x1"),
+        )) {
+            assertTrue("crcs $bad", "ghostlock.module.crcs" in errors(mapOf("crcs" to bad)))
+        }
+        assertTrue(
+            "a decimal value is accepted",
+            "ghostlock.module.crcs" !in errors(mapOf("crcs" to valueMapOf("module_layout" to 123L))),
+        )
     }
 
     @Test

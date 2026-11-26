@@ -461,6 +461,7 @@
     <string name="field_sigret_waiter_off_plain">sigreturn waiter (plain)</string>
     <string name="field_sigret_waiter_off_sve">sigreturn waiter (sve)</string>
     <string name="field_module_asset">module asset</string>
+    <string name="field_module_crcs">module CRCs</string>
     <string name="field_module_sha256">module sha256</string>
     <string name="field_module_vendor_files">module vendor files</string>
     <string name="field_timer_trigger">timer trigger</string>

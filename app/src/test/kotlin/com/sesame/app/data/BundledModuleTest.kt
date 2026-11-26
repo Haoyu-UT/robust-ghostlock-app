@@ -1,6 +1,7 @@
 package com.sesame.app.data
 
 import android.app.Application
+import com.sesame.app.data.profile.ModuleBlock
 import com.sesame.app.data.profile.ModuleConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,13 +24,13 @@ class BundledModuleTest {
         val document = HoconSupport.parseValue(
             AssetConfigLoader(context).load("kernel_profiles/$release.conf"),
         ).asValueMap() ?: error("$release: unreadable profile")
-        val block = (document["ghostlock"] as? Map<*, *>)?.get("module").asValueMap()
+        val block = (document["ghostlock"] as? Map<*, *>)?.get("module")
             ?: error("$release: module block missing")
-        return ModuleConfig(
-            asset = block["asset"] as String,
-            assetSha256 = block["sha256"] as String,
-            vendorFiles = emptyList(),
-        )
+        val (config, errors) = ModuleBlock.parse(block)
+        if (config == null || errors.isNotEmpty()) {
+            error("$release: module block invalid: ${errors.map { it.fieldPath }}")
+        }
+        return config.copy(vendorFiles = emptyList())
     }
 
     @Test

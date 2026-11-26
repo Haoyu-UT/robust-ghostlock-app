@@ -16,6 +16,7 @@ class ModuleBlockerTest {
     private val module = ModuleConfig(
         asset = "modules/5.4.233-qgki-gbb70cde46897.ko",
         assetSha256 = "64981aad" + "0".repeat(56),
+        crcs = mapOf("module_layout" to 0x4e974a74L),
         vendorFiles = listOf("/vendor/lib64/libstagefrighthw.so"),
     )
 

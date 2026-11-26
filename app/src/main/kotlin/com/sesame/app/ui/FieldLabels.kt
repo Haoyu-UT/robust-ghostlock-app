@@ -134,9 +134,11 @@ internal fun fieldLabelRes(path: String): Int? {
         }
     }
     if (path.startsWith("ghostlock.module.")) {
+        if (path.startsWith("ghostlock.module.crcs.")) return R.string.field_module_crcs
         return when (path.removePrefix("ghostlock.module.")) {
             "asset" -> R.string.field_module_asset
             "sha256" -> R.string.field_module_sha256
+            "crcs" -> R.string.field_module_crcs
             "vendor_files" -> R.string.field_module_vendor_files
             else -> null
         }
