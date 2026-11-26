@@ -1643,12 +1643,12 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                                                         "magisk=${magisk.packageName}",
                                                 )
                                                 onLog(
-                                                    "<k> module layout: asset=0x%08x " +
-                                                        "profile=0x%08x patched=%d".format(
-                                                            pair.assetLayout,
-                                                            pair.profileLayout,
-                                                            if (pair.patched) 1 else 0,
-                                                        ),
+                                                    ("<k> module layout: asset=0x%08x " +
+                                                        "profile=0x%08x patched=%d").format(
+                                                        pair.assetLayout,
+                                                        pair.profileLayout,
+                                                        if (pair.patched) 1 else 0,
+                                                    ),
                                                 )
                                                 onLog(
                                                     "<k> module delivered: " +
