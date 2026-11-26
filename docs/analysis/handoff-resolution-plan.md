@@ -1,8 +1,8 @@
 # Handoff resolution — one detector, one rule set, one precondition per run
 
-**Status:** design approved; **S1–S3 implemented and device-gated 2026-11-27** (all six
-route×manager combinations ran). S4 (the picker over both families) is the remaining slice.
-L-level (the delivery path's selection).
+**Status:** design approved; **S1–S4 implemented and device-gated 2026-11-27** (all six
+route×manager combinations ran, plus the picker and the no-Magisk paths). The deferred items in
+§4 (the failure-semantics split) remain. L-level (the delivery path's selection).
 
 **Question.** The root manager is currently chosen by an inference — the module pipeline
 stages Magisk, and `handoffEnv(magiskBin)` reads a non-null directory as "hand off to
@@ -529,18 +529,49 @@ Device matrix — every pair shows `handoff-target=… idx=1`, the enforcing res
 | ghostlock, dirtyfrag W1 (diting) | `005502` | `005617` |
 | ghostlock, full chain (diting) | `005834` | `005733` |
 | module (diting, 5.10.236 bench profile) | `005125` | `005024` |
+| timer `fake` (diting, after the prime-core hold) | `014443` | `014719` |
 | timer `fake` (POCO 6.1.138) | `010310` | `010505` |
 
 The module pair ran on a temporary module-only 5.10.236 profile (the 2026-11-22 diting
 `dfswitch` module, its real CRCs, so the delivery patch is a no-op); the profile and asset were
-reverted after the runs. Timer runs used the POCO's bundled 6.1.138 profile (Magisk was installed
-there for the pair; Shizuku was started with its own adb `start.sh`). The KSU handoff on these
-rigs is the "already loaded" readiness path (both carry root from boot); `late-load` itself was
-not re-proven here (it is the 2026-11-09 record), and the OnePlus 6.6.66 KSU-Next probe is not
-part of this matrix.
+reverted after the runs. Timer runs used the POCO's bundled 6.1.138 profile first (Magisk was
+installed there for the pair; Shizuku started with its own adb `start.sh`) and then the diting's
+own 5.10.236 timer block — the diting's tool pins its victim to CPU 7, which the vendor's prime
+core parks, so the run needs `min_cpus=1` on `cpu7/core_ctl` first (an environment fact of the
+tool, not the handoff). The KSU handoff on these rigs is the "already loaded" readiness path
+(both carry root from boot); `late-load` itself was not re-proven here (it is the 2026-11-09
+record). The OnePlus 6.6.66 KernelSU-Next probe is in the S4 record below.
 
 The stored choice was exercised through the debug hook (`--es handoff_manager <pkg>`, retired
 with S4); with it the family order flips and the other family stays a fallback, as specified.
+
+**S4 landed 2026-11-27** (build 940). The picker is the run's own resolution over both
+families: `HandoffResolver.choices` turns the verdicts into rows with `feasible` and the
+evidence (`supported-kmis lists …`, `binaries present (…)`) or the refusal reason; only a
+feasible row can be stored, an infeasible-but-installed row stays visible and a tap on it
+toasts its reason. Auto still stores nothing. The KMI answers are cached per boot (in memory,
+keyed by the ksud path), shared by the picker and the pre-flight. The stored-choice self-heal
+is in the pre-flight: a choice whose package vanished is cleared; an installed-but-infeasible
+one is kept and logged (`selected:<pkg> infeasible — using <head>` in the family line). The
+`--es handoff_manager` bench hook is retired — the picker is the bench path.
+
+Two plan-conformance fixes landed with it: the module entry accepts any staged manager (the
+old code still demanded Magisk, so a KSU-only ≥5.10 module profile would have been rejected
+despite §2.2), and the home badge/strings are manager-agnostic (`moduleManager`,
+`ModuleBlocker.ManagerMissing`).
+
+Device:
+- diting: the picker lists `ReSukiSU — supported-kmis lists android12-5.10` and
+  `Magisk — binaries present (magisk, magiskinit, magiskpolicy)`; selecting Magisk (`013617`)
+  and ReSukiSU (`013813`) flips the plan head and the effective target.
+- diting, module bench with Magisk **uninstalled** (`015044`): `handoff.magisk=infeasible
+  reason=not installed`, `module pair … handoff=ksu:com.resukisu.resukisu`, target=ksu,
+  `RESULT=OK` — the module-entry fix and the vanished-pin self-heal (the stored
+  `com.topjohnwu.magisk` was cleared) in one run.
+- diting timer: KSU `014443`, Magisk `014719` (via the picker), both `handoff-target=… idx=1`,
+  timer verdict 0.
+- OnePlus 6.6.66: the picker reads `KernelSU-Next — supported-kmis lists android15-6.6`, the
+  second real manager's `boot-info` answer.
 
 **S4 — picker and stored selection.**
 Files: the Advanced picker over both families with the evidence kinds (§4.3), the stored choice
@@ -567,9 +598,9 @@ shell, manager best-effort", never a requirement of the chain.
    attempted. It should read as a distinct outcome ("root shell achieved, manager not ready").
    This cut keeps the exit code and records the attempts; the outcome split is a separate, small
    design.
-3. **Probe honesty.** KSU's verdict is the manager's own interface (`supported-kmis` /
-   `current-kmi`); Magisk's is a file inventory. The picker must show them as different kinds of
-   evidence ("interface confirmed" vs "binaries present").
+3. **Probe honesty — implemented (S4).** KSU's verdict is the manager's own interface
+   (`supported-kmis`/`current-kmi`); Magisk's is a file inventory. The picker shows the
+   resolver's evidence line per row, and an infeasible row is not selectable.
 
 ## 5. Risks
 

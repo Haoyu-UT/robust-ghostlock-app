@@ -197,17 +197,24 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         if (enabled) shizukuRunner.requestPermission()
     }
 
+    /**
+     * The picker's rows: the same resolution the run enforces — both families,
+     * each with its feasibility and evidence. No anchor check (the picker does
+     * not start a run); the KMI answers come from this boot's cache.
+     */
     override suspend fun managerCandidates(): List<RootManagerCandidate> = withContext(Dispatchers.IO) {
-        ManagerScanner.scan(appContext).map {
-            RootManagerCandidate(
-                packageName = it.packageName,
-                label = it.label,
-                path = it.path,
-                builtin = it.builtin,
-                suitable = it.suitable,
-                verdict = it.verdict,
-            )
-        }
+        val ksu = runCatching { ManagerScanner.scan(appContext) }.getOrDefault(emptyList())
+        val magisk = runCatching { MagiskStage.detect(appContext) }.getOrDefault(emptyList())
+        val release = System.getProperty("os.version", "").orEmpty()
+        HandoffResolver.choices(
+            HandoffResolver.resolve(
+                release,
+                ksu,
+                kmiAnswers(ksu),
+                magisk,
+                selectedManagerPackage(),
+            ),
+        )
     }
 
     override fun selectedManagerPackage(): String? =
@@ -850,18 +857,28 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER)
             }
             /* The manager's own KMI interface over the suitable candidates;
-             * probed once per run and cached here (two extra execs each). A
+             * answered once per boot and cached here (two extra execs each). A
              * probe that throws reads as "cannot answer" — the resolver then
              * uses the release mirror rather than the run failing. */
-            val kmiAnswers = HashMap<String, ManagerScanner.KmiAnswer>()
-            for (candidate in ksu) {
-                if (!candidate.suitable) continue
-                kmiAnswers[candidate.path] = runCatching { ManagerScanner.probeKmi(candidate) }
-                    .getOrElse { ManagerScanner.KmiAnswer(null, null, null) }
-            }
             val release = System.getProperty("os.version", "").orEmpty()
             val stored = selectedManagerPackage()
-            val plan = HandoffResolver.resolve(release, ksu, kmiAnswers, magisk, stored)
+            val plan = HandoffResolver.resolve(release, ksu, kmiAnswers(ksu), magisk, stored)
+            /* A stored choice is a preference, not an exclusion: an
+             * installed-but-infeasible choice is kept and logged; only a
+             * vanished package is cleared (deliberately stricter than the
+             * route/carrier self-healing — a manager is a user choice). */
+            if (stored != null && !packageInstalled(stored)) {
+                setSelectedManagerPackage(null)
+                Log.i(LogTag, "handoff: stored manager $stored is not installed; cleared")
+            } else if (stored != null && plan.feasible.isNotEmpty() &&
+                plan.feasible.none { it.manager.packageName == stored }
+            ) {
+                Log.i(
+                    LogTag,
+                    "handoff: selected:$stored infeasible — using " +
+                        plan.feasible.first().manager.packageName,
+                )
+            }
             if (plan.isEmpty) {
                 val lines = HandoffResolver.familyLines(plan, stored)
                 lines.forEach { Log.i(LogTag, "handoff: $it") }
@@ -869,6 +886,37 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             }
             PreflightResult.Passed(plan)
         }
+
+    /**
+     * The manager KMI answers, cached for this boot (memory only): the picker
+     * and the run pre-flight ask the same question, and an answer cannot change
+     * without a reboot or a manager update (the ksud path is the cache key).
+     * No persistent cache — a stale verdict is the failure worth avoiding.
+     */
+    private val kmiCache = HashMap<String, ManagerScanner.KmiAnswer>()
+    private var kmiCacheBoot: String? = null
+
+    private fun kmiAnswers(
+        ksu: List<ManagerScanner.Candidate>,
+    ): Map<String, ManagerScanner.KmiAnswer> {
+        val boot = currentBootId()
+        if (boot != kmiCacheBoot) {
+            kmiCache.clear()
+            kmiCacheBoot = boot
+        }
+        val answers = HashMap<String, ManagerScanner.KmiAnswer>(ksu.size)
+        for (candidate in ksu) {
+            if (!candidate.suitable) continue
+            answers[candidate.path] = kmiCache.getOrPut(candidate.path) {
+                runCatching { ManagerScanner.probeKmi(candidate) }
+                    .getOrElse { ManagerScanner.KmiAnswer(null, null, null) }
+            }
+        }
+        return answers
+    }
+
+    private fun packageInstalled(packageName: String): Boolean =
+        runCatching { appContext.packageManager.getPackageInfo(packageName, 0) }.isSuccess
 
     /**
      * Mirror of `lock_anchor.cpp`'s boot-scoped decision. Returns the blocking
@@ -1722,19 +1770,22 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                                         is BundledModule.StageResult.Failed -> staged.reason
                                         is BundledModule.StageResult.Ok -> {
                                             val pair = staged.staged
-                                            /* The module entry consumes the plan:
-                                             * its handoff is a staged Magisk target. */
-                                            val magisk = targets.firstOrNull {
-                                                it.manager.kind == HandoffKind.MAGISK
-                                            }
-                                            if (magisk == null) {
-                                                "Magisk manager is not installed or cannot be staged"
+                                            /* The module entry consumes the plan: any
+                                             * staged manager is a handoff target —
+                                             * the module opens the window and the
+                                             * script attempts the list (KSU and
+                                             * Magisk alike). */
+                                            val handoff = targets.firstOrNull()
+                                            if (handoff == null) {
+                                                "no handoff target is staged"
                                             } else {
                                                 onLog(
                                                     "<k> module pair: ${spec.asset} " +
                                                         "(sha256 ok, patched=" +
                                                         "${if (pair.patched) 1 else 0}), " +
-                                                        "magisk=${magisk.manager.packageName}",
+                                                        "handoff=" +
+                                                        "${handoff.manager.kind.wire}:" +
+                                                        "${handoff.manager.packageName}",
                                                 )
                                                 onLog(
                                                     ("<k> module layout: asset=0x%08x " +

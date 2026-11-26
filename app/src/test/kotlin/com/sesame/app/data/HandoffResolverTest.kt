@@ -204,6 +204,51 @@ class HandoffResolverTest {
     }
 
     @Test
+    fun `picker rows carry feasibility and evidence across both families`() {
+        val a = candidate("a")
+        val gone = candidate("gone", suitable = false)
+        val plan = resolve(
+            ksu = listOf(a, gone),
+            kmi = mapOf(a.path to answer(listOf("android12-5.10"), "android12-5.10")),
+            magisk = listOf(magisk("com.topjohnwu.magisk", setOf("magiskpolicy"))),
+        )
+        val rows = HandoffResolver.choices(plan)
+        assertEquals(
+            listOf("a", "com.topjohnwu.magisk"),
+            rows.map { it.packageName },
+        )
+        assertEquals(HandoffKind.KSU, rows[0].kind)
+        assertTrue(rows[0].feasible)
+        assertEquals("supported-kmis lists android12-5.10", rows[0].verdict)
+        assertEquals(HandoffKind.MAGISK, rows[1].kind)
+        assertFalse(rows[1].feasible)
+        assertEquals("native libs incomplete (missing magiskpolicy)", rows[1].verdict)
+    }
+
+    @Test
+    fun `a stored but infeasible choice is named in the family line`() {
+        val a = candidate("a")
+        val plan = resolve(
+            ksu = listOf(a),
+            kmi = mapOf(a.path to answer(listOf("android12-5.10"), "android12-5.10")),
+            magisk = listOf(magisk("com.topjohnwu.magisk", setOf("magiskpolicy"))),
+            stored = "com.topjohnwu.magisk",
+        )
+        assertEquals(
+            "handoff=magisk state=infeasible reason=selected:com.topjohnwu.magisk " +
+                "infeasible — using a; native libs incomplete (missing magiskpolicy)",
+            HandoffResolver.familyLines(plan, "com.topjohnwu.magisk")
+                .first { it.startsWith("handoff=magisk") },
+        )
+        // The KSU line names the fallback that the run will use.
+        assertEquals(
+            "handoff=ksu state=feasible reason=available (1 candidate)",
+            HandoffResolver.familyLines(plan, "com.topjohnwu.magisk")
+                .first { it.startsWith("handoff=ksu") },
+        )
+    }
+
+    @Test
     fun `an empty plan reports both families`() {
         val plan = resolve()
         assertTrue(plan.isEmpty)

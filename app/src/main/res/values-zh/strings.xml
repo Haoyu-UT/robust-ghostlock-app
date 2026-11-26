@@ -248,12 +248,12 @@
     <string name="module_chain_label">模块链</string>
     <string name="module_asset_sha">sha256 %1$s</string>
     <string name="module_vendor_files">%1$d 个 vendor_file 目标</string>
-    <string name="module_magisk_installed">Magisk 已安装</string>
-    <string name="module_magisk_missing">未检测到 Magisk</string>
+    <string name="module_manager_installed">root 管理器可用</string>
+    <string name="module_manager_missing">未检测到 root 管理器</string>
     <string name="module_blocked_title">模块链未就绪</string>
     <string name="module_blocked_not_bundled">模块链只能由内置配置运行</string>
     <string name="module_blocked_asset">内置模块缺失或校验失败</string>
-    <string name="module_blocked_magisk">请先安装 Magisk 管理器再运行模块链</string>
+    <string name="module_blocked_manager">请先安装 root 管理器（Magisk 或 KernelSU）再运行模块链</string>
     <string name="module_export_note">模块链只能由内置配置运行，导出后无法导入。</string>
     <string name="clear_external_profile">取消外部配置</string>
     <string name="export_cancelled">已取消导出，未写入文件</string>

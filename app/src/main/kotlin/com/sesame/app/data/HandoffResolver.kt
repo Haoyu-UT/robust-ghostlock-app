@@ -5,6 +5,7 @@ import com.sesame.app.domain.model.HandoffResolution
 import com.sesame.app.domain.model.HandoffState
 import com.sesame.app.domain.model.HandoffVerdict
 import com.sesame.app.domain.model.RootManager
+import com.sesame.app.domain.model.RootManagerCandidate
 
 /**
  * The handoff rule set (handoff-resolution-plan.md §2.2/§2.4): the stored
@@ -122,30 +123,80 @@ object HandoffResolver {
     }
 
     /**
+     * The picker's rows: every manager the user could act on — a KSU candidate
+     * that passed candidacy, and every installed Magisk — with the resolver's
+     * feasibility and evidence. Unsuitable KSU candidates are not choices (the
+     * run's meta still records them).
+     */
+    fun choices(resolution: HandoffResolution): List<RootManagerCandidate> =
+        resolution.verdicts.mapNotNull { verdict ->
+            when (val manager = verdict.manager) {
+                is RootManager.Ksu -> {
+                    if (!manager.suitable) {
+                        null
+                    } else {
+                        RootManagerCandidate(
+                            packageName = manager.packageName,
+                            label = manager.label,
+                            path = manager.ksudPath,
+                            kind = HandoffKind.KSU,
+                            verdict = verdict.reason,
+                            feasible = verdict.state == HandoffState.FEASIBLE,
+                        )
+                    }
+                }
+
+                is RootManager.Magisk -> RootManagerCandidate(
+                    packageName = manager.packageName,
+                    label = manager.label,
+                    path = manager.nativeLibDir.orEmpty(),
+                    kind = HandoffKind.MAGISK,
+                    verdict = verdict.reason,
+                    feasible = verdict.state == HandoffState.FEASIBLE,
+                )
+            }
+        }
+
+    /**
      * The family lines (run log, run-store meta, refusal, picker headers): a
      * projection computed where it is printed, never stored. A feasible row of
      * that kind wins; else the first row's reason; else a fixed absent line.
      */
-    fun familyLines(resolution: HandoffResolution, storedChoice: String?): List<String> =
-        HandoffKind.entries.map { kind ->
+    fun familyLines(resolution: HandoffResolution, storedChoice: String?): List<String> {
+        val globalHead = resolution.feasible.firstOrNull()
+        return HandoffKind.entries.map { kind ->
             val feasible = resolution.feasibleOf(kind)
             val rows = resolution.verdictsOf(kind)
+            val storedRow = rows.firstOrNull { it.manager.packageName == storedChoice }
             val reason = when {
                 feasible.isNotEmpty() -> {
                     val head = feasible.first()
-                    if (head.manager.packageName == storedChoice) {
-                        "selected:${head.manager.packageName}"
-                    } else {
-                        "available (${feasible.size} candidate" +
+                    when {
+                        head.manager.packageName == storedChoice ->
+                            "selected:${head.manager.packageName}"
+
+                        storedRow != null && storedRow.state == HandoffState.INFEASIBLE ->
+                            "selected:${storedChoice} infeasible — using " +
+                                head.manager.packageName
+
+                        else -> "available (${feasible.size} candidate" +
                             (if (feasible.size == 1) "" else "s") + ")"
                     }
                 }
 
-                rows.isNotEmpty() -> rows.first().reason
-                kind == HandoffKind.KSU -> KSU_ABSENT
-                else -> MAGISK_ABSENT
+                rows.isEmpty() -> if (kind == HandoffKind.KSU) KSU_ABSENT else MAGISK_ABSENT
+
+                /* The stored choice lives in this family and cannot run: name
+                 * it and the fallback the run will use, keeping its reason. */
+                storedRow != null && storedRow.state == HandoffState.INFEASIBLE &&
+                    globalHead != null ->
+                    "selected:${storedChoice} infeasible — using " +
+                        "${globalHead.manager.packageName}; ${storedRow.reason}"
+
+                else -> rows.first().reason
             }
             val state = if (feasible.isEmpty()) "infeasible" else "feasible"
             "handoff=${kind.wire} state=$state reason=$reason"
         }
+    }
 }

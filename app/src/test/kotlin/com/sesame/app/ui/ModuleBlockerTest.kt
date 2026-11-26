@@ -24,14 +24,14 @@ class ModuleBlockerTest {
         module: ModuleConfig? = this.module,
         bundled: Boolean = true,
         assetVerified: Boolean = true,
-        magisk: String? = "com.topjohnwu.magisk",
+        manager: String? = "com.topjohnwu.magisk",
     ): SessionState = SessionState(
         support = SessionState.SupportState(
             hasProfile = true,
             layers = ProfileLayers(bundledAuthoritative = bundled),
             module = module,
             moduleAssetVerified = assetVerified,
-            magiskManager = magisk,
+            moduleManager = manager,
         ),
     )
 
@@ -49,7 +49,7 @@ class ModuleBlockerTest {
     fun `the bundled profile is the first requirement`() {
         assertEquals(
             ModuleBlocker.NotBundled,
-            moduleBlockerOf(state(bundled = false, assetVerified = false, magisk = null)),
+            moduleBlockerOf(state(bundled = false, assetVerified = false, manager = null)),
         )
     }
 
@@ -57,12 +57,12 @@ class ModuleBlockerTest {
     fun `the asset hash is checked before the manager`() {
         assertEquals(
             ModuleBlocker.AssetMissing,
-            moduleBlockerOf(state(assetVerified = false, magisk = null)),
+            moduleBlockerOf(state(assetVerified = false, manager = null)),
         )
     }
 
     @Test
     fun `a missing manager blocks the chain`() {
-        assertEquals(ModuleBlocker.MagiskMissing, moduleBlockerOf(state(magisk = null)))
+        assertEquals(ModuleBlocker.ManagerMissing, moduleBlockerOf(state(manager = null)))
     }
 }

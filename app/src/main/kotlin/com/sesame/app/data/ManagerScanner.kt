@@ -150,6 +150,19 @@ object ManagerScanner {
         val failure: String?,
     )
 
+    /**
+     * A cheap presence check for the home badge — no scan, no exec: the first
+     * installed manager of either family. The run's precondition is the
+     * authority; this only keeps the module card from claiming that a manager
+     * is missing when one is installed.
+     */
+    fun installedManager(context: Context): String? {
+        val pm = context.packageManager
+        return (MagiskStage.PACKAGES + BUILTIN).firstOrNull { packageName ->
+            runCatching { pm.getPackageInfo(packageName, 0) }.isSuccess
+        }
+    }
+
     /** Two extra execs per suitable candidate; call from Dispatchers.IO. */
     fun probeKmi(candidate: Candidate): KmiAnswer {
         val file = File(candidate.path)

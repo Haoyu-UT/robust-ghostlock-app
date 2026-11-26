@@ -395,10 +395,10 @@ internal fun ParameterScreen(
                                         ModuleBlocker.AssetMissing ->
                                             R.string.module_blocked_asset
 
-                                        ModuleBlocker.MagiskMissing ->
-                                            R.string.module_blocked_magisk
+                                        ModuleBlocker.ManagerMissing ->
+                                            R.string.module_blocked_manager
 
-                                        null -> R.string.module_magisk_installed
+                                        null -> R.string.module_manager_installed
                                     },
                                 ),
                                 fontSize = 13.sp,
