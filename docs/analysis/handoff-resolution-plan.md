@@ -447,7 +447,7 @@ Gates: host tests over the pure resolver; app/profile-core suites; a diting W1 s
 logged plan matches the branch that ran; a manifest assertion (both queries present,
 `QUERY_ALL_PACKAGES` still declared).
 
-**S1 landed 2026-11-27** (build 936). `Handoff.kt` (model), `HandoffResolver.kt` (rules and the
+**S1 landed 2026-11-27** (builds 936/937, commit `0bacde94`). `Handoff.kt` (model), `HandoffResolver.kt` (rules and the
 family-line projection), `HandoffWire.kt` (the `kind|package|origin|kmi` entry), Magisk detection
 split out as `MagiskStage.detect` (§2.1's "the lookup minus the staging"), `Candidate.toManager()`
 in the scanner, `Passed(plan)` through the repository / use case / ViewModel, and the AIDL's
@@ -462,11 +462,11 @@ in the scanner, `Passed(plan)` through the repository / use case / ViewModel, an
   and the lib inventory, and §2.1 calls the branch "`MagiskStage`'s lookup minus the staging".
 
 Gates read: app **293/0** (1 skip; 15 new: resolver 9, wire 4, manifest 2), profile-core 62/0
-(1 skip), and two direct runs on the diting (build 936, 5.10.236): `handoff=ksu state=feasible
-reason=available (1 candidate)` → `ksud selected: com.resukisu.resukisu [late-load interface
-confirmed]`, the native's `handoff=kernelsu`, `dirtyfrag: RESULT=OK script=0 enforce=1`, store
-`completed`; the meta carries both family lines and all four candidate rows (the rig has Magisk
-installed, reported infeasible as designed).
+(1 skip), and three direct runs on the diting (builds 936/937, 5.10.236): `handoff=ksu
+state=feasible reason=available (1 candidate)` → `ksud selected: com.resukisu.resukisu
+[late-load interface confirmed]`, the native's `handoff=kernelsu`, `dirtyfrag: RESULT=OK
+script=0 enforce=1`, store `completed`; the meta carries both family lines and all four
+candidate rows (the rig has Magisk installed, reported infeasible as designed).
 
 **S2 — the rules: KSU via `boot-info`, Magisk selectable, W1 Magisk, the attempt loop.**
 Files: `ManagerScanner.kt` (probe `boot-info supported-kmis` as the capability check, then
