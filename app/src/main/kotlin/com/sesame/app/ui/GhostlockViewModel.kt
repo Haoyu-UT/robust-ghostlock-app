@@ -2078,6 +2078,49 @@ class GhostlockViewModel(
         }
     }
 
+    /**
+     * Debug-only: the root-manager scan without a run (`scan_test`). It
+     * exercises the copy-and-probe path — the probe must execute from the
+     * `/data/local/tmp` copy, never in place under `/data/app` — and records
+     * every candidate's verdict plus the manager's own KMI answer.
+     */
+    fun runManagerScanCheck() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val out = StringBuilder()
+            fun record(line: String) {
+                appendLog("scan_test: $line")
+                Log.i("GhostlockScan", line)
+                out.appendLine(line)
+            }
+            try {
+                val candidates = ManagerScanner.scan(application)
+                if (candidates.isEmpty()) record("no candidates")
+                for (candidate in candidates) {
+                    record(
+                        "${candidate.packageName} ${candidate.path} " +
+                            "suitable=${candidate.suitable} ${candidate.verdict}",
+                    )
+                    if (candidate.suitable) {
+                        val kmi = runCatching { ManagerScanner.probeKmi(candidate) }
+                            .getOrElse { ManagerScanner.KmiAnswer(null, null, null) }
+                        record(
+                            "  kmi supported=${kmi.supported} current=${kmi.current} " +
+                                "failure=${kmi.failure}",
+                        )
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                record("error=${error.javaClass.simpleName}: ${error.message}")
+            } finally {
+                runCatching {
+                    application.filesDir.resolve("scan-test.txt").writeText(out.toString())
+                }
+            }
+        }
+    }
+
     fun onCloseExecutionSheet() {
         if (running && !state.value.session.run.sheetDismissible) return
         mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(sheetVisible = false))) }

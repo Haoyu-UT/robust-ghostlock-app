@@ -114,6 +114,11 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG && intent?.hasExtra("derive_test") == true) {
             intent.getStringExtra("derive_image")?.let { viewModel.runDeriveTest(it) }
         }
+        /* Debug-only: `am start --ez scan_test true` runs the root-manager scan
+         * (the copy-and-probe pipeline) and records every verdict. No attack. */
+        if (BuildConfig.DEBUG && intent?.hasExtra("scan_test") == true) {
+            viewModel.runManagerScanCheck()
+        }
         setContent {
             GhostlockRoute(viewModel, ::handleEffect)
         }

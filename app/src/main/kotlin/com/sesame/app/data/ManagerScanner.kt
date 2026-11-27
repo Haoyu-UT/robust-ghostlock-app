@@ -3,6 +3,7 @@ package com.sesame.app.data
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.util.Log
 import com.sesame.app.domain.model.RootManager
 import java.io.File
 import java.io.FileInputStream
@@ -25,14 +26,27 @@ import java.util.concurrent.TimeUnit
  * The `--version` banner is deliberately not used: forks print release names
  * (`ksud samsung-v2.2 (uapi: 5)`), and the interface probe is the contract
  * that matters. Suitability: a confirmed interface wins; a candidate whose
- * probe cannot run (SELinux denies exec, timeout) falls back to the static
- * late-load tokens.
+ * probe cannot run (SELinux denies exec, timeout) or is killed by a signal
+ * (a vendor guard's exec hook kills the child) falls back to the static
+ * late-load tokens — a killed probe is no answer, not a missing interface.
+ * The authoritative probe runs again as root in the handoff, from the exempt
+ * `/data/local/tmp`, which the app cannot write as `untrusted_app`.
  * There is deliberately no persistent cache — the whole pipeline is ~0.2 s
  * warm on a regular phone, and a stale "capable" verdict is the one failure
  * mode worth avoiding.
  */
 object ManagerScanner {
     const val PREF_KEY = "manager_package"
+
+    private const val TAG = "GhostlockScan"
+
+    /**
+     * The only path both OPlus guard generations exempt: the old module reports
+     * a non-root `/data` exec and blocks a root one, the new module blocks the
+     * non-root exec outright — and `/data/app`, where the manager's library
+     * lives, is not exempt in either.
+     */
+    private const val PROBE_DIR = "/data/local/tmp/ghostlock-probe"
 
     private const val PROBE_TIMEOUT_MS = 2000L
     private const val MAX_PROBE_OUTPUT = 8192
@@ -107,10 +121,16 @@ object ManagerScanner {
                 val tokens = scanTokens(file)
                 if (!tokens.ksudLike) continue
                 val probe = run(file, "late-load", "--help")
-                val iface = if (probe.unavailable) {
-                    null
-                } else {
-                    probe.exit == 0 && probe.output.contains("--allow-shell") && probe.output.contains("--kmi")
+                val iface = when {
+                    probe.unavailable -> null
+                    /* A guard's execve hook kills the child before it can
+                     * answer; that is no verdict about the interface. */
+                    probe.killed -> null
+                    /* It ran and said nothing: likewise no verdict. */
+                    probe.output.isBlank() -> null
+                    else -> probe.exit == 0 &&
+                        probe.output.contains("--allow-shell") &&
+                        probe.output.contains("--kmi")
                 }
                 found += Candidate(
                     packageName = info.packageName,
@@ -208,15 +228,68 @@ object ManagerScanner {
             get() = lateLoad || capsule || bootstrap || (brand && kernelKo)
     }
 
-    private data class Probe(val exit: Int?, val output: String, val unavailable: Boolean)
+    private data class Probe(val exit: Int?, val output: String, val unavailable: Boolean) {
+        /**
+         * The child was terminated by a signal, in the shell's 128+N
+         * convention. A vendor guard's execve hook is one such killer; either
+         * way the manager never answered, so this probe carries no verdict.
+         */
+        val killed: Boolean get() = exit != null && exit in 129..192
+    }
 
+    /**
+     * Probes are never executed in place: `/data/app` is exactly the path the
+     * guard watches. The copy under `/data/local/tmp` is the exempt one; a
+     * staging or exec refusal reads as "probe unavailable", so the static-token
+     * verdict still applies. There is deliberately no in-place fallback.
+     */
     private fun run(file: File, vararg args: String): Probe {
+        val staged = stageForProbe(file) ?: return Probe(null, "", true)
+        return try {
+            runStaged(staged, args)
+        } finally {
+            runCatching { staged.delete() }
+        }
+    }
+
+    private fun stageForProbe(file: File): File? {
+        val dir = File(PROBE_DIR)
+        if (!dir.isDirectory && !dir.mkdirs()) {
+            Log.w(TAG, "probe: cannot create $PROBE_DIR")
+            return null
+        }
+        val name = "${Integer.toHexString(file.absolutePath.hashCode())}-${file.name}"
+        val dest = File(dir, name)
+        return try {
+            file.inputStream().use { input ->
+                dest.outputStream().use { output -> input.copyTo(output) }
+            }
+            val executable = dest.setExecutable(true, false)
+            Log.i(TAG, "probe: staged ${file.absolutePath} -> ${dest.absolutePath} executable=$executable")
+            dest
+        } catch (error: Exception) {
+            Log.w(
+                TAG,
+                "probe: staging ${file.absolutePath} failed: " +
+                    "${error.javaClass.simpleName}: ${error.message}",
+            )
+            runCatching { dest.delete() }
+            null
+        }
+    }
+
+    private fun runStaged(file: File, args: Array<out String>): Probe {
         val command = ArrayList<String>(args.size + 1)
         command += file.absolutePath
         command += args
         val process = try {
             ProcessBuilder(command).redirectErrorStream(true).start()
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.w(
+                TAG,
+                "probe: exec ${file.absolutePath} failed: " +
+                    "${error.javaClass.simpleName}: ${error.message}",
+            )
             return Probe(null, "", true)
         }
         val output = StringBuilder()
@@ -242,7 +315,11 @@ object ManagerScanner {
             return Probe(null, output.toString(), true)
         }
         runCatching { reader.join(500) }
-        return Probe(runCatching { process.exitValue() }.getOrNull(), output.toString(), false)
+        val exit = runCatching { process.exitValue() }.getOrNull()
+        if (exit != null && exit in 129..192) {
+            Log.w(TAG, "probe: ${file.absolutePath} terminated by signal ${exit - 128}; no verdict")
+        }
+        return Probe(exit, output.toString(), false)
     }
 
     /** ELF, little-endian aarch64, ET_DYN + PT_INTERP (PIE) or ET_EXEC. */
