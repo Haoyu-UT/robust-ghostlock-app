@@ -17,7 +17,7 @@ namespace ghostlock::runtime {
      * catalogue, so predicate and dispatch share one authority. */
     [[nodiscard]] inline RunResult run_orchestrated_pipeline(
         session::ExploitSession &exploit_session, const ComponentSelection &selection,
-        const profile::kernel_offsets &decoded, const char *debug_dir, bool force_attack) {
+        const profile::kernel_offsets &decoded, const char *debug_dir) {
         switch (dispatch_target(selection)) {
             case DispatchTarget::RootChild_Cve43499_SelectStack: {
                 using P = Pipeline<session::frontend::RootChildPolicy,
@@ -25,7 +25,7 @@ namespace ghostlock::runtime {
                                    route::SelectPolicy>;
                 static_assert(P::target == DispatchTarget::RootChild_Cve43499_SelectStack,
                               "dispatch case must match the pipeline's target");
-                return P::run(exploit_session, decoded, debug_dir, force_attack);
+                return P::run(exploit_session, decoded, debug_dir);
             }
             case DispatchTarget::RootChild_Cve43499_TcpZerocopy: {
                 using P = Pipeline<session::frontend::RootChildPolicy,
@@ -33,7 +33,7 @@ namespace ghostlock::runtime {
                                    route::TcpPolicy>;
                 static_assert(P::target == DispatchTarget::RootChild_Cve43499_TcpZerocopy,
                               "dispatch case must match the pipeline's target");
-                return P::run(exploit_session, decoded, debug_dir, force_attack);
+                return P::run(exploit_session, decoded, debug_dir);
             }
             case DispatchTarget::RootChild_Cve43499_MulticastWaiter: {
                 using P = Pipeline<session::frontend::RootChildPolicy,
@@ -41,7 +41,7 @@ namespace ghostlock::runtime {
                                    route::MulticastPolicy>;
                 static_assert(P::target == DispatchTarget::RootChild_Cve43499_MulticastWaiter,
                               "dispatch case must match the pipeline's target");
-                return P::run(exploit_session, decoded, debug_dir, force_attack);
+                return P::run(exploit_session, decoded, debug_dir);
             }
             case DispatchTarget::RootChild_Cve43499_Sigreturn: {
                 using P = Pipeline<session::frontend::RootChildPolicy,
@@ -49,7 +49,7 @@ namespace ghostlock::runtime {
                                    route::SigreturnPolicy>;
                 static_assert(P::target == DispatchTarget::RootChild_Cve43499_Sigreturn,
                               "dispatch case must match the pipeline's target");
-                return P::run(exploit_session, decoded, debug_dir, force_attack);
+                return P::run(exploit_session, decoded, debug_dir);
             }
             case DispatchTarget::None:
                 return RunResult{.code = RunCode::Rejected};

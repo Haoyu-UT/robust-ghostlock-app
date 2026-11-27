@@ -42,7 +42,6 @@ int main(int argc, char **argv) {
         profile_entry::component_ids ids{};
 
         bool app_call = false;
-        bool force_attack = false;
         bool status_record = false;
         bool probe_stride = false;
         bool w1_only = false;
@@ -53,8 +52,6 @@ int main(int argc, char **argv) {
         for (int32_t i = 1; i < argc; i++) {
             if (std::string_view(argv[i]) == "--ghostlock-app-call") {
                 app_call = true;
-            } else if (std::string_view(argv[i]) == "--force-attack") {
-                force_attack = true;
             } else if (std::string_view(argv[i]) == "--enable-status-record") {
                 status_record = true;
             } else if (std::string_view(argv[i]) == "--probe-stride") {
@@ -207,7 +204,7 @@ int main(int argc, char **argv) {
          * directly (backend steps + frontend handoff). DiagnosticStop is a
          * successful early stop (objective already met), not a full run. */
         const runtime::RunResult result = runtime::run_orchestrated_pipeline(
-            session, selection, decoded, dump_dir, force_attack);
+            session, selection, decoded, dump_dir);
         switch (result.code) {
             case runtime::RunCode::Rejected:
                 pr_error("orchestrator rejected the component selection\n");

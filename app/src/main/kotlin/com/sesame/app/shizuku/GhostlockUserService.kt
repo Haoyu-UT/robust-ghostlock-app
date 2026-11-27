@@ -46,7 +46,6 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
 
     override fun runExploit(
         safeMode: Boolean,
-        forceAttack: Boolean,
         anchorTrusted: Boolean,
         profileBlob: ByteArray,
         debugDir: String?,
@@ -98,9 +97,6 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
                     "--ghostlock-app-call",
                     "--enable-status-record",
                 )
-                if (forceAttack) {
-                    argv += "--force-attack"
-                }
                 if (!debugDir.isNullOrEmpty()) {
                     argv += listOf("--dump-kernel-log", debugDir)
                 }

@@ -9,8 +9,6 @@ data class KernelSnapshot(
     val kernelRelease: String,
     val socName: String = "",
     val safeModeEnabled: Boolean,
-    /** Skip the pre-attack KernelSU check and run the exploit as a test. */
-    val forceAttackTest: Boolean = false,
     /** Clear the vendor vr.ko task tags before W2; Auto follows the probe/version recommendation. */
     val vrKoTagClear: VrKoMode = VrKoMode.AUTO,
     /** Block the vr.ko SELinux 0/1 enforce write; Auto targets the 5.10.198 class only. */

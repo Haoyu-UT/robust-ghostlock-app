@@ -34,9 +34,9 @@ namespace ghostlock::runtime {
     concept BackendExecution = BackendIdentity<B> &&
         requires(session::ExploitSession &exploit_session,
                  const profile::kernel_offsets &decoded, const char *debug_dir,
-                 bool force_attack, session::VictimChain &chain) {
+                 session::VictimChain &chain) {
             { B::template run<Middleware>(exploit_session, decoded, debug_dir,
-                                          force_attack, chain) }
+                                          chain) }
                 -> std::same_as<session::StageResult>;
         };
 

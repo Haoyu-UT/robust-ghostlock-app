@@ -35,7 +35,6 @@ interface RunSettingsActions {
 interface AdvancedActions {
     fun close()
     fun openRunSettings()
-    fun forceAttackChanged(enabled: Boolean)
     fun openManagerPicker()
     fun openParameters()
     fun openMeasurements()

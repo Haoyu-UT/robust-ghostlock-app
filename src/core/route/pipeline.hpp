@@ -71,10 +71,10 @@ namespace ghostlock::runtime {
          * policy; no vtable or indirect dispatch enters the path. */
         [[nodiscard]] static RunResult run(session::ExploitSession &exploit_session,
                                            const profile::kernel_offsets &decoded,
-                                           const char *debug_dir, bool force_attack) {
+                                           const char *debug_dir) {
             session::VictimChain chain{};
             switch (Backend::template run<Middleware>(exploit_session, decoded, debug_dir,
-                                                      force_attack, chain)) {
+                                                      chain)) {
                 case session::StageResult::Failed:
                     return RunResult{.code = RunCode::Failed, .stage = RunStage::Backend};
                 case session::StageResult::Done:

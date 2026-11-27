@@ -265,7 +265,6 @@ class GhostlockViewModel(
     private val advancedActionsImpl = object : AdvancedActions {
         override fun close() = onCloseAdvanced()
         override fun openRunSettings() = onOpenRunSettings()
-        override fun forceAttackChanged(enabled: Boolean) = toggleForceAttackTest(enabled)
         override fun openManagerPicker() = onOpenManagerPicker()
         override fun openParameters() = onOpenParameters()
         override fun openMeasurements() = onOpenMeasurements()
@@ -1321,13 +1320,6 @@ class GhostlockViewModel(
         repository.setSafeModeEnabled(enabled)
         mutableState.update { it.copy(
             session = it.session.copy(runSettings = it.session.runSettings.copy(safeModeEnabled = enabled)),
-        ) }
-    }
-
-    fun toggleForceAttackTest(enabled: Boolean) {
-        repository.setForceAttackTest(enabled)
-        mutableState.update { it.copy(
-            session = it.session.copy(runSettings = it.session.runSettings.copy(forceAttackTestEnabled = enabled)),
         ) }
     }
 
@@ -2521,7 +2513,6 @@ class GhostlockViewModel(
                     ),
                     runSettings = it.session.runSettings.copy(
                         safeModeEnabled = snapshot.safeModeEnabled,
-                        forceAttackTestEnabled = snapshot.forceAttackTest,
                         vrKoTagClear = snapshot.vrKoTagClear,
                         vrKoSelinuxBlock = snapshot.vrKoSelinuxBlock,
                     ),

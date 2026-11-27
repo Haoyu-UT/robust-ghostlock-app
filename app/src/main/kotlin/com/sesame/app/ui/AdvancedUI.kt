@@ -171,16 +171,6 @@ internal fun AdvancedScreen(
                     )
                 }
             }
-            item(key = "forceAttack") {
-                Card {
-                    SwitchPreference(
-                        checked = state.runSettings.forceAttackTestEnabled,
-                        onCheckedChange = actions::forceAttackChanged,
-                        title = stringResource(R.string.force_attack_test_label),
-                        summary = stringResource(R.string.force_attack_test_summary),
-                    )
-                }
-            }
             /* The document's ladder is the only selector; there is no UI
              * override and no debug intent that changes the order. */
             item(key = "rootManager") {
