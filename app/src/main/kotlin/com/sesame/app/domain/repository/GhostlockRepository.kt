@@ -2,6 +2,7 @@ package com.sesame.app.domain.repository
 
 import com.sesame.app.domain.model.CrashEvidenceInfo
 import com.sesame.app.domain.model.DebugSettings
+import com.sesame.app.domain.model.HandoffResolution
 import com.sesame.app.domain.model.ImportedEvidence
 import com.sesame.app.domain.model.KernelSnapshot
 import com.sesame.app.domain.model.MeasuredKernelInfo
@@ -191,7 +192,7 @@ interface GhostlockRepository {
      * `TimerBootContract`). Returns the tool verdict, or -2 when the run never
      * started.
      */
-    suspend fun runTimerRoute(onLog: (String) -> Unit): Int
+    suspend fun runTimerRoute(plan: HandoffResolution, onLog: (String) -> Unit): Int
 
     /** False when a timer attempt already ran on this boot; a reboot is required. */
     fun timerRunAllowed(): Boolean
@@ -286,18 +287,24 @@ interface GhostlockRepository {
     /** Suggested file name for [exportReportBundle]. */
     fun reportBundleName(): String
 
-    suspend fun runExploit(config: ProfileConfig, onLog: (String) -> Unit): Int
+    suspend fun runExploit(
+        config: ProfileConfig,
+        plan: HandoffResolution,
+        onLog: (String) -> Unit,
+    ): Int
 
     suspend fun runExploitWithShizuku(
         config: ProfileConfig,
+        plan: HandoffResolution,
         onLog: (String) -> Unit,
     ): Int
 
     /**
      * Run-start pre-flight (class 1 of the 2026-11-07 exit audit): anchor slot
-     * state and the root-manager scan. Returns the first blocking failure, or
-     * [PreflightResult.Passed]. App-side only; the native keeps its own
-     * refusals — including the CPU pair — as the authority.
+     * state and the root-manager handoff resolution. Returns the first blocking
+     * failure, or [PreflightResult.Passed] with the plan every route consumes.
+     * App-side only; the native keeps its own refusals — including the CPU
+     * pair — as the authority.
      */
     suspend fun preflight(useShizuku: Boolean): PreflightResult
 

@@ -54,7 +54,7 @@ object ProfileResolver {
     private val GhostlockKeys = listOf(
         "syscall", "carrier", "anchor", "syscalls", "module", "execution",
     )
-    private val ModuleKeys = listOf("asset", "sha256", "vendor_files")
+    private val ModuleKeys = listOf("asset", "sha256", "crcs", "vendor_files")
     private val TimerKeys = listOf(
         "trigger", "match_bits", "sites", "object_size", "task_alloc_size",
         "node_offset", "cred", "trace",
@@ -506,6 +506,16 @@ object ProfileResolver {
         block(ghostlock, "module", "ghostlock.module", errors)?.let { block ->
             checkKeys(block, ModuleKeys, "ghostlock.module", errors)
             errors += ModuleBlock.validate(block)
+            /* One asset line may never name a module for another: the asset's
+             * basename and the release share the leading <major>.<minor>. */
+            val assetLine = assetLineOf(block["asset"] as? String)
+            val releaseLine = releaseLineOf(release)
+            if (assetLine != null && releaseLine != null && assetLine != releaseLine) {
+                errors += ConfigError(
+                    "ghostlock.module.asset",
+                    "asset line $assetLine does not match release line $releaseLine",
+                )
+            }
         }
         block(ghostlock, "execution", "ghostlock.execution", errors)?.let { execution ->
             validateExecution(execution, errors)
@@ -857,6 +867,22 @@ object ProfileResolver {
         val major = parts.getOrNull(0)?.toIntOrNull() ?: return false
         val minor = parts.getOrNull(1)?.takeWhile(Char::isDigit)?.toIntOrNull() ?: return false
         return major == 5 || (major == 6 && minor == 1)
+    }
+
+    /** The leading `<major>.<minor>` of a release string, when both are numeric. */
+    private fun releaseLineOf(release: String?): String? {
+        val parts = release?.trim()?.split('.') ?: return null
+        if (parts.size < 2) return null
+        val major = parts[0].toIntOrNull() ?: return null
+        val minor = parts[1].takeWhile(Char::isDigit).toIntOrNull() ?: return null
+        return "$major.$minor"
+    }
+
+    /** The leading `<major>.<minor>` of a module asset's basename. */
+    private fun assetLineOf(asset: String?): String? {
+        val name = asset?.substringAfterLast('/') ?: return null
+        val match = Regex("^(\\d+)\\.(\\d+)[.-]").find(name) ?: return null
+        return "${match.groupValues[1]}.${match.groupValues[2]}"
     }
 
     private fun rtSize(kernel: Map<*, *>?): Long? =

@@ -5,16 +5,20 @@
 #include <string_view>
 
 namespace ghostlock::session {
-    /* Post-exploit KernelSU handoff probe results. The field semantics stay the
- * legacy booleans so the caller keeps the exact log lines and their order. */
+    /* Post-exploit handoff probe results. The field semantics stay the
+ * legacy booleans so the caller keeps the exact log lines and their order; the
+ * handoff summary adds the manager-agnostic verdict (a Magisk handoff has no
+ * kernelsu module line to find). */
     struct HandoffProbeResult {
         bool module_visible = false;
         bool ksu_log_loaded = false;
         bool ksu_log_failed = false;
         bool enforce_ok = false;
+        bool handoff_ok = false;
+        bool handoff_failed = false;
 
         [[nodiscard]] bool ready() const noexcept {
-            return module_visible || ksu_log_loaded;
+            return module_visible || ksu_log_loaded || handoff_ok;
         }
     };
 
@@ -37,6 +41,9 @@ namespace ghostlock::session {
 
     /* Re-scan the root-side log; markers accumulate into loaded/failed. */
     bool scan_ksu_log(std::string_view path, bool &loaded, bool &failed) noexcept;
+
+    /* Re-scan the root-side log for the manager-agnostic handoff summary. */
+    bool scan_handoff_log(std::string_view path, bool &ok, bool &failed) noexcept;
 
     /* Run the module, log and enforce polls with the given policy. The log path
  * is the per-run file produced by the root script (U01-S14); the root script

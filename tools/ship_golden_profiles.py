@@ -30,6 +30,7 @@ Paths default to this checkout; override with --store/--assets.
 import argparse
 import copy
 import glob
+import hashlib
 import json
 import os
 import re
@@ -42,6 +43,10 @@ APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.path.dirname(os.path.dirname(APP))  # <repo>/external/ghostlock-app -> <repo>
 DEFAULT_STORE = os.path.join(ROOT, "external", "test-kernels")
 DEFAULT_ASSETS = os.path.join(APP, "app", "src", "main", "assets", "kernel_profiles")
+# A module profile whose `module_layout` differs from its asset's build-time
+# value overrides the loader's only layout proof; the gate that proved the pair
+# is recorded here (one file per release), and the check below requires it.
+MODULE_GATES = os.path.join(APP, "tools", "module-layout-gates")
 
 SKIP_CORPUS = {"btf-only", "codegen", "excluded"}
 # The AArch32 compat select carrier's route block and geometry are the
@@ -412,6 +417,164 @@ def asset_text(entry):
     return header + body
 
 
+def parse_module_versions(path):
+    """The module asset's `__versions` entries as {symbol: crc}.
+
+    Mirrors ModulePatch.kt's reader: ELF64 LE, section table, 64-byte
+    `struct modversion_info` entries. Raises NotShippable on anything it cannot
+    read, so a malformed asset never passes silently.
+    """
+    import struct
+
+    data = open(path, "rb").read()
+    if len(data) < 64 or data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        raise NotShippable("module asset is not a 64-bit little-endian ELF")
+    shoff, = struct.unpack_from("<Q", data, 0x28)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
+    if shentsize != 64 or shnum == 0 or shoff == 0 or shoff + shnum * shentsize > len(data):
+        raise NotShippable("module asset has no usable section table")
+    if shstrndx >= shnum:
+        raise NotShippable("module asset has no section-name table")
+
+    def header(index):
+        off = shoff + index * shentsize
+        name, = struct.unpack_from("<I", data, off)
+        offset, size = struct.unpack_from("<QQ", data, off + 24)
+        return name, offset, size
+
+    _, str_off, str_size = header(shstrndx)
+    if str_off + str_size > len(data):
+        raise NotShippable("module section names are out of bounds")
+    names = data[str_off:str_off + str_size]
+
+    def section_name(index):
+        off, = struct.unpack_from("<I", data, shoff + index * shentsize)
+        end = names.find(b"\0", off)
+        if end < 0:
+            raise NotShippable("module section name is not NUL-terminated")
+        return names[off:end].decode("latin1")
+
+    index = next((i for i in range(shnum) if section_name(i) == "__versions"), None)
+    if index is None:
+        raise NotShippable("module asset has no __versions section")
+    _, offset, size = header(index)
+    if size == 0 or size % 64 or offset + size > len(data):
+        raise NotShippable("module __versions is empty or malformed")
+    entries = {}
+    for p in range(offset, offset + size, 64):
+        crc, = struct.unpack_from("<Q", data, p)
+        name = data[p + 8:p + 64].split(b"\0")[0].decode("latin1")
+        if not name or name in entries:
+            raise NotShippable("module __versions has an empty or duplicate name")
+        entries[name] = crc
+    return entries
+
+
+def read_gate_record(path):
+    fields = {}
+    for line in open(path, encoding="utf-8"):
+        match = re.match(r'\s*(\w+)\s*=\s*"?([^"\n]*)"?', line)
+        if match:
+            fields[match.group(1)] = match.group(2).strip()
+    return fields
+
+
+def check_module_profiles(assets_dir):
+    """Validate every bundled module profile against its asset (plan S4).
+
+    Rules: the asset exists and hashes to the profile's `sha256`; the profile's
+    `crcs` names equal the asset's `__versions` entries; the non-`module_layout`
+    values equal the asset's (they are the line's stable exports). A differing
+    `module_layout` is the per-image value and needs a gate record naming the
+    same asset hash and value.
+    """
+    index_text = open(os.path.join(assets_dir, "index.conf"), encoding="utf-8").read()
+    releases = re.findall(r'release\s*=\s*"([^"]+)"', index_text)
+    files = re.findall(r'file\s*=\s*"([^"]+)"', index_text)
+    modules_dir = os.path.join(os.path.dirname(assets_dir), "modules")
+    problems = []
+    checked = 0
+    gates = 0
+
+    for release, file_name in zip(releases, files):
+        document = _asset_document(os.path.join(assets_dir, file_name))
+        if document is None:
+            problems.append(f"{release}: unreadable profile")
+            continue
+        ghostlock = document.get("ghostlock")
+        module = ghostlock.get("module") if isinstance(ghostlock, dict) else None
+        if not isinstance(module, dict):
+            continue
+        checked += 1
+        asset = module.get("asset")
+        sha = str(module.get("sha256") or "").lower()
+        crcs = module.get("crcs")
+        if not isinstance(asset, str) or not asset.startswith("modules/") or not asset.endswith(".ko"):
+            problems.append(f"{release}: module.asset is not modules/<name>.ko")
+            continue
+        if not isinstance(crcs, dict) or not crcs:
+            problems.append(f"{release}: module.crcs is missing or empty")
+            continue
+        asset_path = os.path.join(modules_dir, os.path.basename(asset))
+        if not os.path.isfile(asset_path):
+            problems.append(f"{release}: asset {asset} is missing")
+            continue
+        have = hashlib.sha256(open(asset_path, "rb").read()).hexdigest()
+        if have != sha:
+            problems.append(f"{release}: sha256 {have[:12]}… != profile {sha[:12]}…")
+            continue
+        try:
+            entries = parse_module_versions(asset_path)
+        except (NotShippable, OSError) as error:
+            problems.append(f"{release}: {error}")
+            continue
+
+        values = {}
+        for name, raw in crcs.items():
+            try:
+                value = int(str(raw), 0)
+            except (TypeError, ValueError):
+                problems.append(f"{release}: crcs.{name} is not a number")
+                continue
+            if value <= 0 or value > 0xFFFFFFFF:
+                problems.append(f"{release}: crcs.{name} is not a 32-bit non-zero value")
+                continue
+            values[str(name)] = value
+        if set(values) != set(entries):
+            only_profile = sorted(set(values) - set(entries))
+            only_asset = sorted(set(entries) - set(values))
+            if only_profile:
+                problems.append(f"{release}: crcs names not in the asset: {', '.join(only_profile)}")
+            if only_asset:
+                problems.append(f"{release}: asset entries missing from crcs: {', '.join(only_asset)}")
+            continue
+        for name in sorted(values):
+            if name == "module_layout":
+                continue
+            if values[name] != entries[name]:
+                problems.append(
+                    f"{release}: crcs.{name} {values[name]:#010x} != asset {entries[name]:#010x}"
+                )
+        if "module_layout" not in values:
+            problems.append(f"{release}: crcs.module_layout is missing")
+            continue
+        if values["module_layout"] != entries["module_layout"]:
+            gates += 1
+            record = os.path.join(MODULE_GATES, release + ".txt")
+            if not os.path.isfile(record):
+                problems.append(
+                    f"{release}: module_layout override has no gate record "
+                    f"({os.path.relpath(record, APP)})"
+                )
+                continue
+            fields = read_gate_record(record)
+            if fields.get("asset_sha256", "").lower() != sha:
+                problems.append(f"{release}: gate record asset_sha256 does not match the profile")
+            if fields.get("module_layout", "").lower() != f'0x{values["module_layout"]:08x}':
+                problems.append(f"{release}: gate record module_layout does not match the profile")
+    return checked, gates, problems
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="report only, exit 1 on a missing or mismatched golden")
@@ -579,11 +742,18 @@ def main():
         for name in sorted(index):
             if name not in assets:
                 print(f"ORPHAN index entry {name}: no asset file")
+        module_checked, module_gates, module_problems = check_module_profiles(args.assets)
+        for problem in module_problems:
+            print(f"MODULE {problem}")
         print(
             f"{bundled} bundled, {len(missing)} missing, "
             f"{len(mismatched_entries)} mismatched, {len(exempt)} exempt"
         )
-        return 1 if missing or mismatched_entries else 0
+        print(
+            f"module profiles: {module_checked} checked, {module_gates} layout gate(s), "
+            f"{len(module_problems)} problem(s)"
+        )
+        return 1 if missing or mismatched_entries or module_problems else 0
 
     if not missing:
         for entry in mismatched_entries:

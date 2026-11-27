@@ -16,7 +16,7 @@ import androidx.lifecycle.viewModelScope
 import com.sesame.app.R
 import com.sesame.app.RunStatusService
 import com.sesame.app.data.BundledModule
-import com.sesame.app.data.MagiskStage
+import com.sesame.app.data.ManagerScanner
 import com.sesame.app.data.MeasuredProfileStore
 import com.sesame.app.data.OptionDecision
 import com.sesame.app.data.OptionPlan
@@ -502,7 +502,7 @@ class GhostlockViewModel(
     private fun applyExecutionConfig(config: ProfileConfig) {
         /* The run consumes exactly this resolution (D7); nothing re-loads later. */
         resolvedProfile = config
-        val (moduleAssetVerified, magiskManager) = moduleFacts(config)
+        val (moduleAssetVerified, moduleManager) = moduleFacts(config)
         mutableState.update { state ->
             state.copy(
                 session = state.session.copy(
@@ -523,7 +523,7 @@ class GhostlockViewModel(
                         pipelineOrder = config.pipelineOrder,
                         module = config.module,
                         moduleAssetVerified = moduleAssetVerified,
-                        magiskManager = magiskManager,
+                        moduleManager = moduleManager,
                     ),
                 ),
             )
@@ -532,13 +532,14 @@ class GhostlockViewModel(
 
     /**
      * The module chain's delivery facts: whether the bundled `.ko` matches its
-     * declared hash, and which installed Magisk manager the root script can
-     * stage. Both are cheap enough to re-read on every resolution, and the
-     * chain refuses to start when either is absent.
+     * declared hash, and the first installed manager of either family (the
+     * handoff itself is decided by the run's precondition). Both are cheap
+     * enough to re-read on every resolution.
      */
     private fun moduleFacts(config: ProfileConfig?): Pair<Boolean, String?> {
         val module = config?.module ?: return false to null
-        return BundledModule.verify(application, module) to MagiskStage.installed(application)
+        return BundledModule.verify(application, module) to
+            ManagerScanner.installedManager(application)
     }
 
     /** Recomputes the facts the home merge would change; cheap, runs on IO. */
@@ -1517,6 +1518,24 @@ class GhostlockViewModel(
     /** The timer run, with the same operation/status plumbing as the native run. */
     private fun runTimerNow() {
         viewModelScope.launch {
+            /* The same precondition as every other route, in the app process:
+             * the timer's fake endgame opens the permissive window the
+             * manager handoff needs, so a run with no feasible manager is
+             * refused here with both families' reasons. */
+            val plan = when (
+                val preflight = withContext(Dispatchers.IO) {
+                    repository.preflight(useShizuku = true)
+                }
+            ) {
+                is PreflightResult.Blocked -> {
+                    appendLog("<s> error: no feasible root manager")
+                    preflight.reasons.forEach { appendLog("<s> $it") }
+                    showPreflightNotice(preflight)
+                    return@launch
+                }
+
+                is PreflightResult.Passed -> preflight.plan
+            }
             if (!beginOperation()) return@launch
             clearLog()
             send(GhostlockEffect.KeepScreenAwake(true))
@@ -1535,7 +1554,7 @@ class GhostlockViewModel(
             )
             withContext(Dispatchers.IO) {
                 try {
-                    val code = runCatching { repository.runTimerRoute(::appendLog) }
+                    val code = runCatching { repository.runTimerRoute(plan, ::appendLog) }
                         .getOrElse { error ->
                             appendLog("<s> error: ${error.message}")
                             1
@@ -1619,8 +1638,21 @@ class GhostlockViewModel(
      */
     fun runTimerRouteCheck() {
         viewModelScope.launch {
+            val plan = when (
+                val preflight = withContext(Dispatchers.IO) {
+                    repository.preflight(useShizuku = true)
+                }
+            ) {
+                is PreflightResult.Blocked -> {
+                    appendLog("<s> error: no feasible root manager")
+                    preflight.reasons.forEach { appendLog("<s> $it") }
+                    return@launch
+                }
+
+                is PreflightResult.Passed -> preflight.plan
+            }
             val code = runCatching {
-                withContext(Dispatchers.IO) { repository.runTimerRoute(::appendLog) }
+                withContext(Dispatchers.IO) { repository.runTimerRoute(plan, ::appendLog) }
             }.getOrElse { error ->
                 appendLog("<s> error: ${error.message}")
                 1
@@ -1672,13 +1704,16 @@ class GhostlockViewModel(
         }
         viewModelScope.launch {
             /* Run-start pre-flight: class-1 checks stop the run before the log
-             * sheet opens, so no run-store entry and no native are created. */
-            when (val preflight = withContext(Dispatchers.IO) { repository.preflight(useShizuku) }) {
+             * sheet opens, so no run-store entry and no native are created.
+             * The plan it returns is the run's handoff decision — passed to
+             * the run, never stored. */
+            val plan = when (val preflight = withContext(Dispatchers.IO) { repository.preflight(useShizuku) }) {
                 is PreflightResult.Blocked -> {
-                    showPreflightNotice(preflight.failure)
+                    showPreflightNotice(preflight)
                     return@launch
                 }
-                PreflightResult.Passed -> Unit
+
+                is PreflightResult.Passed -> preflight.plan
             }
             if (!beginOperation()) return@launch
             /* A new run is a new log: the sheet must never open on the
@@ -1698,7 +1733,7 @@ class GhostlockViewModel(
             appendLog("==== start ${if (useShizuku) "Shizuku/V20" else "base"} ====")
             withContext(Dispatchers.IO) {
                 try {
-                    val code = runExploitUseCase(config, useShizuku, ::appendLog)
+                    val code = runExploitUseCase(config, useShizuku, plan, ::appendLog)
                     appendLog(if (code == 0) "result: exploit completed" else "result: exploit failed (exit code=$code)")
                     appendLog("exit code=$code")
                     finishRunStatus(code)
@@ -1717,6 +1752,8 @@ class GhostlockViewModel(
         val dirtyfrag = text.contains("pipeline=dirtyfrag")
         val rooted = code == 0 && (
             text.contains("KernelSU ready") ||
+                text.contains("root manager ready") ||
+                text.contains("HANDOFF-SUMMARY handoff=ok") ||
                 text.contains("RESULT=OK") ||
                 /* The timer route's own success markers: the module loaded and
                  * the tool parked holding the fake cred page. */
@@ -1792,7 +1829,7 @@ class GhostlockViewModel(
         }
         viewModelScope.launch {
             val packageName = runCatching {
-                repository.managerCandidates().firstOrNull { it.suitable }?.packageName
+                repository.managerCandidates().firstOrNull { it.feasible }?.packageName
             }.getOrNull()
             send(
                 if (packageName != null) {
@@ -1815,7 +1852,24 @@ class GhostlockViewModel(
         ) }
     }
 
-    private fun showPreflightNotice(failure: PreflightFailure) {
+    private fun showPreflightNotice(blocked: PreflightResult.Blocked) {
+        if (blocked.failure == PreflightFailure.NO_ROOT_MANAGER && blocked.reasons.isNotEmpty()) {
+            /* The refusal names both families and why each was rejected; the
+             * picker's empty toast keeps its old string. */
+            val intro = application.getString(R.string.preflight_no_manager)
+            mutableState.update {
+                it.copy(
+                    overlay = it.overlay.copy(
+                        dialog = AppDialog.Notice(
+                            titleRes = R.string.manager_picker_title,
+                            message = intro + "\n" + blocked.reasons.joinToString("\n"),
+                        ),
+                    ),
+                )
+            }
+            return
+        }
+        val failure = blocked.failure
         val title: Int
         val message: Int
         when (failure) {
@@ -2107,24 +2161,21 @@ class GhostlockViewModel(
     }
 
     /**
-     * Root-manager picker: scan now (no cache), then list the candidates with
-     * their verdict plus Auto. Selecting one only records a preference; the
-     * run re-scans and refuses to start if nothing suitable is found.
+     * Root-manager picker: the resolver's verdicts over both families plus
+     * Auto. A row shows its evidence when feasible and its reason when not;
+     * only a feasible row can be stored. The run's own pre-flight is the
+     * authority — this list is the same resolution.
      */
     fun onOpenManagerPicker() {
         viewModelScope.launch {
-            /* Only suitable candidates are offered; a scan that found a
-             * mis-shaped or non-late-load binary is not a choice the user can
-             * act on. The run log still records every scanned candidate. */
             val candidates = runCatching { repository.managerCandidates() }
                 .getOrDefault(emptyList())
-                .filter { it.suitable }
             val selected = repository.selectedManagerPackage()
             managerChoices = candidates
             if (candidates.isEmpty()) {
-                /* The blocking warning belongs to the run attempt (runExploit's
-                 * pre-flight); opening the picker with nothing to list says so
-                 * briefly instead of raising the same dialog out of context. */
+                /* No manager of either family is installed; the run's refusal
+                 * would say the same, but opening the picker with nothing to
+                 * list says it briefly instead. */
                 send(GhostlockEffect.Toast(R.string.manager_picker_empty))
                 return@launch
             }
@@ -2135,7 +2186,7 @@ class GhostlockViewModel(
                     overlay = it.overlay.copy(dialog = AppDialog.ListDialog(
                         titleRes = R.string.manager_picker_title,
                         items = candidates.map { candidate ->
-                            "${candidate.label} (${candidate.packageName})"
+                            "${candidate.label} (${candidate.packageName}) — ${candidate.verdict}"
                         },
                         leadingResId = R.string.manager_summary_auto,
                         currentIndex = if (selectedIndex >= 0) selectedIndex else -1,
@@ -2147,8 +2198,15 @@ class GhostlockViewModel(
 
     fun onDialogItemSelected(index: Int) {
         if (managerPickerOpen) {
+            val choice = if (index == 0) null else managerChoices.getOrNull(index - 1)
+            if (choice != null && !choice.feasible) {
+                /* Installed but the rules would never use it: say why and keep
+                 * the dialog open, so the row is informative, not a trap. */
+                send(GhostlockEffect.ToastText("${choice.label}: ${choice.verdict}"))
+                return
+            }
             managerPickerOpen = false
-            val packageName = if (index == 0) null else managerChoices.getOrNull(index - 1)?.packageName
+            val packageName = choice?.packageName
             repository.setSelectedManagerPackage(packageName)
             mutableState.update { it.copy(
                 session = it.session.copy(access = it.session.access.copy(selectedManagerPackage = packageName)),
@@ -2445,7 +2503,7 @@ class GhostlockViewModel(
                         pipelineOrder = loaded?.pipelineOrder.orEmpty(),
                         module = loaded?.module,
                         moduleAssetVerified = moduleState.first,
-                        magiskManager = moduleState.second,
+                        moduleManager = moduleState.second,
                     ),
                 ),
                 report = it.report.copy(

@@ -248,12 +248,12 @@
     <string name="module_chain_label">模块链</string>
     <string name="module_asset_sha">sha256 %1$s</string>
     <string name="module_vendor_files">%1$d 个 vendor_file 目标</string>
-    <string name="module_magisk_installed">Magisk 已安装</string>
-    <string name="module_magisk_missing">未检测到 Magisk</string>
+    <string name="module_manager_installed">root 管理器可用</string>
+    <string name="module_manager_missing">未检测到 root 管理器</string>
     <string name="module_blocked_title">模块链未就绪</string>
     <string name="module_blocked_not_bundled">模块链只能由内置配置运行</string>
     <string name="module_blocked_asset">内置模块缺失或校验失败</string>
-    <string name="module_blocked_magisk">请先安装 Magisk 管理器再运行模块链</string>
+    <string name="module_blocked_manager">请先安装 root 管理器（Magisk 或 KernelSU）再运行模块链</string>
     <string name="module_export_note">模块链只能由内置配置运行，导出后无法导入。</string>
     <string name="clear_external_profile">取消外部配置</string>
     <string name="export_cancelled">已取消导出，未写入文件</string>
@@ -359,6 +359,7 @@
     <string name="manager_summary_auto">自动（推荐）</string>
     <string name="manager_picker_title">root管理器</string>
     <string name="manager_picker_empty">未找到可用的 ksud。请安装 KernelSU 系 root 管理器。</string>
+    <string name="preflight_no_manager">本次运行没有可用的 root 管理器：</string>
     <string name="preflight_anchor_title">锚点状态不可用</string>
     <string name="preflight_anchor_boot">本次开机后安装，锚点槽位未知；请重启后再运行。</string>
     <string name="preflight_anchor_spent">锚点槽位已用尽，继续可能损坏内核；请重启。</string>
@@ -460,6 +461,7 @@
     <string name="field_sigret_waiter_off_plain">sigreturn waiter（plain）</string>
     <string name="field_sigret_waiter_off_sve">sigreturn waiter（sve）</string>
     <string name="field_module_asset">模块文件</string>
+    <string name="field_module_crcs">模块 CRC</string>
     <string name="field_module_sha256">模块 sha256</string>
     <string name="field_module_vendor_files">模块 vendor 文件</string>
     <string name="field_timer_trigger">定时器触发</string>

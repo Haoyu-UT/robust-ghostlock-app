@@ -16,6 +16,9 @@ import com.sesame.app.BuildConfig
 import com.sesame.app.BuildInfo
 import com.sesame.app.domain.model.CrashEvidenceInfo
 import com.sesame.app.domain.model.DebugSettings
+import com.sesame.app.domain.model.HandoffKind
+import com.sesame.app.domain.model.HandoffResolution
+import com.sesame.app.domain.model.HandoffTarget
 import com.sesame.app.domain.model.ImportedEvidence
 import com.sesame.app.domain.model.KernelSnapshot
 import com.sesame.app.domain.model.physSourceFromLines
@@ -35,6 +38,7 @@ import com.sesame.app.domain.model.ProfileConfig
 import com.sesame.app.domain.model.ProfileImportResult
 import com.sesame.app.domain.model.ProfileDiffRow
 import com.sesame.app.domain.model.RunLogEntry
+import com.sesame.app.domain.model.RootManager
 import com.sesame.app.domain.model.RootManagerCandidate
 import com.sesame.app.domain.model.RunLogState
 import com.sesame.app.domain.model.ShizukuStatus
@@ -116,9 +120,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
          * /data/local/tmp/ghostlock-app, outside the app sandbox. */
         const val AnchorStateFileName = ".ghostlock_anchor"
 
-        /* A pre-flight manager choice is reused only this soon, and only while
-         * the chosen binary still exists. */
-        const val PreflightManagerMaxAgeMs = 15_000L
+        const val LogTag = "GhostlockRepository"
     }
 
     private val appContext = context.applicationContext
@@ -195,17 +197,24 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         if (enabled) shizukuRunner.requestPermission()
     }
 
+    /**
+     * The picker's rows: the same resolution the run enforces — both families,
+     * each with its feasibility and evidence. No anchor check (the picker does
+     * not start a run); the KMI answers come from this boot's cache.
+     */
     override suspend fun managerCandidates(): List<RootManagerCandidate> = withContext(Dispatchers.IO) {
-        ManagerScanner.scan(appContext).map {
-            RootManagerCandidate(
-                packageName = it.packageName,
-                label = it.label,
-                path = it.path,
-                builtin = it.builtin,
-                suitable = it.suitable,
-                verdict = it.verdict,
-            )
-        }
+        val ksu = runCatching { ManagerScanner.scan(appContext) }.getOrDefault(emptyList())
+        val magisk = runCatching { MagiskStage.detect(appContext) }.getOrDefault(emptyList())
+        val release = System.getProperty("os.version", "").orEmpty()
+        HandoffResolver.choices(
+            HandoffResolver.resolve(
+                release,
+                ksu,
+                kmiAnswers(ksu),
+                magisk,
+                selectedManagerPackage(),
+            ),
+        )
     }
 
     override fun selectedManagerPackage(): String? =
@@ -818,10 +827,13 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     /* --- run-start pre-flight (class 1 of the 2026-11-07 exit audit) ------ */
 
-    /** Candidate the pre-flight selected; consumed once by [stageKsud]. */
-    @Volatile
-    private var preflightManager: Pair<Long, ManagerScanner.Candidate>? = null
-
+    /**
+     * The one precondition every route calls: the anchor judgement (direct
+     * path only) and the handoff resolution — both manager families detected,
+     * judged by the route-free rule set, the plan returned to the caller.
+     * Fail-closed: a detector that throws blocks exactly like one that found
+     * nothing, because no later stage re-scans to tell the difference.
+     */
     override suspend fun preflight(useShizuku: Boolean): PreflightResult =
         withContext(Dispatchers.IO) {
             /* The anchor state file lives under GHOSTLOCK_HOME: for the Shizuku
@@ -832,18 +844,79 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             if (!useShizuku) {
                 anchorFailure()?.let { return@withContext PreflightResult.Blocked(it) }
             }
-            /* A scan that throws is not proof of "no manager": fail open and
-             * let stageKsud report it (the class-2 pattern covers that). */
-            val candidates = runCatching { ManagerScanner.scan(appContext) }.getOrNull()
-            if (candidates != null) {
-                val chosen = ManagerScanner.resolve(candidates, selectedManagerPackage())
-                    ?: return@withContext PreflightResult.Blocked(
-                        PreflightFailure.NO_ROOT_MANAGER,
-                    )
-                preflightManager = SystemClock.elapsedRealtime() to chosen
+            val ksu = try {
+                ManagerScanner.scan(appContext)
+            } catch (error: Throwable) {
+                Log.w(LogTag, "handoff: KSU detector failed", error)
+                return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER)
             }
-            PreflightResult.Passed
+            val magisk = try {
+                MagiskStage.detect(appContext)
+            } catch (error: Throwable) {
+                Log.w(LogTag, "handoff: Magisk detector failed", error)
+                return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER)
+            }
+            /* The manager's own KMI interface over the suitable candidates;
+             * answered once per boot and cached here (two extra execs each). A
+             * probe that throws reads as "cannot answer" — the resolver then
+             * uses the release mirror rather than the run failing. */
+            val release = System.getProperty("os.version", "").orEmpty()
+            val stored = selectedManagerPackage()
+            val plan = HandoffResolver.resolve(release, ksu, kmiAnswers(ksu), magisk, stored)
+            /* A stored choice is a preference, not an exclusion: an
+             * installed-but-infeasible choice is kept and logged; only a
+             * vanished package is cleared (deliberately stricter than the
+             * route/carrier self-healing — a manager is a user choice). */
+            if (stored != null && !packageInstalled(stored)) {
+                setSelectedManagerPackage(null)
+                Log.i(LogTag, "handoff: stored manager $stored is not installed; cleared")
+            } else if (stored != null && plan.feasible.isNotEmpty() &&
+                plan.feasible.none { it.manager.packageName == stored }
+            ) {
+                Log.i(
+                    LogTag,
+                    "handoff: selected:$stored infeasible — using " +
+                        plan.feasible.first().manager.packageName,
+                )
+            }
+            if (plan.isEmpty) {
+                val lines = HandoffResolver.familyLines(plan, stored)
+                lines.forEach { Log.i(LogTag, "handoff: $it") }
+                return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER, lines)
+            }
+            PreflightResult.Passed(plan)
         }
+
+    /**
+     * The manager KMI answers, cached for this boot (memory only): the picker
+     * and the run pre-flight ask the same question, and an answer cannot change
+     * without a reboot or a manager update (the ksud path is the cache key).
+     * No persistent cache — a stale verdict is the failure worth avoiding.
+     */
+    private val kmiCache = HashMap<String, ManagerScanner.KmiAnswer>()
+    private var kmiCacheBoot: String? = null
+
+    private fun kmiAnswers(
+        ksu: List<ManagerScanner.Candidate>,
+    ): Map<String, ManagerScanner.KmiAnswer> {
+        val boot = currentBootId()
+        if (boot != kmiCacheBoot) {
+            kmiCache.clear()
+            kmiCacheBoot = boot
+        }
+        val answers = HashMap<String, ManagerScanner.KmiAnswer>(ksu.size)
+        for (candidate in ksu) {
+            if (!candidate.suitable) continue
+            answers[candidate.path] = kmiCache.getOrPut(candidate.path) {
+                runCatching { ManagerScanner.probeKmi(candidate) }
+                    .getOrElse { ManagerScanner.KmiAnswer(null, null, null) }
+            }
+        }
+        return answers
+    }
+
+    private fun packageInstalled(packageName: String): Boolean =
+        runCatching { appContext.packageManager.getPackageInfo(packageName, 0) }.isSuccess
 
     /**
      * Mirror of `lock_anchor.cpp`'s boot-scoped decision. Returns the blocking
@@ -877,10 +950,19 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override suspend fun runExploit(
         config: ProfileConfig,
+        plan: HandoffResolution,
         onLog: (String) -> Unit,
     ): Int =
         withDebugAttackLog("direct", onLog, measure = true) { archivedLog, debugDir, runDir, writeSidecar ->
-            runExploitBinary(config, "libghostlock.so", archivedLog, debugDir, runDir, writeSidecar)
+            runExploitBinary(
+                config,
+                plan,
+                "libghostlock.so",
+                archivedLog,
+                debugDir,
+                runDir,
+                writeSidecar,
+            )
         }
 
     override fun timerProfileDocument(): String? =
@@ -897,7 +979,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             archivedLog(
                 "<s> timer document ${document.length}B sha256=${sha256Of(document)}",
             )
-            shizukuRunner.runTimer(document, "probe", selectedManagerPackage(), archivedLog)
+            shizukuRunner.runTimer(document, "probe", emptyList(), archivedLog)
         }
     }
 
@@ -906,7 +988,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         currentBootId(),
     )
 
-    override suspend fun runTimerRoute(onLog: (String) -> Unit): Int = withContext(Dispatchers.IO) {
+    override suspend fun runTimerRoute(
+        plan: HandoffResolution,
+        onLog: (String) -> Unit,
+    ): Int = withContext(Dispatchers.IO) {
         val bootId = currentBootId()
         val lastAttempt = preferences.getString(PrefTimerAttemptBoot, null)
         if (!TimerBootContract.allowsRun(lastAttempt, bootId)) {
@@ -945,7 +1030,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             archivedLog(
                 "<s> timer document ${document.length}B sha256=${sha256Of(document)} mode=fake",
             )
-            shizukuRunner.runTimer(document, "fake", selectedManagerPackage(), archivedLog)
+            logHandoff(plan, archivedLog, null)
+            shizukuRunner.runTimer(document, "fake", HandoffWire.encode(plan), archivedLog)
         }
         if (code == TimerVerdict.NotStarted) {
             /* Shizuku was not ready / the tool never launched: the boot is
@@ -982,6 +1068,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override suspend fun runExploitWithShizuku(
         config: ProfileConfig,
+        plan: HandoffResolution,
         onLog: (String) -> Unit,
     ): Int {
         /* The Shizuku service runs as uid 2000 and cannot write the app's run
@@ -1031,11 +1118,12 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     }
                     logProfileDigest(archivedLog, profileBlob)
                     dumpRuntimeProfile(archivedLog, writeSidecar, release, profileBlob)
+                    logHandoff(plan, archivedLog, runDir)
                     archivedLog("<b> starting UserService")
                     resetRunState()
                     shizukuRunner.run(
                         safeModeEnabled, forceAttackTest, profileBlob, debugDir,
-                        selectedManagerPackage(), archivedLog,
+                        HandoffWire.encode(plan), archivedLog,
                     ) { step, status ->
                         if (status == "disabled") clearRunState() else applyRunStatus(step, status)
                     }
@@ -1254,27 +1342,71 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
      * libc++, triggers init, runs the root script over the init shell and
      * restores the blocks. */
     /**
-     * The module chain's staged manager: the root script installs Magisk from
-     * this directory. Only the profile-driven pair supplies it — there is no
-     * marker file, so a W1 run never inherits a Magisk handoff. The module
-     * itself is loaded by the init stub, not by the script, so no module path
-     * is exported here (the stage reports the delivered target from its plan).
+     * The transport: stages every feasible target of the plan into this
+     * process's sandbox, in attempt order. A target whose payload cannot be
+     * staged is dropped (and logged); an empty result is a run-start failure
+     * past the precondition. The layout is one directory/file per target:
+     * `ksu-<n>` for a ksud and `magiskbin` for the Magisk libs, so every entry
+     * of `GHOSTLOCK_HANDOFF_TARGETS` names a source this uid can read.
      */
-    private fun handoffEnv(magiskBin: File?): Map<String, String> =
-        if (magiskBin == null) {
-            emptyMap()
-        } else {
-            mapOf(
-                "GHOSTLOCK_HANDOFF" to "magisk",
-                "GHOSTLOCK_MAGISK_BIN" to magiskBin.absolutePath,
-            )
-        }
+    private suspend fun stageHandoffTargets(
+        plan: HandoffResolution,
+        onLog: (String) -> Unit,
+    ): List<HandoffTarget> = withContext(Dispatchers.IO) {
+        val staged = ArrayList<HandoffTarget>(plan.feasible.size)
+        for ((index, verdict) in plan.feasible.withIndex()) {
+            when (val manager = verdict.manager) {
+                is RootManager.Ksu -> {
+                    val origin = File(manager.ksudPath)
+                    val dest = File(filesDir, "ksu-$index")
+                    if (!origin.isFile) {
+                        onLog(
+                            "<k> handoff: dropped ${manager.packageName} " +
+                                "(payload missing: ${manager.ksudPath})",
+                        )
+                        continue
+                    }
+                    val ok = runCatching {
+                        origin.inputStream().use { input ->
+                            dest.outputStream().use { input.copyTo(it) }
+                        }
+                        Os.chmod(dest.absolutePath, 448)
+                    }.isSuccess
+                    if (!ok) {
+                        onLog("<k> handoff: dropped ${manager.packageName} (staging failed)")
+                        continue
+                    }
+                    onLog(
+                        "<k> handoff: staged ${manager.kind.wire}:${manager.packageName} " +
+                            "kmi=${verdict.kmi ?: "none"}",
+                    )
+                    staged += HandoffTarget(manager, dest.absolutePath, verdict.kmi)
+                }
 
-    /** One resolved module-chain run: the staged pair and the staged manager. */
+                is RootManager.Magisk -> {
+                    val dest = File(filesDir, "magiskbin")
+                    val result = MagiskStage.stage(appContext, dest, manager.packageName)
+                    if (result == null) {
+                        onLog(
+                            "<k> handoff: dropped ${manager.packageName} " +
+                                "(cannot stage the manager binaries)",
+                        )
+                        continue
+                    }
+                    onLog(
+                        "<k> handoff: staged ${manager.kind.wire}:${result.packageName}",
+                    )
+                    staged += HandoffTarget(manager, result.dir.absolutePath, null)
+                }
+            }
+        }
+        staged
+    }
+
+    /** One resolved module-chain run: the staged pair. */
     private data class ModuleRun(
         val moduleFile: File,
         val vendorFiles: List<String>,
-        val magiskBin: File,
     )
 
     private val crashDumpPath = "/apex/com.android.runtime/bin/crash_dump64"
@@ -1289,7 +1421,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         plan: File,
         mode: String,
         onLog: (String) -> Unit,
-        magiskBin: File? = null,
+        /** The plan's staged targets, in attempt order (the root script's list). */
+        targets: List<HandoffTarget>,
         /**
          * The staged switch module's file. The root script reads its `.modinfo`
          * for the kernel module name (`name=`), so the end-of-run unload cannot
@@ -1323,7 +1456,10 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 if (moduleKo != null) {
                     environment()["GHOSTLOCK_MODULE_KO"] = moduleKo.absolutePath
                 }
-                environment().putAll(handoffEnv(magiskBin))
+                /* The ordered list is the transport; the native writes it, with
+                 * the script's other parameters, into the sidecar beside the
+                 * script — the init shell does not inherit this environment. */
+                environment()[HandoffWire.EnvTargets] = HandoffWire.encodeTargets(targets)
             }
         val code = runProcess(command, onLog = onLog, captureOutput = true, timeoutSeconds = 120L)
         onLog("<b> second way: dirtyfrag mode=$mode exited code=$code")
@@ -1355,6 +1491,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private suspend fun runDirtyfragStage(
         onLog: (String) -> Unit,
         debugDir: String?,
+        targets: List<HandoffTarget>,
         run: ModuleRun? = null,
     ): Int {
         /* One log per stage run: the script appends, so a shared file made a
@@ -1422,7 +1559,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                         installPlan,
                         "aux-install",
                         onLog,
-                        magiskBin = run.magiskBin,
+                        targets = targets,
                         moduleKo = run.moduleFile,
                         ksuLog = stageKsuLog,
                     )
@@ -1484,7 +1621,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 plan,
                 dirtyfragMode,
                 onLog,
-                magiskBin = run?.magiskBin,
+                targets = targets,
                 moduleKo = run?.moduleFile,
                 ksuLog = stageKsuLog,
             )
@@ -1497,6 +1634,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     private suspend fun runExploitBinary(
         config: ProfileConfig,
+        plan: HandoffResolution,
         binaryName: String,
         onLog: (String) -> Unit,
         debugDir: String?,
@@ -1507,14 +1645,17 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         return try {
             val binary = File(appContext.applicationInfo.nativeLibraryDir, binaryName)
             require(binary.isFile) { "missing native binary: ${binary.absolutePath}" }
-            /* A module-only profile hands off to Magisk, not KernelSU: its
-             * chain never runs the native W1 or the ksud late-load, so a
-             * device without a KernelSU manager is not refused. A hybrid order
-             * (module plus a W1 entry) still stages the manager. */
-            val moduleOnly = config.module != null &&
-                config.pipelineOrder.isNotEmpty() &&
-                config.pipelineOrder.all { it == "module" }
-            if (!moduleOnly && !stageKsud(workDir, onLog)) return 1
+            /* The transport: every feasible target is staged before the run
+             * decides anything, and the same list rides each stage invocation.
+             * A plan whose every payload vanished fails here — past the
+             * precondition, so it is a run-start failure with a log line, not
+             * the no-manager dialog. */
+            logHandoff(plan, onLog, runDir)
+            val targets = stageHandoffTargets(plan, onLog)
+            if (targets.isEmpty()) {
+                onLog("<k> error: no handoff target could be staged; refusing to start the exploit")
+                return 1
+            }
             // U01-S14: a per-run KernelSU log path so a previous run's markers
             // can never satisfy the handoff probe; passed to the native process.
             val ksuLog = File(workDir, ksuLogName(System.currentTimeMillis()))
@@ -1622,28 +1763,49 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                                     val staged = BundledModule.stage(
                                         appContext,
                                         spec,
+                                        config.release,
                                         File(filesDir, "modules"),
                                     )
-                                    if (staged == null) {
-                                        "module asset missing or asset_sha256 mismatch"
-                                    } else {
-                                        val magisk = MagiskStage.stage(
-                                            appContext,
-                                            File(filesDir, "magiskbin"),
-                                        )
-                                        if (magisk == null) {
-                                            "Magisk manager is not installed or cannot be staged"
-                                        } else {
-                                            onLog(
-                                                "<k> module pair: ${spec.asset} " +
-                                                    "(sha256 ok), magisk=${magisk.packageName}",
-                                            )
-                                            moduleRun = ModuleRun(
-                                                moduleFile = staged,
-                                                vendorFiles = spec.vendorFiles,
-                                                magiskBin = magisk.dir,
-                                            )
-                                            null
+                                    when (staged) {
+                                        is BundledModule.StageResult.Failed -> staged.reason
+                                        is BundledModule.StageResult.Ok -> {
+                                            val pair = staged.staged
+                                            /* The module entry consumes the plan: any
+                                             * staged manager is a handoff target —
+                                             * the module opens the window and the
+                                             * script attempts the list (KSU and
+                                             * Magisk alike). */
+                                            val handoff = targets.firstOrNull()
+                                            if (handoff == null) {
+                                                "no handoff target is staged"
+                                            } else {
+                                                onLog(
+                                                    "<k> module pair: ${spec.asset} " +
+                                                        "(sha256 ok, patched=" +
+                                                        "${if (pair.patched) 1 else 0}), " +
+                                                        "handoff=" +
+                                                        "${handoff.manager.kind.wire}:" +
+                                                        "${handoff.manager.packageName}",
+                                                )
+                                                onLog(
+                                                    ("<k> module layout: asset=0x%08x " +
+                                                        "profile=0x%08x patched=%d").format(
+                                                        pair.assetLayout,
+                                                        pair.profileLayout,
+                                                        if (pair.patched) 1 else 0,
+                                                    ),
+                                                )
+                                                onLog(
+                                                    "<k> module delivered: " +
+                                                        "sha256=${pair.deliveredSha256} " +
+                                                        "(canonical ${pair.canonicalSha256})",
+                                                )
+                                                moduleRun = ModuleRun(
+                                                    moduleFile = pair.file,
+                                                    vendorFiles = spec.vendorFiles,
+                                                )
+                                                null
+                                            }
                                         }
                                     }
                                 }
@@ -1669,7 +1831,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 onLog("<b> pipeline=module: no W1; starting the DirtyFrag stage")
                 resetRunState()
                 val run = moduleRun ?: error("module pipeline selected without a staged pair")
-                val moduleCode = runDirtyfragStage(onLog, debugDir, run)
+                val moduleCode = runDirtyfragStage(onLog, debugDir, targets, run)
                 onLog("<b> pipeline=module: stage exited code=$moduleCode")
                 return moduleCode
             }
@@ -1740,6 +1902,11 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     environment()["TMPDIR"] = workDir.absolutePath
                     environment()["HOME"] = workDir.absolutePath
                     environment()["GHOSTLOCK_KSU_LOG"] = ksuLog.absolutePath
+                    /* The ordered handoff list: this process writes the root
+                     * script on the full chain paths and hands it to the
+                     * victim's shell; the sidecar beside the script carries the
+                     * same entries (the shell does not inherit this env). */
+                    environment()[HandoffWire.EnvTargets] = HandoffWire.encodeTargets(targets)
                     /* The user-authoritative vr.ko choices; the native resolves Auto. */
                     environment()["GHOSTLOCK_VRKO_TAG_CLEAR"] = vrKoTagClear.wire
                     environment()["GHOSTLOCK_VRKO_SELINUX_BLOCK"] = vrKoSelinuxBlock.wire
@@ -1770,7 +1937,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 onLog("<b> native exited code=$nativeCode")
                 if (pipeline == "dirtyfrag" && nativeCode == 0) {
                     onLog("<b> pipeline=dirtyfrag: W1 done; starting the DirtyFrag stage")
-                    runDirtyfragStage(onLog, debugDir)
+                    runDirtyfragStage(onLog, debugDir, targets)
                 } else {
                     nativeCode
                 }
@@ -2080,61 +2247,40 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private fun firstValidProperty(vararg keys: String): String? = keys.asSequence().firstNotNullOfOrNull { validDeviceName(systemProperty(it)) }
 
     /**
-     * Find a late-load-capable ksud and stage it into [workDir]/ksud.
-     *
-     * Returns false when no suitable manager exists; the caller must then
-     * refuse to start the exploit (and say why in the run log).
+     * The handoff family lines (one per family) into the run log and the run
+     * store's meta, plus every candidate verdict into the meta. A projection
+     * of the plan, never stored state.
      */
-    private suspend fun stageKsud(workDir: File, onLog: (String) -> Unit): Boolean = withContext(Dispatchers.IO) {
-        val preflight = preflightManager.also { preflightManager = null }
-        val chosen = if (preflight != null &&
-            SystemClock.elapsedRealtime() - preflight.first <= PreflightManagerMaxAgeMs &&
-            File(preflight.second.path).isFile
-        ) {
-            /* The pre-flight just ran the same scan; reuse its choice instead of
-             * paying the package/ELF scan twice per run. The freshness and
-             * existence checks above fall back to a fresh scan. */
-            onLog(
-                "<k> ksud: using pre-flight selection ${preflight.second.packageName} " +
-                    "${preflight.second.path} [${preflight.second.verdict}]",
-            )
-            preflight.second
-        } else {
-            val candidates = runCatching { ManagerScanner.scan(appContext) }.getOrElse {
-                onLog("<k> error: ksud scan failed: ${it.message}")
-                return@withContext false
-            }
-            val suitable = candidates.filter { it.suitable }
-            onLog("<k> ksud scan: ${candidates.size} candidate(s), ${suitable.size} suitable")
-            candidates.forEach {
-                onLog("<k>   ${it.packageName}: ${it.path} [${it.verdict}]")
-            }
-            val resolved = ManagerScanner.resolve(candidates, selectedManagerPackage())
-            if (resolved == null) {
-                onLog("<k> error: no suitable ksud found; refusing to start the exploit")
-                return@withContext false
-            }
-            if (suitable.size > 1) {
-                onLog(
-                    "<k> ksud: ${suitable.size} suitable; using ${resolved.packageName} " +
-                        "(Advanced -> Root manager to change)",
+    private fun logHandoff(plan: HandoffResolution, onLog: (String) -> Unit, runDir: String?) {
+        val stored = selectedManagerPackage()
+        val lines = HandoffResolver.familyLines(plan, stored)
+        for ((kind, line) in HandoffKind.entries.zip(lines)) {
+            onLog("<k> $line")
+            /* The meta store replaces a line by its key, so the one key per
+             * family is spelled `handoff.<kind>`; the run log keeps the
+             * `handoff=<kind>` form. */
+            runDir?.let {
+                RunLogStore.appendMeta(
+                    File(it),
+                    "handoff.${kind.wire}=${line.substringAfter("state=")}",
                 )
             }
-            resolved
         }
-        val output = File(workDir, "ksud")
-        runCatching {
-            output.delete()
-            File(chosen.path).inputStream().use { input ->
-                output.outputStream().use { input.copyTo(it) }
+        if (runDir != null) {
+            val meta = File(runDir)
+            for ((index, verdict) in plan.verdicts.withIndex()) {
+                val path = when (val manager = verdict.manager) {
+                    is RootManager.Ksu -> manager.ksudPath
+                    is RootManager.Magisk -> manager.nativeLibDir.orEmpty()
+                }
+                RunLogStore.appendMeta(
+                    meta,
+                    "handoff-candidate.$index=${verdict.manager.kind.wire}:" +
+                        "${verdict.manager.packageName} path=$path " +
+                        "state=${verdict.state.name.lowercase()} reason=${verdict.reason}",
+                )
             }
-            Os.chmod(output.absolutePath, 448)
-        }.onFailure {
-            onLog("<k> error: cannot stage ksud from ${chosen.path}: ${it.message}")
-            return@withContext false
         }
-        onLog("<k> ksud selected: ${chosen.packageName} ${chosen.path} [${chosen.verdict}]")
-        true
     }
 
     private suspend fun runProcess(

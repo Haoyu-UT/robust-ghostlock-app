@@ -31,6 +31,18 @@ int32_t main(void) {
     assert(std::string(config::vr_ko_mode_name(VrKoMode::On)) == "on");
     assert(std::string(config::vr_ko_mode_name(VrKoMode::Off)) == "off");
 
+    /* GHOSTLOCK_HANDOFF_TARGETS: the wire entries, in order; empty lines and a
+     * trailing newline are harmless. */
+    const auto targets = config::split_handoff_targets(
+        "ksu|com.resukisu.resukisu|/x/ksu|android12-5.10\n"
+        "magisk|com.topjohnwu.magisk|/x/magiskbin|\n");
+    assert(targets.size() == 2);
+    assert(targets[0] == "ksu|com.resukisu.resukisu|/x/ksu|android12-5.10");
+    assert(targets[1] == "magisk|com.topjohnwu.magisk|/x/magiskbin|");
+    assert(config::split_handoff_targets("").empty());
+    assert(config::split_handoff_targets("\n\n").empty());
+    assert(config::split_handoff_targets("a\n\nb").size() == 2);
+
     puts("runtime_config_test: ok");
     return 0;
 }

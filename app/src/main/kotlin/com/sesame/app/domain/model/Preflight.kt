@@ -23,7 +23,18 @@ enum class PreflightFailure {
 }
 
 sealed interface PreflightResult {
-    data object Passed : PreflightResult
+    /**
+     * The run may start. [plan] is the handoff resolution the run consumes —
+     * returned rather than stashed, so a plan cannot outlive its pre-flight.
+     */
+    data class Passed(val plan: HandoffResolution) : PreflightResult
 
-    data class Blocked(val failure: PreflightFailure) : PreflightResult
+    /**
+     * [reasons] carries the derived family lines (for the no-manager refusal)
+     * so the dialog can name both families and why each was rejected.
+     */
+    data class Blocked(
+        val failure: PreflightFailure,
+        val reasons: List<String> = emptyList(),
+    ) : PreflightResult
 }

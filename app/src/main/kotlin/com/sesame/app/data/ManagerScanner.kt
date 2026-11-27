@@ -3,6 +3,7 @@ package com.sesame.app.data
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import com.sesame.app.domain.model.RootManager
 import java.io.File
 import java.io.FileInputStream
 import java.util.concurrent.TimeUnit
@@ -74,6 +75,15 @@ object ManagerScanner {
 
         /** Label shown in the picker. */
         fun displayName(): String = "$label ($packageName) — $verdict"
+
+        /** The handoff model's view of this candidate: one discovered manager. */
+        fun toManager(): RootManager.Ksu = RootManager.Ksu(
+            packageName = packageName,
+            label = label,
+            ksudPath = path,
+            interfaceOk = interfaceOk,
+            suitable = suitable,
+        )
     }
 
     /** Scan installed managers. Blocking I/O and probes: call from Dispatchers.IO. */
@@ -123,6 +133,68 @@ object ManagerScanner {
     fun resolve(candidates: List<Candidate>, selected: String?): Candidate? =
         candidates.firstOrNull { it.packageName == selected && it.suitable }
             ?: candidates.firstOrNull { it.suitable }
+
+    /**
+     * The manager's own KMI interface (handoff-resolution-plan §2.4):
+     * `boot-info supported-kmis` doubles as the capability probe, then
+     * `boot-info current-kmi`. Nothing is re-derived from uname here — the
+     * manager's `current-kmi` is authoritative, and a manager that cannot
+     * answer falls back to the release mirror in the resolver.
+     */
+    data class KmiAnswer(
+        /** The embedded `*_kernelsu.ko` names; null = the manager cannot answer. */
+        val supported: List<String>?,
+        /** The KMI to pass to `late-load --kmi`; null = it failed. */
+        val current: String?,
+        /** The manager's own message when [current] is null. */
+        val failure: String?,
+    )
+
+    /**
+     * A cheap presence check for the home badge — no scan, no exec: the first
+     * installed manager of either family. The run's precondition is the
+     * authority; this only keeps the module card from claiming that a manager
+     * is missing when one is installed.
+     */
+    fun installedManager(context: Context): String? {
+        val pm = context.packageManager
+        return (MagiskStage.PACKAGES + BUILTIN).firstOrNull { packageName ->
+            runCatching { pm.getPackageInfo(packageName, 0) }.isSuccess
+        }
+    }
+
+    /** Two extra execs per suitable candidate; call from Dispatchers.IO. */
+    fun probeKmi(candidate: Candidate): KmiAnswer {
+        val file = File(candidate.path)
+        val supported = run(file, "boot-info", "supported-kmis")
+        if (supported.unavailable || supported.exit != 0) {
+            return KmiAnswer(supported = null, current = null, failure = null)
+        }
+        val names = supported.output.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toList()
+        if (names.isEmpty()) {
+            return KmiAnswer(supported = null, current = null, failure = null)
+        }
+        val current = run(file, "boot-info", "current-kmi")
+        if (current.unavailable || current.exit != 0) {
+            return KmiAnswer(
+                supported = names,
+                current = null,
+                failure = firstLine(current.output) ?: "Failed to get KMI from boot/modules",
+            )
+        }
+        val value = firstLine(current.output)
+        return if (value == null) {
+            KmiAnswer(names, null, "boot-info current-kmi printed nothing")
+        } else {
+            KmiAnswer(names, value, null)
+        }
+    }
+
+    private fun firstLine(text: String): String? =
+        text.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
 
     private data class Tokens(
         val lateLoad: Boolean,

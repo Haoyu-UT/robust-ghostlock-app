@@ -1,0 +1,4 @@
+release = "5.4.274-qgki-g76ac0b265f44"
+asset_sha256 = "90663637b323e5fe7a1a5a7620b7bcea908b6c67c1a3d283ee4c25e49b2a1d16"
+module_layout = "0x894a26ae"
+gate = "qemu: the 5.4 line asset patched with this profile's CRCs loaded on the 5.4.274 Image (finit_module rc=0, enforce 1 -> 0, 2026-11-26); the unpatched asset is refused with 'disagrees about version of symbol module_layout'"

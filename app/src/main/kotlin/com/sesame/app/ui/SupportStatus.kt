@@ -27,12 +27,12 @@ sealed interface SupportStatus {
 }
 
 /** The module chain's missing link, in the order the run checks it. */
-internal enum class ModuleBlocker { NotBundled, AssetMissing, MagiskMissing }
+internal enum class ModuleBlocker { NotBundled, AssetMissing, ManagerMissing }
 
 /**
  * The module chain is bundle-only: its profile must be the bundled one, its
- * `.ko` must match the declared hash, and the root script must find a Magisk
- * manager to stage. Null when the chain can run, or when no module profile is
+ * `.ko` must match the declared hash, and the root script must find a
+ * manager of either family to hand off to. Null when the chain can run, or when no module profile is
  * active.
  */
 internal fun moduleBlockerOf(state: SessionState): ModuleBlocker? {
@@ -40,7 +40,7 @@ internal fun moduleBlockerOf(state: SessionState): ModuleBlocker? {
     return when {
         state.support.layers?.bundledAuthoritative != true -> ModuleBlocker.NotBundled
         !state.support.moduleAssetVerified -> ModuleBlocker.AssetMissing
-        state.support.magiskManager == null -> ModuleBlocker.MagiskMissing
+        state.support.moduleManager == null -> ModuleBlocker.ManagerMissing
         else -> null
     }
 }

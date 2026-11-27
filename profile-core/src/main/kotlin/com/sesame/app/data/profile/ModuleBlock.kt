@@ -10,17 +10,23 @@ package com.sesame.app.data.profile
  * [ProfileResolver.validateMerged] refuses a block without the matching
  * `ghostlock` shape.
  *
- * The block states identity and delivery only. The image's module ABI
- * (vermagic, `sizeof(struct module)`, the `module_layout` CRC) is not
- * duplicated here: the build gate pins the exact Image config, the loader
- * enforces the ABI (a wrong magic half or CRC is a clean `ENOEXEC`), and
- * [assetSha256] binds the exact artifact. A profile-side ABI claim could only
- * re-assert what the bundle already fixes; the app cannot read the running
- * kernel's ABI to check it against.
+ * The block names the code and states the per-image numbers the loader will
+ * compare. [ModuleConfig.asset] and [ModuleConfig.assetSha256] bind the
+ * canonical artifact; [ModuleConfig.crcs] holds the target Image's values for
+ * the module's imported symbols (`__versions` entries), keyed by symbol name.
+ * The app cannot read the running kernel's ABI, so these values are
+ * Image-derived at generation time or fixed by a gated, bundled pair — they are
+ * numbers, not claims: the loader is the enforcer, and a wrong value is a clean
+ * `ENOEXEC`, not a load. `module_layout` is the one entry that is a layout
+ * proof, and it must always be the target's own value; a bundled pair whose
+ * value differs from the asset's build-time entry is licensed only by a
+ * recorded gate (see docs/analysis/module-single-asset-plan.md).
  */
 data class ModuleConfig(
     val asset: String,
     val assetSha256: String,
+    /** Symbol name -> CRC: the values the loader compares. */
+    val crcs: Map<String, Long>,
     /** Empty = the app's built-in ordered probe list. */
     val vendorFiles: List<String>,
 )
@@ -37,8 +43,13 @@ object ModuleBlock {
 
     /** The stub's `stub_ko_target` field: 64 bytes including the NUL. */
     private const val KO_TARGET_MAX = 64
-    private val BlockKeys = setOf("asset", "sha256", "vendor_files")
+    /* `struct modversion_info` carries `char name[56]`, so a symbol name is at
+     * most 55 bytes including content and the NUL is implicit. */
+    private const val SYMBOL_NAME_MAX = 55
+    private const val CRC_MAX = 0xFFFF_FFFFL
+    private val BlockKeys = setOf("asset", "sha256", "crcs", "vendor_files")
     private val Sha256 = Regex("^[0-9a-fA-F]{64}$")
+    private val SymbolName = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
 
     /** A numeric field: a JSON number or a `"0x..."` / decimal string. */
     private fun asLong(value: Any?): Long? = when (value) {
@@ -104,6 +115,29 @@ object ModuleBlock {
             !Sha256.matches(sha) -> err("sha256", "must be 64 hex characters")
         }
 
+        val crcs = LinkedHashMap<String, Long>()
+        when (val raw = block["crcs"]) {
+            null -> err("crcs", "missing")
+            !is Map<*, *> -> err("crcs", "not an object")
+            else -> {
+                if (raw.isEmpty()) err("crcs", "empty")
+                for ((key, value) in raw) {
+                    val name = key as? String
+                    val crc = asLong(value)
+                    when {
+                        name == null -> err("crcs", "$key is not a symbol name")
+                        !SymbolName.matches(name) -> err("crcs", "$name is not a symbol name")
+                        name.length > SYMBOL_NAME_MAX ->
+                            err("crcs", "$name is longer than $SYMBOL_NAME_MAX characters")
+                        crc == null -> err("crcs", "$name is not a number")
+                        crc == 0L -> err("crcs", "$name must be non-zero")
+                        crc > CRC_MAX -> err("crcs", "$name does not fit in 32 bits")
+                        else -> crcs[name] = crc
+                    }
+                }
+            }
+        }
+
         val files = mutableListOf<String>()
         when (val raw = block["vendor_files"]) {
             /* Absent: the app uses its built-in ordered probe list. */
@@ -133,6 +167,7 @@ object ModuleBlock {
         return ModuleConfig(
             asset = asset!!,
             assetSha256 = sha!!.lowercase(),
+            crcs = crcs,
             vendorFiles = files,
         ) to errors
     }

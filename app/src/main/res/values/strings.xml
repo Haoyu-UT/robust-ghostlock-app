@@ -248,12 +248,12 @@
     <string name="module_chain_label">Module chain</string>
     <string name="module_asset_sha">sha256 %1$s</string>
     <string name="module_vendor_files">%1$d vendor_file targets</string>
-    <string name="module_magisk_installed">Magisk installed</string>
-    <string name="module_magisk_missing">Magisk not installed</string>
+    <string name="module_manager_installed">Root manager ready</string>
+    <string name="module_manager_missing">No root manager installed</string>
     <string name="module_blocked_title">Module chain not ready</string>
     <string name="module_blocked_not_bundled">The module chain runs only from the bundled profile</string>
     <string name="module_blocked_asset">The bundled module is missing or its hash does not match</string>
-    <string name="module_blocked_magisk">Install the Magisk manager to run the module chain</string>
+    <string name="module_blocked_manager">Install a root manager (Magisk or KernelSU) to run the module chain</string>
     <string name="module_export_note">The module chain runs only from the bundled profile; an export cannot select it.</string>
     <string name="clear_external_profile">Clear external profile</string>
     <string name="export_cancelled">Export cancelled; nothing was written</string>
@@ -359,6 +359,7 @@
     <string name="manager_summary_auto">Auto (recommended)</string>
     <string name="manager_picker_title">Root manager</string>
     <string name="manager_picker_empty">No usable ksud found. Install a KernelSU-family root manager.</string>
+    <string name="preflight_no_manager">No usable root manager for this run:</string>
     <string name="preflight_anchor_title">Anchor state unavailable</string>
     <string name="preflight_anchor_boot">Installed after this boot; anchor slots unknown. Reboot, then run.</string>
     <string name="preflight_anchor_spent">Anchor slots are spent; continuing could corrupt kernel data. Reboot.</string>
@@ -461,6 +462,7 @@
     <string name="field_sigret_waiter_off_plain">sigreturn waiter (plain)</string>
     <string name="field_sigret_waiter_off_sve">sigreturn waiter (sve)</string>
     <string name="field_module_asset">module asset</string>
+    <string name="field_module_crcs">module CRCs</string>
     <string name="field_module_sha256">module sha256</string>
     <string name="field_module_vendor_files">module vendor files</string>
     <string name="field_timer_trigger">timer trigger</string>

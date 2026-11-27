@@ -67,7 +67,7 @@ data class SessionState(
         /** The bundled `.ko` opens and matches its `asset_sha256`. */
         val moduleAssetVerified: Boolean = false,
         /** Installed Magisk manager package; null = the chain cannot run. */
-        val magiskManager: String? = null,
+        val moduleManager: String? = null,
     )
 
     /** Privileged-access facts: the Shizuku switch and the chosen root manager. */

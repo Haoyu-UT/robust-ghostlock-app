@@ -205,10 +205,10 @@ private fun statusCopy(state: SessionState, status: SupportStatus): StatusCopy {
     }
     val magisk = module?.let {
         stringResource(
-            if (state.support.magiskManager != null) {
-                R.string.module_magisk_installed
+            if (state.support.moduleManager != null) {
+                R.string.module_manager_installed
             } else {
-                R.string.module_magisk_missing
+                R.string.module_manager_missing
             },
         )
     }
@@ -222,7 +222,7 @@ private fun statusCopy(state: SessionState, status: SupportStatus): StatusCopy {
                 when (moduleBlocker) {
                     ModuleBlocker.NotBundled -> R.string.module_blocked_not_bundled
                     ModuleBlocker.AssetMissing -> R.string.module_blocked_asset
-                    ModuleBlocker.MagiskMissing -> R.string.module_blocked_magisk
+                    ModuleBlocker.ManagerMissing -> R.string.module_blocked_manager
                 },
             ),
             detail = detail,

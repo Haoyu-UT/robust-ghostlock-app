@@ -15,6 +15,10 @@
         <package android:name="com.resukisu.resukisu" />
         <package android:name="org.bakasu.bakasu" />
         <package android:name="com.kowx712.supermanager" />
+        <!-- The Magisk family, detected by the handoff resolver; also keeps
+             detection working if QUERY_ALL_PACKAGES is ever removed. -->
+        <package android:name="com.topjohnwu.magisk" />
+        <package android:name="io.github.vvb2060.magisk" />
     </queries>
     <application
         android:name=".GhostlockApplication"

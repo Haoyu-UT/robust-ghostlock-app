@@ -83,14 +83,21 @@ namespace ghostlock::session::frontend {
                 handoff_probe_run(handoff_policy, config::runtime_config_snapshot().ksu_log_path);
         if (handoff_result.enforce_ok)
             pr_info("enforce=1 (enforcing)\n");
-        else if (handoff_result.ksu_log_loaded)
+        else if (handoff_result.ready())
             pr_warning("enforce=0 (still permissive)\n");
         const int32_t kernelsu_ready = handoff_result.ready() ? 1 : 0;
 
         /* Fixup: permissive, load_policy, late-load. Module init re-enforces;
-         * policy reload keeps it working after enforcing is back. */
-        if (kernelsu_ready)
-            pr_success("KernelSU ready\n");
+         * policy reload keeps it working after enforcing is back. The summary
+         * line makes the verdict manager-agnostic: a Magisk handoff has no
+         * kernelsu module line to find, so its "handoff=ok" is readiness. */
+        if (kernelsu_ready) {
+            if (handoff_result.ksu_log_loaded || handoff_result.module_visible)
+                pr_success("KernelSU ready\n");
+            else
+                pr_success("root manager ready\n");
+        } else if (handoff_result.handoff_failed)
+            pr_warning("root manager not ready\n");
         else if (handoff_result.ksu_log_failed)
             pr_warning("KernelSU module load failed\n");
         else if (seccomp_ok)
