@@ -652,3 +652,41 @@ shell, manager best-effort", never a requirement of the chain.
 - [ ] S3's timer consumer (the shared core + sidecar) and the S2 debug hook (or S4 first) as the
       bench path.
 - [ ] S5 acknowledged as out of scope.
+
+## 7. Amendment 2026-11-27: the exec path and the post-root probe
+
+The guard-generation measurements (the incident's `oplus_security_guard`, the OnePlus's
+`oplus_secure_guard_new`) put the app's root-manager handling on the guard's own input path:
+
+- Both generations act on an `execve` path, not on the caller: the old module reports a non-root
+  `/data` exec and blocks a root one; the new module blocks the non-root exec outright; only
+  `/data/local/tmp` is exempt in both.
+- The app is `untrusted_app`: it cannot write or exec in `/data/local/tmp` (measured), and its
+  in-place target is the manager's library under `/data/app`. A preflight probe therefore either
+  cannot run (staging refused) or, on a guarded ROM, would be a guard event. A probe killed by a
+  signal is **no verdict** about the interface, not a missing one — it falls back to the static
+  tokens (`ManagerScanner.Probe.killed`).
+- The staged `source` the app hands off is in its sandbox (`filesDir/ksu-N`, under `/data`), so
+  the core's late-load was itself a root `/data` exec — a block event on the old guard, a report
+  on the new one. `handoff_ksu` now copies the source into `HANDOFF_EXEC_DIR` (default
+  `/data/local/tmp`) and execs the copy, falling back to the source only when the copy cannot be
+  made.
+- The re-detection after root is authoritative and lives in the core, before the late-load:
+  `late-load --help` must exit 0 and name `--kmi` and `--allow-shell` (the app's own contract);
+  `boot-info current-kmi` replaces the resolver's KMI when its first line is KMI-shaped. A target
+  that fails the interface check is skipped and the next target attempted; readiness remains the
+  verdict.
+- Harness: `handoff_test.sh` case 2 asserts the probe and the exec copy, case 8 the KMI override,
+  case 9 the token-only refusal. The Gradle tasks declare `handoff.sh` as an input so a core
+  change rebuilds both embedded binaries (the timer tool had been silently stale).
+
+Device gate: **passed end to end on the diting** (2026-11-27, run `20261127-102625`) on a stock
+`external/boot.img` RAM boot (no `kernelsu`, no `su`). The handoff log: `ksud exec copy:
+/data/local/tmp/ghostlock-ksud-11509`; `late-load interface confirmed (rc=0 --kmi=1
+--allow-shell=1)`; `kmi: manager answer 'android12-5.10' (resolver 'android12-5.10')`;
+`late-load kmi=android12-5.10 source=/data/local/tmp/ghostlock-ksud-11509`; `late-load exit=0`;
+`handoff-target=ksu idx=1`; KSU live (`su` as `u:r:ksu:s0`), run store `completed`, enforcing
+restored, and the copy removed. The OnePlus 13s cannot exercise a real load — KernelSU-Next is
+resident and `rmmod` returns EAGAIN — so there the same core ran as root with readiness stubbed:
+the copy, the `late-load --help` contract and the manager's own KMI (`android15-6.6`) all held.
+Remaining: a locked new-guard ColorOS unit for the app-side preflight claim.

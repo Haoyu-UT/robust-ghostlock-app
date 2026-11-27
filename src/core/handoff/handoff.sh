@@ -28,6 +28,10 @@ VRKO_SELINUX_BLOCK="${VRKO_SELINUX_BLOCK:-auto}"
 MODULE_PATH="${MODULE_PATH:-}"
 MODULE_KO="${MODULE_KO:-}"
 TARGETS="${TARGETS:-}"
+# The directory a manager copy is exec'd from. Both OPPO guard generations act
+# on the exec path and only /data/local/tmp is exempt in both, so a knob here
+# exists for the host harness, not for production.
+HANDOFF_EXEC_DIR="${HANDOFF_EXEC_DIR:-/data/local/tmp}"
 
 handoff_pre_attempt() { :; }
 handoff_before_restore() { :; }
@@ -86,9 +90,15 @@ ksu_wait() {
   ksu_ready
 }
 
-# KernelSU: late-load the staged ksud with the KMI the resolver used. When the
-# module is already loaded (root from boot) there is nothing to do; the
-# readiness check is the same fact either way.
+# KernelSU: late-load the staged ksud. When the module is already loaded (root
+# from boot) there is nothing to do; the readiness check is the same fact
+# either way.
+#
+# The exec path is the guard's input, not the caller: both OPPO generations
+# act on a /data exec (the old module reports a non-root one and blocks a root
+# one, the new module blocks the non-root one), and only /data/local/tmp is
+# exempt in both. The app's sandbox, where `source` was staged, is under /data,
+# so the manager runs (and is probed) as a copy in the exempt directory.
 handoff_ksu() {
   hk_kmi="$1"
   hk_src="$2"
@@ -102,9 +112,46 @@ handoff_ksu() {
     handoff_say "[!] KernelSU module not loaded"
     return 4
   fi
-  handoff_log "[*] late-load kmi=$hk_kmi source=$hk_src"
-  chmod 755 "$hk_src" 2>/dev/null
-  "$hk_src" late-load --kmi "$hk_kmi" --allow-shell >>"${LOG:-/dev/null}" 2>&1
+  hk_run="$HANDOFF_EXEC_DIR/ghostlock-ksud-$$"
+  mkdir -p "$HANDOFF_EXEC_DIR" 2>/dev/null
+  if cp -f "$hk_src" "$hk_run" 2>/dev/null && chmod 755 "$hk_run" 2>/dev/null; then
+    handoff_log "[*] ksud exec copy: $hk_run"
+  else
+    handoff_log "[!] cannot copy ksud to $HANDOFF_EXEC_DIR; running $hk_src in place"
+    rm -f "$hk_run" 2>/dev/null
+    hk_run="$hk_src"
+  fi
+  # The authoritative probe, after root: the app's preflight may have been
+  # refused (it cannot write the exempt directory as untrusted_app, and a
+  # guard kills an exec from /data/app), leaving only static tokens. Same
+  # contract as the app's scanner: `late-load --help` exits 0 and names both
+  # flags this script passes. A probe the guard killed answers nothing.
+  hk_help=$("$hk_run" late-load --help 2>&1)
+  hk_help_rc=$?
+  case "$hk_help" in *--kmi*) hk_if_kmi=1 ;; *) hk_if_kmi=0 ;; esac
+  case "$hk_help" in *--allow-shell*) hk_if_shell=1 ;; *) hk_if_shell=0 ;; esac
+  if [ "$hk_help_rc" -ne 0 ] || [ "$hk_if_kmi" -ne 1 ] || [ "$hk_if_shell" -ne 1 ]; then
+    handoff_log "[!] late-load interface missing: rc=$hk_help_rc kmi=$hk_if_kmi allow-shell=$hk_if_shell source=$hk_src"
+    handoff_say "[!] KernelSU late-load interface missing"
+    [ "$hk_run" = "$hk_src" ] || rm -f "$hk_run" 2>/dev/null
+    return 4
+  fi
+  handoff_log "[*] late-load interface confirmed (rc=$hk_help_rc --kmi=$hk_if_kmi --allow-shell=$hk_if_shell)"
+  # The manager's own KMI, now that it can be asked. A first line that is not
+  # a KMI (an error banner, an empty answer) leaves the resolver's value.
+  hk_current=$("$hk_run" boot-info current-kmi 2>/dev/null | head -n 1)
+  case "$hk_current" in
+    android[0-9]*-[0-9]*)
+      handoff_log "[*] kmi: manager answer '$hk_current' (resolver '$hk_kmi')"
+      hk_kmi="$hk_current"
+      ;;
+    *)
+      handoff_log "[*] kmi: no manager answer ('${hk_current:-empty}'); using '$hk_kmi'"
+      ;;
+  esac
+  handoff_log "[*] late-load kmi=$hk_kmi source=$hk_run"
+  chmod 755 "$hk_run" 2>/dev/null
+  "$hk_run" late-load --kmi "$hk_kmi" --allow-shell >>"${LOG:-/dev/null}" 2>&1
   hk_rc=$?
   handoff_log "[*] late-load exit=$hk_rc"
   if ! ksu_wait 20; then
@@ -113,7 +160,7 @@ handoff_ksu() {
     # immediately and lmkd never re-execs.
     handoff_log '[*] late-load did not load; retrying via the /system/bin/lmkd bind mount'
     umount -l /system/bin/lmkd 2>/dev/null
-    if [ -e /system/bin/lmkd ] && mount --bind "$hk_src" /system/bin/lmkd 2>>"${LOG:-/dev/null}"; then
+    if [ -e /system/bin/lmkd ] && mount --bind "$hk_run" /system/bin/lmkd 2>>"${LOG:-/dev/null}"; then
       /system/bin/lmkd late-load --kmi "$hk_kmi" --allow-shell >>"${LOG:-/dev/null}" 2>&1
       handoff_log "[*] mounted late-load exit=$?"
       umount -l /system/bin/lmkd 2>/dev/null
@@ -123,10 +170,13 @@ handoff_ksu() {
   fi
   if ksu_wait 50; then
     handoff_say "[+] KernelSU module loaded"
-    return 0
+    hk_out=0
+  else
+    handoff_say "[!] KernelSU module not loaded"
+    hk_out=1
   fi
-  handoff_say "[!] KernelSU module not loaded"
-  return 1
+  [ "$hk_run" = "$hk_src" ] || rm -f "$hk_run" 2>/dev/null
+  return "$hk_out"
 }
 
 # Magisk: reproduce magiskinit by hand while the window is permissive. The
