@@ -335,3 +335,23 @@ for the daemon's action, the locked bootloader, or the real module set.
 
 Evidence: `external/port/6.6-caller-guard-2026-11-27/` (README, `console.txt`, `init.c`,
 `testbin.c`, `hashes.txt`).
+
+## 12. One default for both generations (2026-11-27, last)
+
+`symbol=` is now a comma-separated list, defaulting to
+`do_execveat_common_entry_handler,oplus_exe_block_ret_handler`. Every entry that resolves and
+has a recognised prologue is patched; missing entries are logged and skipped; the load fails only
+when nothing was patched; unload restores every site in reverse. This puts the per-generation
+neutralisation point in one invocation: 6.6 needs the entry handler, 5.10/6.1 the return handler,
+and each generation lacks the other's symbol.
+
+Both benches pass with the same source (`external/port/sgpatch-multi-2026-11-27/`):
+
+- 6.6 (stock Image, caller test): both handlers patched, the guard's `execve_block` silent under
+  the patch, restored after unload.
+- 5.10 (reporter's exact Image and modules): the entry symbol is absent (`not present (-2),
+  skipped`), the return handler patched, the root exec survives under the patch and is killed
+  again after unload; the non-root report is untouched.
+
+The single-symbol default in §1–§3 is superseded; §7's "which handler" statement stands as the
+per-generation rationale.
