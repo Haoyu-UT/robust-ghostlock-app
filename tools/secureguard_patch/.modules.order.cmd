@@ -1,0 +1,1 @@
+savedcmd_/home/haoyu/projects/redmi_ultra_k50_root/external/ghostlock-app/tools/secureguard_patch/modules.order := {   echo /home/haoyu/projects/redmi_ultra_k50_root/external/ghostlock-app/tools/secureguard_patch/sgpatch.o; :; } > /home/haoyu/projects/redmi_ultra_k50_root/external/ghostlock-app/tools/secureguard_patch/modules.order
