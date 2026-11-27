@@ -8,21 +8,22 @@ import com.sesame.app.domain.model.RootManager
 import com.sesame.app.domain.model.RootManagerCandidate
 
 /**
- * The handoff rule set (handoff-resolution-plan.md §2.2/§2.4): the stored
- * choice, the detected managers and the managers' own KMI answers become a
+ * The handoff rule set (handoff-resolution-plan.md §2.2/§8): the stored
+ * choice, the detected managers and the device's KMI become a
  * [HandoffResolution] — a verdict per manager and an ordered attempt list.
  * Pure: no I/O, no staging, no profile, no route. Every route gets the same
  * answer, and the picker can call the same function.
  *
- * KSU feasibility is the manager's own interface: `boot-info supported-kmis`
- * succeeds and `boot-info current-kmi` yields a member of that list. A manager
- * that cannot answer falls back to the release mirror (the script's old
- * derivation plus the `<5.10` line). Magisk is feasible when its required
- * native libs are present.
+ * KSU feasibility is KSU's own check, done statically: the device's KMI
+ * (derived by KSU's parser) must be one of the manager's embedded
+ * `<kmi>_kernelsu.ko` assets. A manager that carries no such asset names falls
+ * back to the release mirror. Asset membership is a necessary condition only —
+ * the ordered attempt loop remains the authority on a real load. Magisk is
+ * feasible when its required native libs are present.
  */
 object HandoffResolver {
 
-    private const val KSU_ABSENT = "no ksud with late-load --help"
+    private const val KSU_ABSENT = "no ksud with late-load support"
     private const val MAGISK_ABSENT = "not installed"
 
     /**
@@ -34,7 +35,7 @@ object HandoffResolver {
     fun resolve(
         release: String,
         ksu: List<ManagerScanner.Candidate>,
-        kmiAnswers: Map<String, ManagerScanner.KmiAnswer>,
+        currentKmi: ManagerScanner.CurrentKmi?,
         magisk: List<RootManager.Magisk>,
         storedChoice: String?,
     ): HandoffResolution {
@@ -44,7 +45,7 @@ object HandoffResolver {
                 verdicts += HandoffVerdict(candidate.toManager(), HandoffState.INFEASIBLE, candidate.verdict)
                 continue
             }
-            val rule = ksuRule(release, kmiAnswers[candidate.path])
+            val rule = ksuRule(release, candidate, currentKmi)
             verdicts += HandoffVerdict(candidate.toManager(), rule.state, rule.reason, rule.kmi)
         }
         for (manager in magisk) {
@@ -65,33 +66,50 @@ object HandoffResolver {
     private data class Rule(val state: HandoffState, val reason: String, val kmi: String? = null)
 
     /**
-     * The manager's own interface first; the release mirror only when the
-     * manager cannot answer (no `boot-info`, or `supported-kmis` failing).
+     * KSU's own rule, statically: the device KMI must be one of the manager's
+     * embedded `<kmi>_kernelsu.ko` assets (the set `supported-kmis` prints).
+     * A manager whose payload carries no asset names falls back to the release
+     * mirror, which still prefers the KSU-derived KMI when it has one.
      */
-    private fun ksuRule(release: String, answer: ManagerScanner.KmiAnswer?): Rule {
-        if (answer?.supported != null) {
-            val current = answer.current
+    private fun ksuRule(
+        release: String,
+        candidate: ManagerScanner.Candidate,
+        currentKmi: ManagerScanner.CurrentKmi?,
+    ): Rule {
+        if (candidate.kmis.isNotEmpty()) {
+            val current = currentKmi?.value
                 ?: return Rule(
                     HandoffState.INFEASIBLE,
-                    answer.failure ?: "manager cannot report its KMI",
+                    currentKmi?.failure ?: "Failed to get KMI from boot/modules",
                 )
-            if (current !in answer.supported) {
+            if (current !in candidate.kmis) {
                 return Rule(
                     HandoffState.INFEASIBLE,
-                    "supported KMI list does not contain $current",
+                    "provides ${candidate.kmis.joinToString(", ")}; kernel is $current",
                 )
             }
-            return Rule(HandoffState.FEASIBLE, "supported-kmis lists $current", current)
+            return Rule(HandoffState.FEASIBLE, "provides $current", current)
         }
-        return releaseFallback(release)
+        return releaseFallback(release, currentKmi?.value)
     }
 
     /**
-     * The release mirror: `ops.cpp`'s old derivation plus the `<5.10` line the
-     * script never had (it refused 5.4 only because the uname carried no
-     * android token). The KMI it derives is the value `late-load` receives.
+     * The release mirror for a manager that carries no KMI assets:
+     * `ops.cpp`'s old derivation plus the `<5.10` line the script never had.
+     * When KSU's own parser already answered (the vermagic branch included),
+     * its token is the one `late-load` receives and only the line check
+     * remains.
      */
-    private fun releaseFallback(release: String): Rule {
+    private fun releaseFallback(release: String, current: String?): Rule {
+        if (current != null) {
+            val line = current.substringAfter('-', "")
+            val major = line.substringBefore('.').toIntOrNull()
+            val minor = line.substringAfter('.', "").toIntOrNull()
+            if (major != null && minor != null && (major < 5 || (major == 5 && minor < 10))) {
+                return Rule(HandoffState.INFEASIBLE, "kernel line <5.10 has no late-load module")
+            }
+            return Rule(HandoffState.FEASIBLE, "release mirror (no KMI assets): $current", current)
+        }
         val version = release.substringBefore('-')
         val parts = version.split('.')
         val major = parts.getOrNull(0)?.toIntOrNull()

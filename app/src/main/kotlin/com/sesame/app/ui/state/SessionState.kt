@@ -85,7 +85,6 @@ data class SessionState(
     @Stable
     data class RunSettingsState(
         val safeModeEnabled: Boolean = false,
-        val forceAttackTestEnabled: Boolean = false,
         val vrKoTagClear: VrKoMode = VrKoMode.AUTO,
         val vrKoSelinuxBlock: VrKoMode = VrKoMode.AUTO,
         val debugKernelLogEnabled: Boolean = true,

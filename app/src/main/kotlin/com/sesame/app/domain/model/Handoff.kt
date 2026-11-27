@@ -33,8 +33,8 @@ sealed interface RootManager {
         override val packageName: String,
         override val label: String,
         val ksudPath: String,
-        /** null = the `late-load --help` probe could not run. */
-        val interfaceOk: Boolean?,
+        /** The `<kmi>_kernelsu.ko` asset names the payload carries (may be empty). */
+        val kmis: List<String>,
         /** `ManagerScanner.Candidate.suitable` — the candidacy gate. */
         val suitable: Boolean,
     ) : RootManager {

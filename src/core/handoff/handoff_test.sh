@@ -47,6 +47,7 @@ EOF
         echo "VRKO_SELINUX_BLOCK='auto'"
         echo "MODULE_PATH=''"
         echo "MODULE_KO=''"
+        echo "HANDOFF_EXEC_DIR='$WORK/exec'"
         printf "TARGETS='"
         for entry in "$@"; do
             printf '%s\n' "$entry"
@@ -58,14 +59,36 @@ EOF
     RC=$?
 }
 
-# Stub ksud: records its arguments and marks readiness on late-load.
+# Stub ksud: records its arguments, prints the late-load usage the interface
+# probe requires, answers boot-info with HARNESS_KSU_KMI, and marks readiness
+# on the real late-load only. HARNESS_KSU_NO_INTERFACE=1 models a token-only
+# candidate: --help exits 1 with no usage.
 ksud_stub() {
     target=$1
     cat >"$target" <<'EOF'
 #!/bin/sh
 echo "$@" >>"$HARNESS_KSU_ARGS"
 case "$1" in
-late-load) : >"$HARNESS_KSU_FLAG" ;;
+late-load)
+    case "$2" in
+    --help)
+        if [ "${HARNESS_KSU_NO_INTERFACE:-}" = 1 ]; then
+            echo "ksud: unrecognized subcommand" >&2
+            exit 1
+        fi
+        echo "Usage: ksud late-load --kmi <kmi> --allow-shell"
+        exit 0
+        ;;
+    esac
+    : >"$HARNESS_KSU_FLAG"
+    ;;
+boot-info)
+    [ "${HARNESS_KSU_NO_INTERFACE:-}" = 1 ] && exit 1
+    case "$2" in
+    current-kmi) echo "${HARNESS_KSU_KMI:-android12-5.10}" ;;
+    supported-kmis) echo "${HARNESS_KSU_KMI:-android12-5.10}" ;;
+    esac
+    ;;
 esac
 exit 0
 EOF
@@ -79,6 +102,8 @@ export HARNESS_KSU_FLAG="$WORK/ksud.flag"
 # must be exported (not merely assigned for the function call).
 export HARNESS_MAGISKD=""
 export HARNESS_MAGISK_OK=""
+export HARNESS_KSU_KMI="android12-5.10"
+export HARNESS_KSU_NO_INTERFACE=""
 
 # 1. Magisk first and ready: one attempt, no ksud invocation.
 rm -f "$HARNESS_KSU_ARGS" "$HARNESS_KSU_FLAG"
@@ -98,7 +123,11 @@ run_case ksu_ready 1 \
 [ "$RC" -eq 0 ] || fail "ksu_ready: exit $RC"
 check_contains "$OUTPUT" "handoff-target=ksu idx=1"
 check_contains "$OUTPUT" "HANDOFF-SUMMARY handoff=ok target=ksu idx=1"
+check_contains "$HARNESS_KSU_ARGS" "late-load --help"
+check_contains "$HARNESS_KSU_ARGS" "boot-info current-kmi"
 check_contains "$HARNESS_KSU_ARGS" "late-load --kmi android12-5.10 --allow-shell"
+check_contains "$WORK/ksu_ready/core.log" "ksud exec copy: $WORK/exec/ghostlock-ksud-"
+check_contains "$WORK/ksu_ready/core.log" "late-load interface confirmed (rc=0 --kmi=1 --allow-shell=1)"
 
 # 3. Magisk attempted and not ready, then the KSU fallback carries it.
 rm -f "$HARNESS_KSU_ARGS" "$HARNESS_KSU_FLAG"
@@ -142,6 +171,29 @@ HARNESS_MAGISKD= HARNESS_MAGISK_OK=
 run_case bad_kind 1 "bogus|pkg|$WORK/x|"
 [ "$RC" -eq 1 ] || fail "bad_kind: exit $RC"
 check_contains "$WORK/bad_kind/core.log" "unknown target kind 'bogus'"
+
+# 8. The post-root probe takes the manager's own KMI over the resolver's.
+rm -f "$HARNESS_KSU_ARGS" "$HARNESS_KSU_FLAG"
+HARNESS_MAGISKD= HARNESS_MAGISK_OK= HARNESS_KSU_KMI="android13-5.15"
+run_case kmi_override 1 \
+    "ksu|com.resukisu.resukisu|$WORK/ksud|android12-5.10"
+[ "$RC" -eq 0 ] || fail "kmi_override: exit $RC"
+check_contains "$HARNESS_KSU_ARGS" "boot-info current-kmi"
+check_contains "$HARNESS_KSU_ARGS" "late-load --kmi android13-5.15 --allow-shell"
+check_contains "$WORK/kmi_override/core.log" \
+    "manager answer 'android13-5.15' (resolver 'android12-5.10')"
+HARNESS_KSU_KMI="android12-5.10"
+
+# 9. A token-only candidate is refused by the post-root probe before any
+#    late-load: the static verdict was the preflight's, not this binary's.
+rm -f "$HARNESS_KSU_ARGS" "$HARNESS_KSU_FLAG"
+HARNESS_MAGISKD= HARNESS_MAGISK_OK= HARNESS_KSU_NO_INTERFACE=1
+run_case no_interface 1 \
+    "ksu|com.bogus.manager|$WORK/ksud|android12-5.10"
+[ "$RC" -eq 1 ] || fail "no_interface: exit $RC"
+check_contains "$OUTPUT" "KernelSU late-load interface missing"
+grep -q 'late-load --kmi' "$HARNESS_KSU_ARGS" && fail "no_interface: late-load --kmi was invoked"
+HARNESS_KSU_NO_INTERFACE=""
 
 if [ "$FAILED" -eq 0 ]; then
     echo "handoff_test: all cases passed"

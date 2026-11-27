@@ -265,7 +265,6 @@ class GhostlockViewModel(
     private val advancedActionsImpl = object : AdvancedActions {
         override fun close() = onCloseAdvanced()
         override fun openRunSettings() = onOpenRunSettings()
-        override fun forceAttackChanged(enabled: Boolean) = toggleForceAttackTest(enabled)
         override fun openManagerPicker() = onOpenManagerPicker()
         override fun openParameters() = onOpenParameters()
         override fun openMeasurements() = onOpenMeasurements()
@@ -1324,13 +1323,6 @@ class GhostlockViewModel(
         ) }
     }
 
-    fun toggleForceAttackTest(enabled: Boolean) {
-        repository.setForceAttackTest(enabled)
-        mutableState.update { it.copy(
-            session = it.session.copy(runSettings = it.session.runSettings.copy(forceAttackTestEnabled = enabled)),
-        ) }
-    }
-
     fun setVrKoTagClear(mode: VrKoMode) {
         repository.setVrKoTagClear(mode)
         mutableState.update { it.copy(
@@ -2078,6 +2070,51 @@ class GhostlockViewModel(
         }
     }
 
+    /**
+     * Debug-only: the root-manager scan without a run (`scan_test`). It records
+     * every candidate's static KMI asset list, the device's KMI (KSU's own
+     * parser) and the membership verdict — the evidence the on-device accuracy
+     * check reads, with no exec involved.
+     */
+    fun runManagerScanCheck() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val out = StringBuilder()
+            fun record(line: String) {
+                appendLog("scan_test: $line")
+                Log.i("GhostlockScan", line)
+                out.appendLine(line)
+            }
+            try {
+                val release = System.getProperty("os.version", "").orEmpty()
+                val current = ManagerScanner.currentKmi(release)
+                record(
+                    "release=$release current=${current.value} source=${current.source} " +
+                        "failure=${current.failure}",
+                )
+                val candidates = ManagerScanner.scan(application)
+                if (candidates.isEmpty()) record("no candidates")
+                for (candidate in candidates) {
+                    record(
+                        "${candidate.packageName} ${candidate.path} " +
+                            "suitable=${candidate.suitable} ${candidate.verdict}",
+                    )
+                    record(
+                        "  kmi provides=${candidate.kmis} " +
+                            "member=${current.value != null && current.value in candidate.kmis}",
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                record("error=${error.javaClass.simpleName}: ${error.message}")
+            } finally {
+                runCatching {
+                    application.filesDir.resolve("scan-test.txt").writeText(out.toString())
+                }
+            }
+        }
+    }
+
     fun onCloseExecutionSheet() {
         if (running && !state.value.session.run.sheetDismissible) return
         mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(sheetVisible = false))) }
@@ -2476,7 +2513,6 @@ class GhostlockViewModel(
                     ),
                     runSettings = it.session.runSettings.copy(
                         safeModeEnabled = snapshot.safeModeEnabled,
-                        forceAttackTestEnabled = snapshot.forceAttackTest,
                         vrKoTagClear = snapshot.vrKoTagClear,
                         vrKoSelinuxBlock = snapshot.vrKoSelinuxBlock,
                     ),

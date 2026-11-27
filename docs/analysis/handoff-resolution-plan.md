@@ -270,6 +270,13 @@ handoff-target=ksu effective=2/2 (1-based; target 1 magisk: magiskd did not star
 
 ### 2.4 Feasibility is early and named: the manager's own KMI interface
 
+> **Amended 2026-11-27 (later):** the exec probes below are superseded by §8. The primary rule
+> becomes a *static* read of the same data (the `_kernelsu.ko` asset names in the manager's own
+> `ksud`) plus KSU's own KMI parse of `uname -r`, so preflight emits no exec. `boot-info` remains
+> only in the post-root re-detection (§7), where it runs as root from the exempt
+> `/data/local/tmp`. The text below is kept as the record of the exec-based design and its
+> measurements.
+
 The primary rule is the **manager's own interface**, not a derivation of ours. `ksud boot-info`
 (verified 2026-11-26 on three rigs: ReSukiSU 4.2.0-rc3 and KernelSU-Next 3.4.2) offers:
 
@@ -652,3 +659,126 @@ shell, manager best-effort", never a requirement of the chain.
 - [ ] S3's timer consumer (the shared core + sidecar) and the S2 debug hook (or S4 first) as the
       bench path.
 - [ ] S5 acknowledged as out of scope.
+
+## 7. Amendment 2026-11-27: the exec path and the post-root probe
+
+The guard-generation measurements (the incident's `oplus_security_guard`, the OnePlus's
+`oplus_secure_guard_new`) put the app's root-manager handling on the guard's own input path:
+
+- Both generations act on an `execve` path, not on the caller: the old module reports a non-root
+  `/data` exec and blocks a root one; the new module blocks the non-root exec outright; only
+  `/data/local/tmp` is exempt in both.
+- The app is `untrusted_app`: it cannot write or exec in `/data/local/tmp` (measured), and its
+  in-place target is the manager's library under `/data/app`. A preflight probe therefore either
+  cannot run (staging refused) or, on a guarded ROM, would be a guard event. A probe killed by a
+  signal is **no verdict** about the interface, not a missing one — it falls back to the static
+  tokens (`ManagerScanner.Probe.killed`).
+- The staged `source` the app hands off is in its sandbox (`filesDir/ksu-N`, under `/data`), so
+  the core's late-load was itself a root `/data` exec — a block event on the old guard, a report
+  on the new one. `handoff_ksu` now copies the source into `HANDOFF_EXEC_DIR` (default
+  `/data/local/tmp`) and execs the copy, falling back to the source only when the copy cannot be
+  made.
+- The re-detection after root is authoritative and lives in the core, before the late-load:
+  `late-load --help` must exit 0 and name `--kmi` and `--allow-shell` (the app's own contract);
+  `boot-info current-kmi` replaces the resolver's KMI when its first line is KMI-shaped. A target
+  that fails the interface check is skipped and the next target attempted; readiness remains the
+  verdict.
+- Harness: `handoff_test.sh` case 2 asserts the probe and the exec copy, case 8 the KMI override,
+  case 9 the token-only refusal. The Gradle tasks declare `handoff.sh` as an input so a core
+  change rebuilds both embedded binaries (the timer tool had been silently stale).
+
+Device gate: **passed end to end on the diting** (2026-11-27, run `20261127-102625`) on a stock
+`external/boot.img` RAM boot (no `kernelsu`, no `su`). The handoff log: `ksud exec copy:
+/data/local/tmp/ghostlock-ksud-11509`; `late-load interface confirmed (rc=0 --kmi=1
+--allow-shell=1)`; `kmi: manager answer 'android12-5.10' (resolver 'android12-5.10')`;
+`late-load kmi=android12-5.10 source=/data/local/tmp/ghostlock-ksud-11509`; `late-load exit=0`;
+`handoff-target=ksu idx=1`; KSU live (`su` as `u:r:ksu:s0`), run store `completed`, enforcing
+restored, and the copy removed. The OnePlus 13s cannot exercise a real load — KernelSU-Next is
+resident and `rmmod` returns EAGAIN — so there the same core ran as root with readiness stubbed:
+the copy, the `late-load --help` contract and the manager's own KMI (`android15-6.6`) all held.
+Remaining: a locked new-guard ColorOS unit for the app-side preflight claim.
+
+## 8. Amendment 2026-11-27 (later): preflight feasibility without exec — the static KMI rule
+
+§7 put the app's manager handling on the guard's input path: every preflight exec of a manager
+binary is a guard event (old guard: non-root `/data` exec → report; new guard: caller-based, the
+app's own exe is under `/data`, → report), and a probe killed by a signal is **no verdict**. The
+data the probe was fetching is not behaviour, though — it is a string table inside the manager's
+own `ksud`. So the primary rule becomes static, and preflight emits no exec at all.
+
+### The exact KSU semantics (verified against the sources)
+
+Checked in `tiann/KernelSU` and `rifsxd/KernelSU-Next` (identical code), and the same pattern
+literal is present in both managers' shipped `libksud.so` on our rigs (ReSukiSU 4.2.0-rc3 and
+KernelSU-Next 3.4.2) — a fork cannot silently change it without changing the asset list it prints:
+
+| what | where | semantics |
+|---|---|---|
+| supported list | `userspace/ksud/src/assets.rs::list_supported_kmi()` | every embedded asset name stripped of the literal suffix `_kernelsu.ko`. `boot-info supported-kmis` prints exactly this list. |
+| lookup | `userspace/ksud/src/late_load.rs::run()` | `format!("{kmi}_kernelsu.ko")` → asset table; absent → `asset not found: …`. Membership **is** the check KSU makes before loading. |
+| current KMI | `userspace/ksud/src/boot_patch.rs::get_current_kmi()` | `parse_kmi_from_uname()` first, else `parse_kmi_from_modules()`: first `*.ko` in `/vendor/lib/modules` → `modinfo` → the line starting `vermagic` → same parser. |
+| parser | `boot_patch.rs::parse_kmi()` | regex `(.* )?(\d+\.\d+)(\S+)?(android\d+)(.*)`, **leftmost** match, result `{group 4}-{group 2}` (android token + `major.minor`). |
+| image-buffer parser | `boot_patch.rs::parse_kmi(buffer)` | a *different* regex, `(\d+\.\d+)(?:\S+)?(android\d+)`, for kernel images/boot images; not part of `current-kmi`. |
+| asset suffix filter | same as supported list | `_susfs_guard_lkm.ko` names (KSU-Next) are **not** KMIs and must not be matched. |
+
+Two consequences the implementation must honour:
+
+- The KMI **must** be derived with KSU's parser, not our release mirror: a kernel whose uname has
+  no `android<NN>` token may still yield a KMI from a vendor module's vermagic, and KSU accepts
+  that. Both branches are mirrored, so the two agree by construction.
+- The list must be read with the exact suffix strip (`_kernelsu.ko`), or the susfs names and the
+  bare parsing tokens (the same regexes appear in the binary) would inflate it.
+
+### The rule
+
+1. **List per candidate, static.** The token scan already has the candidate's bytes
+   (`ManagerScanner`); collect every `…_kernelsu.ko` occurrence, strip the suffix — the same set
+   `boot-info supported-kmis` prints. The names sit in one blob and are **concatenated with no
+   separator** in the shipped binaries, so the KMI is taken as the rightmost KMI-shaped tail
+   before the suffix, never by a whole-word walk (measured 2026-11-27: a word walk found 0–1 of
+   the 8).
+2. **Current KMI, static.** `System.getProperty("os.version")` (= `uname -r`) → KSU's `parse_kmi`;
+   if it fails, read the first `*.ko` under `/vendor/lib/modules` and take its `.modinfo`
+   `vermagic=` value (the static equivalent of `modinfo`; world-readable, no exec) → the same
+   parser.
+3. **Verdict.** A KSU candidate is feasible iff it is `suitable` **and** the current KMI is a
+   member of its list. Suitability is the static interface tokens (`late-load`, `allow-shell`)
+   **plus one manager-owned fact** — a KMI asset list or the `supported-kmis` interface token —
+   because the exploit app's own native embeds the handoff script and otherwise matches the
+   tokens (measured 2026-11-27: it was ranked as a candidate; after the rule it is a row, never a
+   choice). The reason names
+   both: `provides android12-5.10, android14-6.1; kernel is android15-6.6`. No interface exec.
+4. **The KMI still travels with the target** (`late-load --kmi … --allow-shell`), and the
+   post-root re-detection of §7 still replaces it when the core gets a KMI-shaped answer.
+5. **Fallback unchanged in role, demoted:** a candidate with no `_kernelsu.ko` tokens falls back to
+   the release mirror (§2.4 table). A parser failure with no vermagic fallback is infeasible, as it
+   would be for KSU.
+
+### What this does not prove (the permissiveness the user flagged)
+
+The static list is the manager's **embedded asset set**, i.e. KSU's necessary condition — it says
+"this build ships a module for this KMI line", not "late-load will succeed". Load can still fail:
+the driver-install syscall blocked by seccomp (ksud's own string), a vendor module blacklist or
+guard (`oplus_secure_guard`'s `block_modules`), a vermagic/signature refusal, SELinux. So the
+preflight verdict is an **upper bound**; the ordered attempt loop and the readiness check remain
+the authority, exactly as §7 established. The gain is that no preflight exec reaches the guard,
+and no probe verdict depends on a vendor kill.
+
+### Tests to pin
+
+- The parser against the three release strings on our rigs — `5.10.236-android12-9-00003-g…`
+  → `android12-5.10`; `6.1.138-android14-11-g…` → `android14-6.1`; `6.6.66-android15-8-g…`
+  → `android15-6.6` — plus a `vermagic` line, a 5.4 qgki release (no `android` token → parse
+  failure) and a no-token string.
+- The candidate gate: our own native's script tokens (`late-load`, `--allow-shell`,
+  `kernelsu.ko`, no assets, no `supported-kmis`) are not a manager; a payload with
+  `supported-kmis` and no assets still is.
+- The asset names concatenated with no separator (the shipped shape), behind a preceding
+  string that breaks a whole-word walk.
+- The two managers' observed lists as fixtures (the same eight: `android12-5.10`, `android13-5.10`,
+  `android13-5.15`, `android14-5.15`, `android14-6.1`, `android15-6.6`, `android16-6.12`,
+  `android17-6.18`; no 5.4, no `android11-5.10`), and that `_susfs_guard_lkm.ko` names and the
+  bare regex tokens do not enter the list.
+- A one-off agreement measurement: on each rig, the static list equals `boot-info supported-kmis`
+  and the static parse equals `boot-info current-kmi`, recorded in the session evidence.
+- The guard property: the whole preflight path contains no `exec`.

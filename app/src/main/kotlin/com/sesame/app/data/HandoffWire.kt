@@ -63,7 +63,7 @@ object HandoffWire {
                 packageName = packageName,
                 label = packageName,
                 ksudPath = origin,
-                interfaceOk = null,
+                kmis = emptyList(),
                 suitable = true,
             )
 

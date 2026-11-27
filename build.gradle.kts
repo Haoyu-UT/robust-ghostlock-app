@@ -99,6 +99,8 @@ tasks.register<Exec>("buildGhostlockNative") {
     environment("NDK_ROOT", ndk)
     inputs.files(
         fileTree("src") { include("**/*.c", "**/*.h", "**/*.cpp", "**/*.hpp") },
+        /* Embedded as a C string into the binary by the Makefile. */
+        file("src/core/handoff/handoff.sh"),
         file("src/Makefile"),
     )
     outputs.file(file("build/native/ghostlock"))
@@ -149,6 +151,9 @@ tasks.register<Exec>("buildTimerTool") {
     environment("NDK_ROOT", ndk)
     inputs.files(
         fileTree("src/timer") { include("**/*.c", "**/*.h") },
+        /* The same embedded core as the native: a core change must rebuild
+         * this tool too, or the packaged libtimer.so carries the old script. */
+        file("src/core/handoff/handoff.sh"),
         file("src/Makefile"),
     )
     outputs.file(file("build/native/timer"))

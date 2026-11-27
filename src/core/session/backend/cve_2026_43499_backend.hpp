@@ -28,7 +28,7 @@ namespace ghostlock::session::backend {
         template <class Middleware>
         [[nodiscard]] static StageResult run(ExploitSession &session,
                                              const profile::kernel_offsets &decoded,
-                                             const char *debug_dir, bool force_attack,
+                                             const char *debug_dir,
                                              VictimChain &chain);
 
         /* One route write: middleware resident fast path, else heap spray + PI
@@ -42,7 +42,7 @@ namespace ghostlock::session::backend {
         /* Stage: process setup and profile installation (middleware-free). */
         [[nodiscard]] static StageResult run_setup(ExploitSession &session,
                                                    const profile::kernel_offsets &decoded,
-                                                   const char *debug_dir, bool force_attack);
+                                                   const char *debug_dir);
     };
 
     /* Availability is owned by component_catalog::backend_available(); the

@@ -18,10 +18,9 @@ import java.io.File
 
 /**
  * Covers the platform-facing scan(): package enumeration, the self/system
- * filters, the executable-shape prefilter, the token scan, and the fallback
- * when the `late-load --help` probe cannot run (the fake binary is not
- * executable, so the probe is "unavailable" and suitability falls back to the
- * tokens).
+ * filters, the executable-shape prefilter, the token scan, and the static KMI
+ * asset-name list (no exec anywhere — the preflight never runs a manager
+ * binary).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -35,7 +34,7 @@ class ManagerScannerScanTest {
         pm = app.packageManager
     }
 
-    private fun fakeKsudElf(): ByteArray {
+    private fun fakeKsudElf(assets: Boolean = true, supportedKmis: Boolean = false): ByteArray {
         val bytes = ByteArray(4096)
         bytes[0] = 0x7f
         bytes[1] = 'E'.code.toByte()
@@ -50,9 +49,19 @@ class ManagerScannerScanTest {
         put16(bytes, 54, 56)             // e_phentsize
         put16(bytes, 56, 1)              // e_phnum
         put32(bytes, 64, 3)              // PT_INTERP
-        "late-load\u0000--allow-shell\u0000kernelsu.ko\u0000KernelSU\u0000"
-            .toByteArray()
-            .copyInto(bytes, 200)
+        val text = buildString {
+            append("late-load\u0000--allow-shell\u0000kernelsu.ko\u0000KernelSU\u0000")
+            if (supportedKmis) append("supported-kmis\u0000")
+            if (assets) {
+                // The asset names sit in one blob, concatenated with no separator
+                // (the shipped binaries do exactly this); the leading X also
+                // breaks a whole-word walk, as a preceding string does.
+                append("Xandroid12-5.10_kernelsu.koandroid12-5.10_susfs_guard_lkm.ko")
+                append("android15-6.6_kernelsu.ko\u0000")
+            }
+            append("(.* )?(\\d+\\.\\d+)(\\S+)?(android\\d+)(.*)\u0000")
+        }
+        text.toByteArray().copyInto(bytes, 200)
         return bytes
     }
 
@@ -101,10 +110,10 @@ class ManagerScannerScanTest {
         val candidate = result.single()
         assertTrue(candidate.lateLoadToken)
         assertTrue(candidate.allowShellToken)
-        // The fake file is not executable, so the late-load probe is
-        // unavailable and the static tokens carry suitability.
-        assertEquals(null, candidate.interfaceOk)
         assertTrue(candidate.suitable)
+        /* The asset names KSU's own list is built from — the susfs guard and the
+         * bare parser regex must not enter it. */
+        assertEquals(listOf("android12-5.10", "android15-6.6"), candidate.kmis)
     }
 
     @Test
@@ -113,6 +122,26 @@ class ManagerScannerScanTest {
         val result = ManagerScanner.scan(app)
         assertEquals(listOf("me.weishu.kernelsu"), result.map { it.packageName })
         assertTrue(result.single().builtin)
+    }
+
+    @Test
+    fun `scan admits a manager that answers supported-kmis but carries no assets`() {
+        install("com.example.thin", system = false, ksud = true, elf = fakeKsudElf(assets = false, supportedKmis = true))
+        val candidate = ManagerScanner.scan(app).single()
+        assertTrue(candidate.suitable)
+        assertTrue(candidate.kmis.isEmpty())
+        assertEquals("static late-load candidate, no KMI assets", candidate.verdict)
+    }
+
+    @Test
+    fun `scan rejects the exploit native's script tokens as a manager`() {
+        /* Our own embedded handoff script carries `late-load`, `--allow-shell`
+         * and `kernelsu.ko`, but no KMI assets and no `supported-kmis`: it is a
+         * row, never a choice. */
+        install("com.example.exploit", system = false, ksud = true, elf = fakeKsudElf(assets = false))
+        val candidate = ManagerScanner.scan(app).single()
+        assertFalse(candidate.suitable)
+        assertEquals("not suitable", candidate.verdict)
     }
 
     @Test

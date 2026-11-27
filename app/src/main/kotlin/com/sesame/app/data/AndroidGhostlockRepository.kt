@@ -86,7 +86,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
          * short enough that a denied/ignored dialog still falls through. */
         const val CRASH_SHIZUKU_TIMEOUT_MS = 20_000L
         val AnsiEscape = Regex("\u001B\\[[0-9;]*m")
-        const val PrefForceAttackTest = "force_attack_test"
         /** Tri-state vr.ko choices, stored as auto/on/off. */
         const val PrefVrKoTagClear = "vr_ko_tag_clear"
         const val PrefVrKoSelinuxBlock = "vrko_selinux_block"
@@ -136,7 +135,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         preferences,
     )
     private var safeModeEnabled = false
-    private var forceAttackTest = false
     private var vrKoTagClear = VrKoMode.AUTO
     private var vrKoSelinuxBlock = VrKoMode.AUTO
     private var shizukuEnabled = false
@@ -144,7 +142,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     init {
         restoreShizukuPreference()
-        restoreForceAttackTest()
         restoreVrKoTagClear()
         restoreVrKoSelinuxBlock()
     }
@@ -160,7 +157,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             kernelRelease = release,
             socName = socName,
             safeModeEnabled = safeModeEnabled,
-            forceAttackTest = forceAttackTest,
             vrKoTagClear = vrKoTagClear,
             vrKoSelinuxBlock = vrKoSelinuxBlock,
             shizukuEnabled = shizukuActive,
@@ -171,11 +167,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
 
     override fun setSafeModeEnabled(enabled: Boolean) {
         safeModeEnabled = enabled
-    }
-
-    override fun setForceAttackTest(enabled: Boolean) {
-        forceAttackTest = enabled
-        preferences.edit { putBoolean(PrefForceAttackTest, enabled) }
     }
 
     override fun setVrKoTagClear(mode: VrKoMode) {
@@ -200,7 +191,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     /**
      * The picker's rows: the same resolution the run enforces — both families,
      * each with its feasibility and evidence. No anchor check (the picker does
-     * not start a run); the KMI answers come from this boot's cache.
+     * not start a run); the KMI rule is the run's own static one.
      */
     override suspend fun managerCandidates(): List<RootManagerCandidate> = withContext(Dispatchers.IO) {
         val ksu = runCatching { ManagerScanner.scan(appContext) }.getOrDefault(emptyList())
@@ -210,7 +201,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             HandoffResolver.resolve(
                 release,
                 ksu,
-                kmiAnswers(ksu),
+                ManagerScanner.currentKmi(release),
                 magisk,
                 selectedManagerPackage(),
             ),
@@ -374,7 +365,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             val facts = shizukuRunner.collectCrash(dir)
             if (!facts.isNullOrEmpty() && !facts["capture_boot_id"].isNullOrEmpty()) return facts
         }
-        return RootCrashCollector.collect(appContext, dir)
+        /* No app-uid `su` fallback: on a guarded unit that exec is a report
+         * event, and the collector was the product's last one. */
+        return null
     }
 
     override suspend fun importBugreport(uri: String): ImportedEvidence? =
@@ -856,13 +849,18 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 Log.w(LogTag, "handoff: Magisk detector failed", error)
                 return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER)
             }
-            /* The manager's own KMI interface over the suitable candidates;
-             * answered once per boot and cached here (two extra execs each). A
-             * probe that throws reads as "cannot answer" — the resolver then
-             * uses the release mirror rather than the run failing. */
+            /* The device's KMI, derived with KSU's own parser (uname, then the
+             * vendor module's vermagic) — no exec. The candidates' KMI asset
+             * lists come from the same scan that found them. */
             val release = System.getProperty("os.version", "").orEmpty()
+            val currentKmi = ManagerScanner.currentKmi(release)
+            Log.i(
+                LogTag,
+                "handoff: kmi=${currentKmi.value} source=${currentKmi.source}" +
+                    (currentKmi.failure?.let { " failure=$it" } ?: ""),
+            )
             val stored = selectedManagerPackage()
-            val plan = HandoffResolver.resolve(release, ksu, kmiAnswers(ksu), magisk, stored)
+            val plan = HandoffResolver.resolve(release, ksu, currentKmi, magisk, stored)
             /* A stored choice is a preference, not an exclusion: an
              * installed-but-infeasible choice is kept and logged; only a
              * vanished package is cleared (deliberately stricter than the
@@ -886,34 +884,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             }
             PreflightResult.Passed(plan)
         }
-
-    /**
-     * The manager KMI answers, cached for this boot (memory only): the picker
-     * and the run pre-flight ask the same question, and an answer cannot change
-     * without a reboot or a manager update (the ksud path is the cache key).
-     * No persistent cache — a stale verdict is the failure worth avoiding.
-     */
-    private val kmiCache = HashMap<String, ManagerScanner.KmiAnswer>()
-    private var kmiCacheBoot: String? = null
-
-    private fun kmiAnswers(
-        ksu: List<ManagerScanner.Candidate>,
-    ): Map<String, ManagerScanner.KmiAnswer> {
-        val boot = currentBootId()
-        if (boot != kmiCacheBoot) {
-            kmiCache.clear()
-            kmiCacheBoot = boot
-        }
-        val answers = HashMap<String, ManagerScanner.KmiAnswer>(ksu.size)
-        for (candidate in ksu) {
-            if (!candidate.suitable) continue
-            answers[candidate.path] = kmiCache.getOrPut(candidate.path) {
-                runCatching { ManagerScanner.probeKmi(candidate) }
-                    .getOrElse { ManagerScanner.KmiAnswer(null, null, null) }
-            }
-        }
-        return answers
-    }
 
     private fun packageInstalled(packageName: String): Boolean =
         runCatching { appContext.packageManager.getPackageInfo(packageName, 0) }.isSuccess
@@ -1122,7 +1092,7 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                     archivedLog("<b> starting UserService")
                     resetRunState()
                     shizukuRunner.run(
-                        safeModeEnabled, forceAttackTest, profileBlob, debugDir,
+                        safeModeEnabled, profileBlob, debugDir,
                         HandoffWire.encode(plan), archivedLog,
                     ) { step, status ->
                         if (status == "disabled") clearRunState() else applyRunStatus(step, status)
@@ -1883,9 +1853,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                 "--ghostlock-app-call",
                 "--enable-status-record",
             )
-            if (forceAttackTest) {
-                argv += "--force-attack"
-            }
             if (pipeline == "dirtyfrag") {
                 /* Stop after W1 (SELinux permissive) and run the DirtyFrag stage. */
                 argv += "--w1-only"
@@ -2182,10 +2149,6 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
     private fun restoreShizukuPreference() {
         val prefs = appContext.getSharedPreferences("ghostlock_prefs", Context.MODE_PRIVATE)
         shizukuEnabled = prefs.getBoolean("shizuku_enabled", false)
-    }
-
-    private fun restoreForceAttackTest() {
-        forceAttackTest = preferences.getBoolean(PrefForceAttackTest, false)
     }
 
     private fun restoreVrKoTagClear() {

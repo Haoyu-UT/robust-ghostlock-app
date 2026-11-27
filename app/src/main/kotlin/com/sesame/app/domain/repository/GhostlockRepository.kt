@@ -23,9 +23,6 @@ interface GhostlockRepository {
 
     fun setSafeModeEnabled(enabled: Boolean)
 
-    /** Skip the pre-attack KernelSU check and run the exploit as a test. */
-    fun setForceAttackTest(enabled: Boolean)
-
     /** Debug/test: run the DirtyFrag viability probe and return a one-line report. */
     suspend fun probeDirtyfrag(): String = "probe=NotRun (unsupported)"
 

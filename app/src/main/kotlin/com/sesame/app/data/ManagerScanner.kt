@@ -2,41 +2,49 @@ package com.sesame.app.data
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import com.sesame.app.domain.model.RootManager
 import java.io.File
 import java.io.FileInputStream
-import java.util.concurrent.TimeUnit
 
 /**
  * Finds KernelSU-family managers that can late-load on this device and ranks
- * them. The pipeline is the 2026-11-06 design (PORT: ksud-judge-poc):
+ * them, without executing anything. The pipeline is the 2026-11-06 design
+ * (PORT: ksud-judge-poc) with the 2026-11-27 static-KMI amendment
+ * (handoff-resolution-plan §8):
  *
  *  1. enumerate user-installed packages (and the built-in managers even when
  *     system-installed);
  *  2. per package, keep executable-shaped aarch64 ELFs (ET_DYN + PT_INTERP,
  *     or ET_EXEC) — a 4 KiB prefilter, so ordinary shared libraries cost
  *     almost nothing;
- *  3. token-scan only those candidates (`late-load`, `allow_shell`, capsule /
- *     bootstrap markers, `kernelsu.ko`);
- *  4. execute `late-load --help` for ksud-like candidates and require the
- *     exact interface this app calls (`--kmi` and `--allow-shell`).
+ *  3. token-scan those candidates (`late-load`, `allow_shell`, capsule /
+ *     bootstrap markers, `kernelsu.ko`) and collect every `<kmi>_kernelsu.ko`
+ *     asset name — the exact set `boot-info supported-kmis` prints, because
+ *     KSU's own list is every embedded asset stripped of that literal suffix;
+ *  4. derive the device's KMI exactly as KSU's `get_current_kmi` does: its
+ *     `parse_kmi` regex on `uname -r`, else the first vendor module's
+ *     `vermagic` through the same parser, read statically from the file.
+ *
+ * Suitability is the static late-load interface (`late-load` and
+ * `allow-shell` tokens). The preflight used to execute `late-load --help` and
+ * `boot-info …`; both are gone: every app exec under `/data` is a SecureGuard
+ * event (the 6.6 module is caller-based, the 5.10/6.1 target-based), and a
+ * probe killed by a signal is no verdict. The authoritative interface probe
+ * runs as root in the handoff, from the exempt `/data/local/tmp` (§7 of the
+ * plan), and the ordered attempt loop remains the authority on a real load.
+ * The KMI asset list is KSU's necessary condition only — it does not prove
+ * late-load succeeds (seccomp, a vendor module blacklist, vermagic/SELinux can
+ * still refuse it).
  *
  * The `--version` banner is deliberately not used: forks print release names
- * (`ksud samsung-v2.2 (uapi: 5)`), and the interface probe is the contract
- * that matters. Suitability: a confirmed interface wins; a candidate whose
- * probe cannot run (SELinux denies exec, timeout) falls back to the static
- * late-load tokens.
- * There is deliberately no persistent cache — the whole pipeline is ~0.2 s
- * warm on a regular phone, and a stale "capable" verdict is the one failure
- * mode worth avoiding.
+ * (`ksud samsung-v2.2 (uapi: 5)`), and the interface is the contract that
+ * matters.
  */
 object ManagerScanner {
     const val PREF_KEY = "manager_package"
 
-    private const val PROBE_TIMEOUT_MS = 2000L
-    private const val MAX_PROBE_OUTPUT = 8192
     private const val MAX_SCAN_BYTES = 64L * 1024 * 1024
+    private const val MAX_KMI_CHARS = 32
 
     /** Built-in KernelSU-family managers, priority order. */
     val BUILTIN = listOf(
@@ -55,21 +63,31 @@ object ManagerScanner {
         val builtin: Boolean,
         val lateLoadToken: Boolean,
         val allowShellToken: Boolean,
-        /** null = the probe could not run (exec denied, timeout, crash). */
-        val interfaceOk: Boolean?,
+        /** The `supported-kmis` interface token (a manager's own answer machinery). */
+        val supportedKmisToken: Boolean = false,
+        /**
+         * The `<kmi>_kernelsu.ko` asset names found in this payload — the same
+         * set `boot-info supported-kmis` prints (`assets::list_supported_kmi`
+         * strips that literal suffix). Empty means the build keeps no per-KMI
+         * assets, so the resolver uses the release mirror.
+         */
+        val kmis: List<String> = emptyList(),
     ) {
+        /**
+         * The static late-load interface **and** one manager-owned fact: KMI
+         * assets, or the `supported-kmis` interface token. The second half
+         * excludes a false positive that carries our own embedded handoff
+         * script's strings (`late-load`, `--allow-shell`, `kernelsu.ko`) but
+         * cannot answer a manager's `boot-info` — the exploit app's own native.
+         */
         val suitable: Boolean
-            get() = when {
-                interfaceOk == true -> true
-                interfaceOk == false -> false
-                else -> lateLoadToken && allowShellToken
-            }
+            get() = lateLoadToken && allowShellToken && (kmis.isNotEmpty() || supportedKmisToken)
 
         val verdict: String
             get() = when {
-                interfaceOk == true -> "late-load interface confirmed"
-                interfaceOk == false -> "late-load interface missing"
-                lateLoadToken && allowShellToken -> "static late-load candidate (probe unavailable)"
+                suitable && kmis.isNotEmpty() ->
+                    "static late-load candidate, ${kmis.size} KMI asset(s)"
+                suitable -> "static late-load candidate, no KMI assets"
                 else -> "not suitable"
             }
 
@@ -81,12 +99,12 @@ object ManagerScanner {
             packageName = packageName,
             label = label,
             ksudPath = path,
-            interfaceOk = interfaceOk,
+            kmis = kmis,
             suitable = suitable,
         )
     }
 
-    /** Scan installed managers. Blocking I/O and probes: call from Dispatchers.IO. */
+    /** Scan installed managers. Blocking I/O only, no exec: call from Dispatchers.IO. */
     fun scan(context: Context): List<Candidate> {
         val pm = context.packageManager
         val self = context.packageName
@@ -104,27 +122,22 @@ object ManagerScanner {
                 if (!file.isFile) continue
                 if (file.length() > MAX_SCAN_BYTES) continue
                 if (!isExecutableShaped(file)) continue
-                val tokens = scanTokens(file)
-                if (!tokens.ksudLike) continue
-                val probe = run(file, "late-load", "--help")
-                val iface = if (probe.unavailable) {
-                    null
-                } else {
-                    probe.exit == 0 && probe.output.contains("--allow-shell") && probe.output.contains("--kmi")
-                }
+                val payload = scanPayload(file)
+                if (!payload.tokens.ksudLike) continue
                 found += Candidate(
                     packageName = info.packageName,
                     label = runCatching { app.loadLabel(pm).toString() }.getOrDefault(info.packageName),
                     path = file.absolutePath,
                     builtin = info.packageName in BUILTIN,
-                    lateLoadToken = tokens.lateLoad,
-                    allowShellToken = tokens.allowShell,
-                    interfaceOk = iface,
+                    lateLoadToken = payload.tokens.lateLoad,
+                    allowShellToken = payload.tokens.allowShell,
+                    supportedKmisToken = payload.tokens.supportedKmis,
+                    kmis = payload.kmis,
                 )
             }
         }
         return found.sortedWith(compareByDescending<Candidate> { it.suitable }
-            .thenByDescending { it.interfaceOk == true }
+            .thenByDescending { it.kmis.isNotEmpty() }
             .thenByDescending { it.builtin }
             .thenBy { it.label.lowercase() })
     }
@@ -135,20 +148,86 @@ object ManagerScanner {
             ?: candidates.firstOrNull { it.suitable }
 
     /**
-     * The manager's own KMI interface (handoff-resolution-plan §2.4):
-     * `boot-info supported-kmis` doubles as the capability probe, then
-     * `boot-info current-kmi`. Nothing is re-derived from uname here — the
-     * manager's `current-kmi` is authoritative, and a manager that cannot
-     * answer falls back to the release mirror in the resolver.
+     * The KMI `late-load` would use, derived exactly as KSU's
+     * `get_current_kmi()` does and without executing anything.
+     * [source] names the branch that answered (`uname`, `vermagic`, `none`).
      */
-    data class KmiAnswer(
-        /** The embedded `*_kernelsu.ko` names; null = the manager cannot answer. */
-        val supported: List<String>?,
-        /** The KMI to pass to `late-load --kmi`; null = it failed. */
-        val current: String?,
-        /** The manager's own message when [current] is null. */
+    data class CurrentKmi(
+        /** The KMI token, e.g. `android12-5.10`; null = detection failed. */
+        val value: String?,
+        val source: String,
+        /** KSU's own message when [value] is null. */
         val failure: String?,
     )
+
+    private const val VENDOR_MODULES = "/vendor/lib/modules"
+
+    fun currentKmi(
+        release: String,
+        vendorModules: File = File(VENDOR_MODULES),
+    ): CurrentKmi {
+        parseKmi(release)?.let { return CurrentKmi(it, "uname", null) }
+        val fromVermagic = vermagicKmi(vendorModules)
+        if (fromVermagic != null) return CurrentKmi(fromVermagic, "vermagic", null)
+        return CurrentKmi(null, "none", "Failed to get KMI from boot/modules")
+    }
+
+    /** KSU's `boot_patch::parse_kmi`: leftmost match of that regex, `{android}-{major.minor}`. */
+    private val KMI_PARSE = Regex("(.* )?(\\d+\\.\\d+)(\\S+)?(android\\d+)(.*)")
+
+    /**
+     * Byte-for-byte the manager's parser (`boot_patch.rs::parse_kmi`): apply
+     * the regex to the string, take group 2 (the kernel `major.minor`) and
+     * group 4 (the `android<NN>` token), return `{group4}-{group2}`. A string
+     * the manager would refuse returns null.
+     */
+    fun parseKmi(version: String): String? {
+        val cap = KMI_PARSE.find(version) ?: return null
+        val kernel = cap.groupValues[2]
+        val android = cap.groupValues[4]
+        if (kernel.isEmpty() || android.isEmpty()) return null
+        return "$android-$kernel"
+    }
+
+    /**
+     * KSU's `parse_kmi_from_modules`, read statically: the first `*.ko` under
+     * `/vendor/lib/modules` (name order, as `read_dir` order is unspecified),
+     * its `.modinfo` `vermagic` entry, then the same parser applied to the
+     * line `modinfo` would have printed (`vermagic: <value>`). No exec.
+     */
+    private fun vermagicKmi(dir: File): String? {
+        val module = runCatching {
+            dir.listFiles()?.asSequence()
+                ?.filter { it.isFile && it.name.endsWith(".ko") }
+                ?.sortedBy { it.name }
+                ?.firstOrNull()
+        }.getOrNull() ?: return null
+        val value = runCatching { vermagicOf(module) }.getOrNull() ?: return null
+        return parseKmi("vermagic: $value")
+    }
+
+    /** The raw `vermagic=` value from a module's modinfo entries. */
+    internal fun vermagicOf(file: File): String? {
+        if (file.length() > MAX_SCAN_BYTES) return null
+        val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
+        val needle = "vermagic=".toByteArray()
+        val at = indexOf(bytes, needle) ?: return null
+        var end = at + needle.size
+        while (end < bytes.size && bytes[end] != 0.toByte()) end++
+        return String(bytes, at + needle.size, end - at - needle.size, Charsets.UTF_8)
+    }
+
+    private fun indexOf(buffer: ByteArray, needle: ByteArray): Int? {
+        if (needle.isEmpty() || buffer.size < needle.size) return null
+        val last = buffer.size - needle.size
+        outer@ for (start in 0..last) {
+            for (index in needle.indices) {
+                if (buffer[start + index] != needle[index]) continue@outer
+            }
+            return start
+        }
+        return null
+    }
 
     /**
      * A cheap presence check for the home badge — no scan, no exec: the first
@@ -163,39 +242,6 @@ object ManagerScanner {
         }
     }
 
-    /** Two extra execs per suitable candidate; call from Dispatchers.IO. */
-    fun probeKmi(candidate: Candidate): KmiAnswer {
-        val file = File(candidate.path)
-        val supported = run(file, "boot-info", "supported-kmis")
-        if (supported.unavailable || supported.exit != 0) {
-            return KmiAnswer(supported = null, current = null, failure = null)
-        }
-        val names = supported.output.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .toList()
-        if (names.isEmpty()) {
-            return KmiAnswer(supported = null, current = null, failure = null)
-        }
-        val current = run(file, "boot-info", "current-kmi")
-        if (current.unavailable || current.exit != 0) {
-            return KmiAnswer(
-                supported = names,
-                current = null,
-                failure = firstLine(current.output) ?: "Failed to get KMI from boot/modules",
-            )
-        }
-        val value = firstLine(current.output)
-        return if (value == null) {
-            KmiAnswer(names, null, "boot-info current-kmi printed nothing")
-        } else {
-            KmiAnswer(names, value, null)
-        }
-    }
-
-    private fun firstLine(text: String): String? =
-        text.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
-
     private data class Tokens(
         val lateLoad: Boolean,
         val allowShell: Boolean,
@@ -203,47 +249,13 @@ object ManagerScanner {
         val bootstrap: Boolean,
         val kernelKo: Boolean,
         val brand: Boolean,
+        val supportedKmis: Boolean,
     ) {
         val ksudLike: Boolean
             get() = lateLoad || capsule || bootstrap || (brand && kernelKo)
     }
 
-    private data class Probe(val exit: Int?, val output: String, val unavailable: Boolean)
-
-    private fun run(file: File, vararg args: String): Probe {
-        val command = ArrayList<String>(args.size + 1)
-        command += file.absolutePath
-        command += args
-        val process = try {
-            ProcessBuilder(command).redirectErrorStream(true).start()
-        } catch (_: Exception) {
-            return Probe(null, "", true)
-        }
-        val output = StringBuilder()
-        val reader = Thread {
-            runCatching {
-                process.inputStream.bufferedReader().use { stream ->
-                    val buffer = CharArray(4096)
-                    while (true) {
-                        val count = stream.read(buffer)
-                        if (count < 0) break
-                        if (output.length < MAX_PROBE_OUTPUT) {
-                            output.append(buffer, 0, minOf(count, MAX_PROBE_OUTPUT - output.length))
-                        }
-                    }
-                }
-            }
-        }.apply { isDaemon = true; start() }
-        val finished = process.waitFor(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        if (!finished) {
-            process.destroyForcibly()
-            runCatching { process.waitFor(500, TimeUnit.MILLISECONDS) }
-            reader.interrupt()
-            return Probe(null, output.toString(), true)
-        }
-        runCatching { reader.join(500) }
-        return Probe(runCatching { process.exitValue() }.getOrNull(), output.toString(), false)
-    }
+    private data class Payload(val tokens: Tokens, val kmis: List<String>)
 
     /** ELF, little-endian aarch64, ET_DYN + PT_INTERP (PIE) or ET_EXEC. */
     private fun isExecutableShaped(file: File): Boolean {
@@ -277,14 +289,21 @@ object ManagerScanner {
         return false
     }
 
-    private fun scanTokens(file: File): Tokens {
+    /**
+     * One streaming pass: the ksud tokens and every `<kmi>_kernelsu.ko` asset
+     * name. The whole file is read (the names can live anywhere in the asset
+     * table), bounded by [MAX_SCAN_BYTES] before the call.
+     */
+    private fun scanPayload(file: File): Payload {
         var lateLoad = false
         var allowShell = false
         var capsule = false
         var bootstrap = false
         var kernelKo = false
         var brand = false
-        val chunk = ByteArray(64 * 1024 + 16)
+        var supportedKmis = false
+        val kmis = LinkedHashSet<String>()
+        val chunk = ByteArray(64 * 1024 + CARRY)
         var keep = 0
         try {
             FileInputStream(file).use { stream ->
@@ -299,19 +318,56 @@ object ManagerScanner {
                     bootstrap = bootstrap || contains(chunk, length, BOOTSTRAP)
                     kernelKo = kernelKo || contains(chunk, length, KERNEL_KO)
                     brand = brand || contains(chunk, length, BRAND)
-                    if (lateLoad && allowShell && (capsule || bootstrap)) {
-                        // Everything this app needs is present; stop reading.
-                        return Tokens(lateLoad, allowShell, capsule, bootstrap, kernelKo, brand)
-                    }
-                    keep = minOf(15, length)
+                    supportedKmis = supportedKmis || contains(chunk, length, SUPPORTED_KMIS)
+                    collectKmis(chunk, length, kmis)
+                    keep = minOf(CARRY, length)
                     System.arraycopy(chunk, length - keep, chunk, 0, keep)
                 }
             }
         } catch (_: Exception) {
-            // A partially-read file still yields whatever tokens were seen.
+            // A partially-read file still yields whatever was seen.
         }
-        return Tokens(lateLoad, allowShell, capsule, bootstrap, kernelKo, brand)
+        return Payload(
+            Tokens(lateLoad, allowShell, capsule, bootstrap, kernelKo, brand, supportedKmis),
+            kmis.toList(),
+        )
     }
+
+    /**
+     * Every `<name>_kernelsu.ko` occurrence's name, restricted to the KMI shape
+     * the asset names have (`android<NN>-<major>.<minor>`). The suffix filter is
+     * KSU's own (`_kernelsu.ko`), so `_susfs_guard_lkm.ko` names and the bare
+     * parser regexes in the binary never enter the list.
+     *
+     * The names sit in one string blob and are often **concatenated with no
+     * separator** (`…_kernelsu.koandroid12-5.10_susfs_guard_lkm.ko…`), so the
+     * token is taken as the rightmost KMI-shaped tail of the bytes before the
+     * suffix — never as a whole-word walk, which a preceding string breaks.
+     */
+    private fun collectKmis(buffer: ByteArray, length: Int, out: MutableSet<String>) {
+        val suffix = KERNEL_KO_ASSET
+        if (length < suffix.size) return
+        var at = 0
+        while (at <= length - suffix.size) {
+            var match = true
+            for (index in suffix.indices) {
+                if (buffer[at + index] != suffix[index]) {
+                    match = false
+                    break
+                }
+            }
+            if (!match) {
+                at++
+                continue
+            }
+            val begin = maxOf(0, at - MAX_KMI_CHARS)
+            val window = String(buffer, begin, at - begin, Charsets.US_ASCII)
+            KMI_TAIL.find(window)?.let { out += it.value }
+            at += suffix.size
+        }
+    }
+
+    private val KMI_TAIL = Regex("android[0-9]+-[0-9]+\\.[0-9]+$")
 
     private fun u16(buffer: ByteArray, offset: Int): Int =
         (buffer[offset].toInt() and 0xff) or ((buffer[offset + 1].toInt() and 0xff) shl 8)
@@ -339,11 +395,19 @@ object ManagerScanner {
         return false
     }
 
+    /**
+     * The carry keeps enough of the previous chunk for the longest token and
+     * for a KMI name that starts before a chunk boundary.
+     */
+    private const val CARRY = 96
+
     private val LATE_LOAD = "late-load".toByteArray()
     private val ALLOW_SHELL = "--allow-shell".toByteArray()
     private val ALLOW_SHELL_UNDERSCORE = "allow_shell".toByteArray()
     private val CAPSULE = "KSULKM1".toByteArray()
     private val BOOTSTRAP = "ksu_bootstrap".toByteArray()
     private val KERNEL_KO = "kernelsu.ko".toByteArray()
+    private val KERNEL_KO_ASSET = "_kernelsu.ko".toByteArray()
     private val BRAND = "KernelSU".toByteArray()
+    private val SUPPORTED_KMIS = "supported-kmis".toByteArray()
 }
