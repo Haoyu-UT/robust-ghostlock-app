@@ -1,5 +1,6 @@
 package com.sesame.app.domain.repository
 
+import com.sesame.app.domain.model.AppListPermissionState
 import com.sesame.app.domain.model.CrashEvidenceInfo
 import com.sesame.app.domain.model.DebugSettings
 import com.sesame.app.domain.model.HandoffResolution
@@ -46,6 +47,14 @@ interface GhostlockRepository {
 
     /** The user's root-manager choice (package name); null means Auto. */
     fun selectedManagerPackage(): String?
+
+    /**
+     * The OEM app-list permission (`com.android.permission.GET_INSTALLED_APPS`,
+     * TAF 108-2022): whether the OS defines it and whether this app holds it.
+     * Cheap; no scan, no exec. The startup prompt and the refusal dialog use
+     * it, and it is independent of probe-first detection.
+     */
+    fun appListPermission(): AppListPermissionState
 
     fun setSelectedManagerPackage(packageName: String?)
 

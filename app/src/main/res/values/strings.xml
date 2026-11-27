@@ -357,6 +357,15 @@
     <string name="manager_summary_auto">Auto (recommended)</string>
     <string name="manager_picker_title">Root manager</string>
     <string name="manager_picker_empty">No usable ksud found. Install a KernelSU-family root manager.</string>
+    <string name="manager_picker_app_list_message">No root manager was found. The system may be hiding the installed-app list; grant the app-list permission so the app can search every installed app.</string>
+    <string name="app_list_permission_title">Allow reading the app list?</string>
+    <string name="app_list_permission_message">To find an installed KernelSU or Magisk manager, the app must be allowed to read the installed-app list. Your system gates this permission separately and denies it by default. Without it, only root managers the app already knows by package name can be found.</string>
+    <string name="app_list_permission_grant">Allow</string>
+    <string name="app_list_permission_later">Not now</string>
+    <string name="app_list_permission_settings_message">The app-list permission was denied permanently, so the system will not show the dialog again. Open the permissions for this app in system settings and allow “read app list” (读取应用列表).</string>
+    <string name="app_list_permission_open_settings">Open settings</string>
+    <string name="preflight_app_list_title">Root manager not visible</string>
+    <string name="preflight_app_list_intro">No usable root manager was found, and this system may be hiding the installed-app list from the app:</string>
     <string name="preflight_no_manager">No usable root manager for this run:</string>
     <string name="preflight_anchor_title">Anchor state unavailable</string>
     <string name="preflight_anchor_boot">Installed after this boot; anchor slots unknown. Reboot, then run.</string>

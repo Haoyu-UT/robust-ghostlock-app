@@ -357,6 +357,15 @@
     <string name="manager_summary_auto">自动（推荐）</string>
     <string name="manager_picker_title">root管理器</string>
     <string name="manager_picker_empty">未找到可用的 ksud。请安装 KernelSU 系 root 管理器。</string>
+    <string name="manager_picker_app_list_message">未找到 root 管理器。系统可能对应用隐藏了已安装应用列表；授予「读取应用列表」权限后可扫描所有已安装应用。</string>
+    <string name="app_list_permission_title">允许读取应用列表？</string>
+    <string name="app_list_permission_message">为了找到已安装的 KernelSU 或 Magisk 管理器，应用需要读取已安装应用列表。系统单独管理此权限并默认拒绝；未授予时，只能发现应用已知包名内的 root 管理器。</string>
+    <string name="app_list_permission_grant">允许</string>
+    <string name="app_list_permission_later">暂不</string>
+    <string name="app_list_permission_settings_message">应用列表权限已被永久拒绝，系统不会再弹出对话框。请在系统设置中打开本应用的权限，允许「读取应用列表」。</string>
+    <string name="app_list_permission_open_settings">打开设置</string>
+    <string name="preflight_app_list_title">未发现 root 管理器</string>
+    <string name="preflight_app_list_intro">本次运行没有找到可用的 root 管理器，且系统可能对应用隐藏了已安装应用列表：</string>
     <string name="preflight_no_manager">本次运行没有可用的 root 管理器：</string>
     <string name="preflight_anchor_title">锚点状态不可用</string>
     <string name="preflight_anchor_boot">本次开机后安装，锚点槽位未知；请重启后再运行。</string>

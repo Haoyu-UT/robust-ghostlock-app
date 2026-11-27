@@ -121,12 +121,21 @@ sealed interface GhostlockEffect {
     /** Ask the platform for POST_NOTIFICATIONS (the run-status surface). */
     data object RequestNotificationPermission : GhostlockEffect
 
+    /** Ask the platform for the OEM app-list permission (TAF 108-2022). */
+    data object RequestAppListPermission : GhostlockEffect
+
+    /** Open this app's system settings page (a permanent app-list denial). */
+    data object OpenAppSettings : GhostlockEffect
+
     /** Open the selected KernelSU manager's own UI (user-initiated). */
     data class OpenManager(val packageName: String) : GhostlockEffect
 }
 
 /** How often the report sheet re-reads the Shizuku verdict while it is open. */
 private const val CrashVerdictPollMs = 1_500L
+
+/** How many times the app-list permission dialog has been requested (prefs). */
+private const val APP_LIST_ASKS_KEY = "app_list_permission_asks"
 
 /** True when the evidence already carries a kernel log or a full imported report. */
 private fun CrashEvidenceInfo?.hasKernelEvidence(): Boolean =
@@ -424,10 +433,20 @@ class GhostlockViewModel(
     /** The notification rationale is offered once per process. */
     private var notificationRationaleShown = false
 
+    /** The app-list rationale was deferred behind another dialog this launch. */
+    private var pendingAppListPrompt = false
+
+    /** The run the user tapped, refused for the app-list state; re-run on grant. */
+    private var pendingRunRetry: (() -> Unit)? = null
+
+    private fun appListPrefs() =
+        application.getSharedPreferences("ghostlock_prefs", Context.MODE_PRIVATE)
+
     fun initialize() {
         if (initialized) return
         initialized = true
         maybeAskNotificationPermission()
+        maybeAskAppListPermission()
         repository.setShizukuStatusListener { refreshAccessStatus() }
         viewModelScope.launch {
             refreshSnapshot()
@@ -1514,15 +1533,14 @@ class GhostlockViewModel(
              * the timer's fake endgame opens the permissive window the
              * manager handoff needs, so a run with no feasible manager is
              * refused here with both families' reasons. */
-            val plan = when (
-                val preflight = withContext(Dispatchers.IO) {
-                    repository.preflight(useShizuku = true)
-                }
-            ) {
+            val preflight = withContext(Dispatchers.IO) {
+                repository.preflight(useShizuku = true)
+            }
+            val plan = when (preflight) {
                 is PreflightResult.Blocked -> {
                     appendLog("<s> error: no feasible root manager")
                     preflight.reasons.forEach { appendLog("<s> $it") }
-                    showPreflightNotice(preflight)
+                    showPreflightNotice(preflight) { onRunTimer() }
                     return@launch
                 }
 
@@ -1530,6 +1548,7 @@ class GhostlockViewModel(
             }
             if (!beginOperation()) return@launch
             clearLog()
+            preflight.appList?.let { appendLog("<k> handoff: $it") }
             send(GhostlockEffect.KeepScreenAwake(true))
             mutableState.update {
                 it.copy(session = it.session.copy(run = it.session.run.copy(status = RunStatus.Running, startedAtMs = System.currentTimeMillis())))
@@ -1699,9 +1718,10 @@ class GhostlockViewModel(
              * sheet opens, so no run-store entry and no native are created.
              * The plan it returns is the run's handoff decision — passed to
              * the run, never stored. */
-            val plan = when (val preflight = withContext(Dispatchers.IO) { repository.preflight(useShizuku) }) {
+            val preflight = withContext(Dispatchers.IO) { repository.preflight(useShizuku) }
+            val plan = when (preflight) {
                 is PreflightResult.Blocked -> {
-                    showPreflightNotice(preflight)
+                    showPreflightNotice(preflight) { runExploit() }
                     return@launch
                 }
 
@@ -1713,6 +1733,7 @@ class GhostlockViewModel(
              * Without this the list accumulated across operations and read as
              * "nothing new during execution". */
             clearLog()
+            preflight.appList?.let { appendLog("<k> handoff: $it") }
             send(GhostlockEffect.KeepScreenAwake(true))
             mutableState.update { it.copy(session = it.session.copy(run = it.session.run.copy(status = RunStatus.Running, startedAtMs = System.currentTimeMillis()))) }
             /* A foreground service keeps the app's uid out of the cached
@@ -1812,6 +1833,71 @@ class GhostlockViewModel(
         }
     }
 
+    /**
+     * The OEM app-list permission (TAF 108-2022,
+     * `com.android.permission.GET_INSTALLED_APPS`), offered at startup whenever
+     * the OS defines it and this app does not hold it. Detection success never
+     * suppresses the ask: probe-first keeps known managers working while the
+     * grant is missing, but the whole-device scan and unknown forks need it.
+     * The only deferral is dialog ordering — one overlay at a time.
+     */
+    private fun maybeAskAppListPermission() {
+        val state = runCatching { repository.appListPermission() }.getOrNull() ?: return
+        if (!state.canAsk) return
+        if (mutableState.value.overlay.dialog != null) {
+            pendingAppListPrompt = true
+            return
+        }
+        showAppListPrompt(null)
+    }
+
+    /** The rationale dialog, optionally carrying the refusal's reason lines. */
+    private fun showAppListPrompt(message: String?) {
+        pendingAppListPrompt = false
+        mutableState.update {
+            it.copy(
+                overlay = it.overlay.copy(dialog = AppDialog.AppListPermission(
+                    titleRes = R.string.app_list_permission_title,
+                    messageRes = R.string.app_list_permission_message,
+                    message = message.orEmpty(),
+                )),
+            )
+        }
+    }
+
+    /**
+     * The platform permission result. A grant re-scans the support snapshot
+     * and, when the dialog came from a refused Run, retries that run once. A
+     * permanent denial (no dialog will be shown again, after a previous ask)
+     * offers the system settings page instead.
+     */
+    fun onAppListPermissionResult(granted: Boolean, canAskAgain: Boolean) {
+        if (granted) {
+            appendLog("permission: app-list granted; the whole-device scan is enabled")
+            viewModelScope.launch { runCatching { refreshSnapshot() } }
+            val retry = pendingRunRetry
+            pendingRunRetry = null
+            retry?.invoke()
+            return
+        }
+        appendLog(
+            "permission: app-list denied" +
+                if (canAskAgain) "" else " (the system will not show the dialog again)",
+        )
+        val asks = appListPrefs().getInt(APP_LIST_ASKS_KEY, 0)
+        pendingRunRetry = null
+        if (!canAskAgain && asks >= 2) {
+            mutableState.update {
+                it.copy(
+                    overlay = it.overlay.copy(dialog = AppDialog.AppListSettings(
+                        titleRes = R.string.app_list_permission_title,
+                        messageRes = R.string.app_list_permission_settings_message,
+                    )),
+                )
+            }
+        }
+    }
+
     /** User-initiated: open the selected (or auto-resolved) manager's UI. */
     fun onOpenManager() {
         val selected = state.value.session.access.selectedManagerPackage
@@ -1844,7 +1930,31 @@ class GhostlockViewModel(
         ) }
     }
 
-    private fun showPreflightNotice(blocked: PreflightResult.Blocked) {
+    /**
+     * The run-start refusal. [retry] re-runs the tapped route after an
+     * app-list grant; it is only stored when this dialog is the one that
+     * offered the grant.
+     */
+    private fun showPreflightNotice(blocked: PreflightResult.Blocked, retry: (() -> Unit)? = null) {
+        if (blocked.failure == PreflightFailure.APP_LIST_RESTRICTED) {
+            val state = runCatching { repository.appListPermission() }.getOrNull()
+            val message = application.getString(R.string.preflight_app_list_intro) +
+                "\n" + blocked.reasons.joinToString("\n")
+            pendingRunRetry = retry?.takeIf { state?.canAsk == true }
+            val dialog = if (state?.canAsk == true) {
+                AppDialog.AppListPermission(
+                    titleRes = R.string.app_list_permission_title,
+                    message = message,
+                )
+            } else {
+                AppDialog.Notice(
+                    titleRes = R.string.preflight_app_list_title,
+                    message = message,
+                )
+            }
+            mutableState.update { it.copy(overlay = it.overlay.copy(dialog = dialog)) }
+            return
+        }
         if (blocked.failure == PreflightFailure.NO_ROOT_MANAGER && blocked.reasons.isNotEmpty()) {
             /* The refusal names both families and why each was rejected; the
              * picker's empty toast keeps its old string. */
@@ -1881,6 +1991,11 @@ class GhostlockViewModel(
                 /* The same warning the picker used to show; the picker keeps
                  * listing/selection, the run attempt is what blocks. */
                 title = R.string.manager_picker_title
+                message = R.string.manager_picker_empty
+            }
+            PreflightFailure.APP_LIST_RESTRICTED -> {
+                /* Handled above; kept for the exhaustive assignment. */
+                title = R.string.preflight_app_list_title
                 message = R.string.manager_picker_empty
             }
         }
@@ -2091,7 +2206,18 @@ class GhostlockViewModel(
                     "release=$release current=${current.value} source=${current.source} " +
                         "failure=${current.failure}",
                 )
-                val candidates = ManagerScanner.scan(application)
+                val scan = ManagerScanner.scan(application)
+                val audit = scan.visibility
+                record("visibility: ${audit.summary()}")
+                record(
+                    "visibility: userApps=${audit.userAppCount} " +
+                        "canaryCount=${audit.canaryCount} canary=${audit.canary}",
+                )
+                record(
+                    "visibility: declaredSeen=${audit.declaredSeen} " +
+                        "probedInstalled=${audit.probedInstalled}",
+                )
+                val candidates = scan.candidates
                 if (candidates.isEmpty()) record("no candidates")
                 for (candidate in candidates) {
                     record(
@@ -2210,10 +2336,16 @@ class GhostlockViewModel(
             val selected = repository.selectedManagerPackage()
             managerChoices = candidates
             if (candidates.isEmpty()) {
-                /* No manager of either family is installed; the run's refusal
-                 * would say the same, but opening the picker with nothing to
-                 * list says it briefly instead. */
-                send(GhostlockEffect.Toast(R.string.manager_picker_empty))
+                /* Nothing found. If the OS defines the app-list permission and
+                 * it is off, the list may be hidden rather than empty; offer
+                 * the grant instead of claiming no manager exists. */
+                val state = runCatching { repository.appListPermission() }.getOrNull()
+                if (state?.canAsk == true) {
+                    pendingRunRetry = null
+                    showAppListPrompt(application.getString(R.string.manager_picker_app_list_message))
+                } else {
+                    send(GhostlockEffect.Toast(R.string.manager_picker_empty))
+                }
                 return@launch
             }
             val selectedIndex = candidates.indexOfFirst { it.packageName == selected }
@@ -2385,11 +2517,28 @@ class GhostlockViewModel(
             dialog is AppDialog.NotificationPermission ->
                 send(GhostlockEffect.RequestNotificationPermission)
 
+            dialog is AppDialog.AppListPermission -> {
+                val prefs = appListPrefs()
+                prefs.edit().putInt(APP_LIST_ASKS_KEY, prefs.getInt(APP_LIST_ASKS_KEY, 0) + 1)
+                    .apply()
+                send(GhostlockEffect.RequestAppListPermission)
+            }
+
+            dialog is AppDialog.AppListSettings -> send(GhostlockEffect.OpenAppSettings)
             else -> Unit
         }
     }
 
     fun onDialogDismiss() {
+        val dialog = state.value.overlay.dialog
+        if (dialog is AppDialog.AppListPermission || dialog is AppDialog.AppListSettings) {
+            /* "Later" on either app-list dialog: no run retry, no re-open this
+             * launch. The startup prompt asks again on the next launch. */
+            pendingRunRetry = null
+            pendingAppListPrompt = false
+            dismissDialog()
+            return
+        }
         when (parseStep) {
             is ParseStep.Plan -> {
                 parseStep = ParseStep.Idle
@@ -3171,6 +3320,12 @@ class GhostlockViewModel(
     private fun dismissDialog() {
         managerPickerOpen = false
         mutableState.update { it.copy(overlay = it.overlay.copy(dialog = null)) }
+        /* One overlay at a time: the startup app-list rationale deferred behind
+         * the notification rationale (or any other dialog) is offered now. */
+        if (pendingAppListPrompt) {
+            pendingAppListPrompt = false
+            maybeAskAppListPermission()
+        }
     }
 
     private fun appendLog(line: String) {

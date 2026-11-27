@@ -65,6 +65,23 @@ sealed interface AppDialog {
     ) : AppDialog
 
     /**
+     * The OEM app-list permission rationale (TAF 108-2022). [message] carries
+     * the refusal's reason lines when the dialog answers a blocked run;
+     * otherwise [messageRes] is the startup rationale.
+     */
+    data class AppListPermission(
+        override val titleRes: Int,
+        val messageRes: Int = 0,
+        val message: String = "",
+    ) : AppDialog
+
+    /** A permanent app-list denial: the system settings page is the only path. */
+    data class AppListSettings(
+        override val titleRes: Int,
+        val messageRes: Int,
+    ) : AppDialog
+
+    /**
      * A blocking, non-dismissible progress dialog for a long step that is part
      * of the generation flow (the stride probe). It has no buttons: the step
      * ends on its own, and back/tap must not leave the flow half-done.

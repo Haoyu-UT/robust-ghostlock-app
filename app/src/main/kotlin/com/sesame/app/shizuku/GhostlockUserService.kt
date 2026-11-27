@@ -11,6 +11,7 @@ import com.sesame.app.data.BugreportzOutput
 import com.sesame.app.data.CrashEvidenceStore
 import com.sesame.app.data.DropboxKmsg
 import com.sesame.app.data.HandoffWire
+import com.sesame.app.data.KsudPayload
 import com.sesame.app.data.MagiskStage
 import com.sesame.app.domain.model.HandoffTarget
 import com.sesame.app.domain.model.RootManager
@@ -181,19 +182,17 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
         for ((index, target) in plan.withIndex()) {
             when (val manager = target.manager) {
                 is RootManager.Ksu -> {
-                    val origin = File(manager.ksudPath)
+                    val spec = manager.ksudPath
                     val dest = File(workDir, "ksu-$index")
-                    if (!origin.isFile) {
+                    if (!KsudPayload.readable(spec)) {
                         callback.onLog(
                             "<s> handoff: dropped ${manager.packageName} " +
-                                "(payload missing: ${manager.ksudPath})",
+                                "(payload missing: $spec)",
                         )
                         continue
                     }
                     val ok = runCatching {
-                        origin.inputStream().use { input ->
-                            dest.outputStream().use { input.copyTo(it) }
-                        }
+                        check(KsudPayload.copyTo(spec, dest)) { "copy failed" }
                         Os.chmod(dest.absolutePath, 448)
                     }.isSuccess
                     if (!ok) {
@@ -203,7 +202,7 @@ class GhostlockUserService(private val context: Context) : IGhostlockUserService
                         continue
                     }
                     callback.onLog(
-                        "<s> ksud selected: ${manager.packageName} ${manager.ksudPath} " +
+                        "<s> ksud selected: ${manager.packageName} $spec " +
                             "kmi=${target.kmi ?: "none"}",
                     )
                     staged += HandoffTarget(manager, dest.absolutePath, target.kmi)

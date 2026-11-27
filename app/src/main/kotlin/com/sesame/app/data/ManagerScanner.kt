@@ -2,28 +2,81 @@ package com.sesame.app.data
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.content.pm.PermissionInfo
+import com.sesame.app.domain.model.AppListPermissionState
 import com.sesame.app.domain.model.RootManager
 import java.io.File
 import java.io.FileInputStream
+import java.io.InputStream
+import java.util.zip.ZipFile
+
+/**
+ * The manager-detection seam: everything the scanner reads from the platform,
+ * so the filtered-enumeration states the OEM app-list permission produces can
+ * be exercised in unit tests. Production is [AndroidPackageSource].
+ */
+internal interface PackageSource {
+    fun selfPackage(): String
+    fun packageInfo(packageName: String, flags: Int): PackageInfo?
+    fun installedPackages(flags: Int): List<PackageInfo>
+    fun permissionInfo(name: String, flags: Int): PermissionInfo?
+    fun isGranted(permission: String): Boolean
+    fun installerPackageName(packageName: String): String?
+    fun label(applicationInfo: ApplicationInfo): String
+}
+
+private class AndroidPackageSource(private val context: Context) : PackageSource {
+    private val pm = context.packageManager
+
+    override fun selfPackage(): String = context.packageName
+
+    override fun packageInfo(packageName: String, flags: Int): PackageInfo? =
+        runCatching { pm.getPackageInfo(packageName, flags) }.getOrNull()
+
+    override fun installedPackages(flags: Int): List<PackageInfo> =
+        runCatching { pm.getInstalledPackages(flags) }.getOrDefault(emptyList())
+
+    override fun permissionInfo(name: String, flags: Int): PermissionInfo? =
+        runCatching { pm.getPermissionInfo(name, flags) }.getOrNull()
+
+    override fun isGranted(permission: String): Boolean =
+        context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    override fun installerPackageName(packageName: String): String? =
+        runCatching { pm.getInstallerPackageName(packageName) }.getOrNull()
+
+    override fun label(applicationInfo: ApplicationInfo): String =
+        applicationInfo.loadLabel(pm).toString()
+}
 
 /**
  * Finds KernelSU-family managers that can late-load on this device and ranks
  * them, without executing anything. The pipeline is the 2026-11-06 design
  * (PORT: ksud-judge-poc) with the 2026-11-27 static-KMI amendment
- * (handoff-resolution-plan §8):
+ * (handoff-resolution-plan §8) and the 2026-11-28 probe-first amendment
+ * (manager-detection-visibility-plan §4.1):
  *
- *  1. enumerate user-installed packages (and the built-in managers even when
- *     system-installed);
- *  2. per package, keep executable-shaped aarch64 ELFs (ET_DYN + PT_INTERP,
+ *  1. probe the known manager packages directly (`getPackageInfo`), which
+ *     works under the OEM app-list gate because `getPackageInfo` is not one of
+ *     the four APIs that gate controls and the packages are `<queries>`-declared;
+ *  2. enumerate the rest of the installed apps as an additive source for
+ *     unknown forks (this one *is* gated; it may return only the app itself);
+ *  3. per package, keep executable-shaped aarch64 ELFs (ET_DYN + PT_INTERP,
  *     or ET_EXEC) — a 4 KiB prefilter, so ordinary shared libraries cost
  *     almost nothing;
- *  3. token-scan those candidates (`late-load`, `allow_shell`, capsule /
+ *  4. token-scan those candidates (`late-load`, `allow_shell`, capsule /
  *     bootstrap markers, `kernelsu.ko`) and collect every `<kmi>_kernelsu.ko`
  *     asset name — the exact set `boot-info supported-kmis` prints, because
  *     KSU's own list is every embedded asset stripped of that literal suffix;
- *  4. derive the device's KMI exactly as KSU's `get_current_kmi` does: its
+ *  5. derive the device's KMI exactly as KSU's `get_current_kmi` does: its
  *     `parse_kmi` regex on `uname -r`, else the first vendor module's
  *     `vermagic` through the same parser, read statically from the file.
+ *
+ * A probe package whose payload is only inside its APK
+ * (`extractNativeLibs=false`) yields a `KsudPayload` member spec; detection
+ * never extracts, staging copies the bytes.
  *
  * Suitability is the static late-load interface (`late-load` and
  * `allow-shell` tokens). The preflight used to execute `late-load --help` and
@@ -43,8 +96,12 @@ import java.io.FileInputStream
 object ManagerScanner {
     const val PREF_KEY = "manager_package"
 
+    /** The OEM app-list runtime permission (TAF 108-2022). */
+    const val APP_LIST_PERMISSION = "com.android.permission.GET_INSTALLED_APPS"
+
     private const val MAX_SCAN_BYTES = 64L * 1024 * 1024
     private const val MAX_KMI_CHARS = 32
+    private const val CANARY_SAMPLE = 16
 
     /** Built-in KernelSU-family managers, priority order. */
     val BUILTIN = listOf(
@@ -56,10 +113,33 @@ object ManagerScanner {
         "com.kowx712.supermanager",
     )
 
+    /**
+     * Known managers that are not built-in: probed and `<queries>`-declared so
+     * an installed one is visible as a row ("installed; no late-load").
+     */
+    val EXTRA = listOf("com.sukisu.ultra")
+
+    /** Every package probed directly; `<queries>` must cover this + Magisk. */
+    val PROBE_PACKAGES = BUILTIN + EXTRA
+
+    /**
+     * Every package declared in `<queries>`: the probe list, the Magisk
+     * packages (detected by [MagiskStage]), and the Shizuku manager. Used to
+     * keep the canary from counting a declared package as proof of an
+     * unfiltered enumeration.
+     */
+    val DECLARED_PACKAGES: List<String> =
+        PROBE_PACKAGES + MagiskStage.PACKAGES + listOf("moe.shizuku.privileged.api")
+
     data class Candidate(
         val packageName: String,
         val label: String,
-        val path: String,
+        /**
+         * The payload's readable location: a file path, or a
+         * `<apk>!/lib/arm64-v8a/<member>` spec when only the APK carries it.
+         * Null = installed, but no late-load-shaped ksud was found.
+         */
+        val path: String?,
         val builtin: Boolean,
         val lateLoadToken: Boolean,
         val allowShellToken: Boolean,
@@ -79,12 +159,15 @@ object ManagerScanner {
          * excludes a false positive that carries our own embedded handoff
          * script's strings (`late-load`, `--allow-shell`, `kernelsu.ko`) but
          * cannot answer a manager's `boot-info` — the exploit app's own native.
+         * A null payload can never be suitable.
          */
         val suitable: Boolean
-            get() = lateLoadToken && allowShellToken && (kmis.isNotEmpty() || supportedKmisToken)
+            get() = path != null && lateLoadToken && allowShellToken &&
+                (kmis.isNotEmpty() || supportedKmisToken)
 
         val verdict: String
             get() = when {
+                path == null -> "installed; no late-load-capable ksud in its libs"
                 suitable && kmis.isNotEmpty() ->
                     "static late-load candidate, ${kmis.size} KMI asset(s)"
                 suitable -> "static late-load candidate, no KMI assets"
@@ -98,54 +181,272 @@ object ManagerScanner {
         fun toManager(): RootManager.Ksu = RootManager.Ksu(
             packageName = packageName,
             label = label,
-            ksudPath = path,
+            ksudPath = path.orEmpty(),
             kmis = kmis,
             suitable = suitable,
         )
     }
 
-    /** Scan installed managers. Blocking I/O only, no exec: call from Dispatchers.IO. */
-    fun scan(context: Context): List<Candidate> {
-        val pm = context.packageManager
-        val self = context.packageName
-        @Suppress("DEPRECATION")
-        val packages = pm.getInstalledPackages(0)
-        val found = ArrayList<Candidate>()
-        for (info in packages) {
-            val app = info.applicationInfo ?: continue
-            if (info.packageName == self) continue
-            val system = (app.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-            if (system && info.packageName !in BUILTIN) continue
-            val dir = app.nativeLibraryDir ?: continue
-            val files = runCatching { File(dir).listFiles() }.getOrNull() ?: continue
-            for (file in files) {
-                if (!file.isFile) continue
-                if (file.length() > MAX_SCAN_BYTES) continue
-                if (!isExecutableShaped(file)) continue
-                val payload = scanPayload(file)
-                if (!payload.tokens.ksudLike) continue
-                found += Candidate(
-                    packageName = info.packageName,
-                    label = runCatching { app.loadLabel(pm).toString() }.getOrDefault(info.packageName),
-                    path = file.absolutePath,
-                    builtin = info.packageName in BUILTIN,
-                    lateLoadToken = payload.tokens.lateLoad,
-                    allowShellToken = payload.tokens.allowShell,
-                    supportedKmisToken = payload.tokens.supportedKmis,
-                    kmis = payload.kmis,
-                )
-            }
+    /**
+     * The scan's detection result plus the visibility evidence the preflight,
+     * the picker and `scan_test` report. The canary is a one-sided proof: a
+     * non-declared user app in the enumeration proves the OS is not filtering
+     * it; an empty canary is consistent with filtering (or with a device that
+     * has no third-party apps) and is never proof.
+     */
+    data class VisibilityAudit(
+        val permissionDefined: Boolean,
+        val permissionPackage: String?,
+        val permissionGranted: Boolean,
+        val enumerationCount: Int,
+        val userAppCount: Int,
+        val canaryCount: Int,
+        val canary: List<String>,
+        val declaredSeen: List<String>,
+        val probedInstalled: List<String>,
+    ) {
+        val provenUnfiltered: Boolean get() = canaryCount > 0
+        val possiblyFiltered: Boolean get() = !provenUnfiltered
+        val canAsk: Boolean get() = permissionDefined && !permissionGranted
+
+        /** One line for the log, `scan_test` and the run log. */
+        fun summary(): String = buildString {
+            append("app-list permission=")
+            append(
+                when {
+                    !permissionDefined -> "undefined"
+                    permissionGranted -> "granted"
+                    else -> "defined(${permissionPackage ?: "?"}) not granted"
+                },
+            )
+            append(" enumeration=").append(enumerationCount)
+            append(" canary=").append(canaryCount)
         }
-        return found.sortedWith(compareByDescending<Candidate> { it.suitable }
-            .thenByDescending { it.kmis.isNotEmpty() }
-            .thenByDescending { it.builtin }
-            .thenBy { it.label.lowercase() })
+    }
+
+    data class ScanResult(
+        val candidates: List<Candidate>,
+        val visibility: VisibilityAudit,
+    )
+
+    /** The app-list permission's support and grant state. */
+    fun appListPermission(context: Context): AppListPermissionState =
+        appListPermission(AndroidPackageSource(context))
+
+    internal fun appListPermission(source: PackageSource): AppListPermissionState {
+        val info = source.permissionInfo(APP_LIST_PERMISSION, 0)
+        return AppListPermissionState(
+            supported = info != null,
+            definingPackage = info?.packageName,
+            granted = info != null && source.isGranted(APP_LIST_PERMISSION),
+        )
+    }
+
+    /** Scan installed managers. Blocking I/O only, no exec: call from Dispatchers.IO. */
+    fun scan(context: Context): ScanResult = scan(AndroidPackageSource(context))
+
+    internal fun scan(source: PackageSource): ScanResult {
+        val self = source.selfPackage()
+        /* Probe first: the known packages are visible under `<queries>` and
+         * `getPackageInfo` is not one of the four OEM-gated enumeration APIs. */
+        val probed = LinkedHashMap<String, PackageInfo>()
+        for (pkg in PROBE_PACKAGES) {
+            source.packageInfo(pkg, 0)?.let { probed[pkg] = it }
+        }
+        val enumerated = source.installedPackages(0)
+        val all = LinkedHashMap<String, PackageInfo>(probed)
+        for (info in enumerated) {
+            val pkg = info.packageName
+            if (pkg == self || all.containsKey(pkg)) continue
+            val app = info.applicationInfo ?: continue
+            val system = (app.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            if (system && pkg !in BUILTIN) continue
+            all[pkg] = info
+        }
+        val found = ArrayList<Candidate>()
+        for ((pkg, info) in all) {
+            if (pkg == self) continue
+            val app = info.applicationInfo ?: continue
+            val label = runCatching { source.label(app) }.getOrDefault(pkg)
+            found += candidatesFor(pkg, label, app, probed = pkg in probed)
+        }
+        return ScanResult(
+            candidates = found.sortedWith(
+                compareByDescending<Candidate> { it.suitable }
+                    .thenByDescending { it.kmis.isNotEmpty() }
+                    .thenByDescending { it.builtin }
+                    .thenBy { it.label.lowercase() },
+            ),
+            visibility = audit(source, self, enumerated, probed),
+        )
     }
 
     /** Selected package when it is still suitable, else the best suitable one. */
     fun resolve(candidates: List<Candidate>, selected: String?): Candidate? =
         candidates.firstOrNull { it.packageName == selected && it.suitable }
             ?: candidates.firstOrNull { it.suitable }
+
+    /**
+     * A cheap presence check for the home badge — no payload scan, no exec:
+     * the first installed manager of either family over the *usable* known
+     * list. The run's precondition is the authority; this only keeps the
+     * module card from claiming that a manager is missing when one is
+     * installed. `EXTRA` (SukiSU Ultra) is deliberately excluded here: its
+     * bundled ksud has no late-load, so a badge built on presence alone would
+     * call it "ready"; the picker and the refusal name it instead.
+     */
+    fun installedManager(context: Context): String? {
+        val pm = context.packageManager
+        return (MagiskStage.PACKAGES + BUILTIN).firstOrNull { packageName ->
+            runCatching { pm.getPackageInfo(packageName, 0) }.isSuccess
+        }
+    }
+
+    /* ---- payload discovery ---------------------------------------------- */
+
+    private class PayloadSource(
+        val spec: String,
+        val size: Long,
+        val open: () -> InputStream?,
+    )
+
+    private fun candidatesFor(
+        pkg: String,
+        label: String,
+        app: ApplicationInfo,
+        probed: Boolean,
+    ): List<Candidate> {
+        val out = ArrayList<Candidate>()
+        var ksudFound = false
+        val nativeDir = app.nativeLibraryDir?.let { dir -> runCatching { File(dir).listFiles() }.getOrNull() }
+        if (nativeDir != null) {
+            for (file in nativeDir) {
+                if (!file.isFile || file.length() > MAX_SCAN_BYTES) continue
+                val source = PayloadSource(
+                    spec = file.absolutePath,
+                    size = file.length(),
+                    open = { runCatching { FileInputStream(file) }.getOrNull() },
+                )
+                val candidate = candidateFrom(source, pkg, label) ?: continue
+                out += candidate
+                ksudFound = true
+            }
+        }
+        /* The APK fallback is bounded to known packages: an APK built with
+         * extractNativeLibs=false keeps its libs inside the archive, and the
+         * native dir can be empty. Unknown forks keep the native-dir scan. */
+        if (!ksudFound && probed) {
+            for (source in apkPayloads(app)) {
+                val candidate = candidateFrom(source, pkg, label) ?: continue
+                out += candidate
+                ksudFound = true
+            }
+        }
+        if (!ksudFound && probed) {
+            /* Installed, but no late-load-shaped ksud: keep a row so the
+             * picker and the refusal say so instead of "not found". */
+            out += Candidate(
+                packageName = pkg,
+                label = label,
+                path = null,
+                builtin = pkg in BUILTIN,
+                lateLoadToken = false,
+                allowShellToken = false,
+            )
+        }
+        return out
+    }
+
+    private fun candidateFrom(source: PayloadSource, pkg: String, label: String): Candidate? {
+        if (source.size > MAX_SCAN_BYTES) return null
+        if (!isExecutableShaped(source)) return null
+        val payload = scanPayload(source)
+        if (!payload.tokens.ksudLike) return null
+        return Candidate(
+            packageName = pkg,
+            label = label,
+            path = source.spec,
+            builtin = pkg in BUILTIN,
+            lateLoadToken = payload.tokens.lateLoad,
+            allowShellToken = payload.tokens.allowShell,
+            supportedKmisToken = payload.tokens.supportedKmis,
+            kmis = payload.kmis,
+        )
+    }
+
+    /**
+     * `lib/arm64-v8a/` members of the base APK and its splits, as payload
+     * sources addressed by [KsudPayload] member specs. Only the known-package
+     * fallback path calls this.
+     */
+    private fun apkPayloads(app: ApplicationInfo): List<PayloadSource> {
+        val apks = ArrayList<File>()
+        app.sourceDir?.let { apks += File(it) }
+        app.splitSourceDirs?.forEach { apks += File(it) }
+        val out = ArrayList<PayloadSource>()
+        for (apk in apks) {
+            if (!apk.isFile) continue
+            runCatching {
+                ZipFile(apk).use { zip ->
+                    val entries = zip.entries()
+                    while (entries.hasMoreElements()) {
+                        val entry = entries.nextElement()
+                        if (entry.isDirectory) continue
+                        if (!entry.name.startsWith("lib/arm64-v8a/")) continue
+                        if (entry.size <= 0 || entry.size > MAX_SCAN_BYTES) continue
+                        val apkPath = apk.absolutePath
+                        val member = entry.name
+                        out += PayloadSource(
+                            spec = KsudPayload.memberSpec(apkPath, member),
+                            size = entry.size,
+                            open = { KsudPayload.open(KsudPayload.memberSpec(apkPath, member)) },
+                        )
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /* ---- visibility audit ----------------------------------------------- */
+
+    private fun audit(
+        source: PackageSource,
+        self: String,
+        enumerated: List<PackageInfo>,
+        probed: Map<String, PackageInfo>,
+    ): VisibilityAudit {
+        val declared = DECLARED_PACKAGES.toSet()
+        val installer = source.installerPackageName(self)
+        val canary = ArrayList<String>()
+        val declaredSeen = ArrayList<String>()
+        var userApps = 0
+        for (info in enumerated) {
+            val app = info.applicationInfo ?: continue
+            val system = (app.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            if (!system) userApps++
+            if (info.packageName in declared) declaredSeen += info.packageName
+            if (!system && info.packageName != self && info.packageName != installer &&
+                info.packageName !in declared
+            ) {
+                canary += info.packageName
+            }
+        }
+        val permission = source.permissionInfo(APP_LIST_PERMISSION, 0)
+        return VisibilityAudit(
+            permissionDefined = permission != null,
+            permissionPackage = permission?.packageName,
+            permissionGranted = permission != null && source.isGranted(APP_LIST_PERMISSION),
+            enumerationCount = enumerated.size,
+            userAppCount = userApps,
+            canaryCount = canary.size,
+            canary = canary.take(CANARY_SAMPLE),
+            declaredSeen = declaredSeen,
+            probedInstalled = PROBE_PACKAGES.filter { it in probed },
+        )
+    }
+
+    /* ---- KMI derivation ------------------------------------------------- */
 
     /**
      * The KMI `late-load` would use, derived exactly as KSU's
@@ -229,18 +530,7 @@ object ManagerScanner {
         return null
     }
 
-    /**
-     * A cheap presence check for the home badge — no scan, no exec: the first
-     * installed manager of either family. The run's precondition is the
-     * authority; this only keeps the module card from claiming that a manager
-     * is missing when one is installed.
-     */
-    fun installedManager(context: Context): String? {
-        val pm = context.packageManager
-        return (MagiskStage.PACKAGES + BUILTIN).firstOrNull { packageName ->
-            runCatching { pm.getPackageInfo(packageName, 0) }.isSuccess
-        }
-    }
+    /* ---- ELF and token scan --------------------------------------------- */
 
     private data class Tokens(
         val lateLoad: Boolean,
@@ -258,13 +548,11 @@ object ManagerScanner {
     private data class Payload(val tokens: Tokens, val kmis: List<String>)
 
     /** ELF, little-endian aarch64, ET_DYN + PT_INTERP (PIE) or ET_EXEC. */
-    private fun isExecutableShaped(file: File): Boolean {
+    private fun isExecutableShaped(source: PayloadSource): Boolean {
         val head = ByteArray(4096)
-        val count = try {
-            FileInputStream(file).use { it.read(head) }
-        } catch (_: Exception) {
-            return false
-        }
+        val count = runCatching {
+            source.open()?.use { stream -> stream.read(head) } ?: 0
+        }.getOrDefault(0)
         if (count < 64) return false
         if (head[0] != 0x7f.toByte() || head[1] != 'E'.code.toByte() ||
             head[2] != 'L'.code.toByte() || head[3] != 'F'.code.toByte()
@@ -291,10 +579,10 @@ object ManagerScanner {
 
     /**
      * One streaming pass: the ksud tokens and every `<kmi>_kernelsu.ko` asset
-     * name. The whole file is read (the names can live anywhere in the asset
-     * table), bounded by [MAX_SCAN_BYTES] before the call.
+     * name. The whole payload is read (the names can live anywhere in the
+     * asset table), bounded by [MAX_SCAN_BYTES] before the call.
      */
-    private fun scanPayload(file: File): Payload {
+    private fun scanPayload(source: PayloadSource): Payload {
         var lateLoad = false
         var allowShell = false
         var capsule = false
@@ -306,7 +594,7 @@ object ManagerScanner {
         val chunk = ByteArray(64 * 1024 + CARRY)
         var keep = 0
         try {
-            FileInputStream(file).use { stream ->
+            source.open()?.use { stream ->
                 while (true) {
                     val read = stream.read(chunk, keep, 64 * 1024)
                     if (read <= 0) break

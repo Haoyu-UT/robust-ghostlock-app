@@ -619,6 +619,64 @@ private fun GhostlockDialog(
                     }
                 }
 
+                is AppDialog.AppListPermission -> {
+                    Text(
+                        text = if (dialog.message.isNotEmpty()) {
+                            dialog.message
+                        } else {
+                            stringResource(dialog.messageRes)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp),
+                    ) {
+                        TextButton(
+                            modifier = Modifier.weight(1f),
+                            text = stringResource(R.string.app_list_permission_later),
+                            onClick = actions::onDialogDismiss,
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        TextButton(
+                            modifier = Modifier.weight(1f),
+                            text = stringResource(R.string.app_list_permission_grant),
+                            colors = ButtonDefaults.textButtonColorsPrimary(),
+                            onClick = { actions.onDialogConfirm("") },
+                        )
+                    }
+                }
+
+                is AppDialog.AppListSettings -> {
+                    Text(
+                        text = stringResource(dialog.messageRes),
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp),
+                    ) {
+                        TextButton(
+                            modifier = Modifier.weight(1f),
+                            text = stringResource(R.string.cancel),
+                            onClick = actions::onDialogDismiss,
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        TextButton(
+                            modifier = Modifier.weight(1f),
+                            text = stringResource(R.string.app_list_permission_open_settings),
+                            colors = ButtonDefaults.textButtonColorsPrimary(),
+                            onClick = { actions.onDialogConfirm("") },
+                        )
+                    }
+                }
+
                 null -> Unit
             }
         },

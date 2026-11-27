@@ -14,6 +14,7 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.sesame.app.BuildConfig
 import com.sesame.app.BuildInfo
+import com.sesame.app.domain.model.AppListPermissionState
 import com.sesame.app.domain.model.CrashEvidenceInfo
 import com.sesame.app.domain.model.DebugSettings
 import com.sesame.app.domain.model.HandoffKind
@@ -194,7 +195,8 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
      * not start a run); the KMI rule is the run's own static one.
      */
     override suspend fun managerCandidates(): List<RootManagerCandidate> = withContext(Dispatchers.IO) {
-        val ksu = runCatching { ManagerScanner.scan(appContext) }.getOrDefault(emptyList())
+        val ksu = runCatching { ManagerScanner.scan(appContext).candidates }
+            .getOrDefault(emptyList())
         val magisk = runCatching { MagiskStage.detect(appContext) }.getOrDefault(emptyList())
         val release = System.getProperty("os.version", "").orEmpty()
         HandoffResolver.choices(
@@ -207,6 +209,9 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             ),
         )
     }
+
+    override fun appListPermission(): AppListPermissionState =
+        ManagerScanner.appListPermission(appContext)
 
     override fun selectedManagerPackage(): String? =
         preferences.getString(PrefManagerPackage, null)?.takeIf { it.isNotBlank() }
@@ -837,12 +842,14 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
             if (!useShizuku) {
                 anchorFailure()?.let { return@withContext PreflightResult.Blocked(it) }
             }
-            val ksu = try {
+            val scan = try {
                 ManagerScanner.scan(appContext)
             } catch (error: Throwable) {
                 Log.w(LogTag, "handoff: KSU detector failed", error)
                 return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER)
             }
+            val ksu = scan.candidates
+            val audit = scan.visibility
             val magisk = try {
                 MagiskStage.detect(appContext)
             } catch (error: Throwable) {
@@ -877,12 +884,24 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
                         plan.feasible.first().manager.packageName,
                 )
             }
+            Log.i(LogTag, "handoff: ${audit.summary()}")
             if (plan.isEmpty) {
                 val lines = HandoffResolver.familyLines(plan, stored)
                 lines.forEach { Log.i(LogTag, "handoff: $it") }
-                return@withContext PreflightResult.Blocked(PreflightFailure.NO_ROOT_MANAGER, lines)
+                /* Two different failures look alike from the run log: no
+                 * manager at all, and a manager hidden by the OS. The audit
+                 * says which; the refusal keeps the family lines and adds it. */
+                val failure = if (audit.canAsk || audit.possiblyFiltered) {
+                    PreflightFailure.APP_LIST_RESTRICTED
+                } else {
+                    PreflightFailure.NO_ROOT_MANAGER
+                }
+                return@withContext PreflightResult.Blocked(
+                    failure,
+                    lines + "handoff: ${audit.summary()}",
+                )
             }
-            PreflightResult.Passed(plan)
+            PreflightResult.Passed(plan, audit.summary())
         }
 
     private fun packageInstalled(packageName: String): Boolean =
@@ -1327,19 +1346,17 @@ class AndroidGhostlockRepository(context: Context) : GhostlockRepository {
         for ((index, verdict) in plan.feasible.withIndex()) {
             when (val manager = verdict.manager) {
                 is RootManager.Ksu -> {
-                    val origin = File(manager.ksudPath)
+                    val spec = manager.ksudPath
                     val dest = File(filesDir, "ksu-$index")
-                    if (!origin.isFile) {
+                    if (!KsudPayload.readable(spec)) {
                         onLog(
                             "<k> handoff: dropped ${manager.packageName} " +
-                                "(payload missing: ${manager.ksudPath})",
+                                "(payload missing: $spec)",
                         )
                         continue
                     }
                     val ok = runCatching {
-                        origin.inputStream().use { input ->
-                            dest.outputStream().use { input.copyTo(it) }
-                        }
+                        check(KsudPayload.copyTo(spec, dest)) { "copy failed" }
                         Os.chmod(dest.absolutePath, 448)
                     }.isSuccess
                     if (!ok) {

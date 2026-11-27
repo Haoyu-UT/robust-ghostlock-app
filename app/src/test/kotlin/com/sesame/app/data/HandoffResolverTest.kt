@@ -56,6 +56,19 @@ class HandoffResolverTest {
     ) = HandoffResolver.resolve(release, ksu, kmi, magisk, stored)
 
     @Test
+    fun `the picker lists an installed but unsuitable manager`() {
+        /* The 2026-11-28 probe-first change: a known package that is installed
+         * but carries no late-load ksud is a row, not silence — "not found"
+         * and "installed but unusable" must not look the same. */
+        val plan = resolve(ksu = listOf(candidate("a", suitable = false)))
+        val rows = HandoffResolver.choices(plan)
+        assertEquals(1, rows.size)
+        assertFalse(rows.single().feasible)
+        assertEquals(HandoffKind.KSU, rows.single().kind)
+        assertEquals("not suitable", rows.single().verdict)
+    }
+
+    @Test
     fun `the kernel kmi inside the asset list is feasible`() {
         val plan = resolve(ksu = listOf(candidate("a", kmis = listOf("android12-5.10", "android13-5.15"))))
         val row = plan.feasible.single()
@@ -212,15 +225,20 @@ class HandoffResolverTest {
         )
         val rows = HandoffResolver.choices(plan)
         assertEquals(
-            listOf("a", "com.topjohnwu.magisk"),
+            listOf("a", "gone", "com.topjohnwu.magisk"),
             rows.map { it.packageName },
         )
         assertEquals(HandoffKind.KSU, rows[0].kind)
         assertTrue(rows[0].feasible)
         assertEquals("provides android12-5.10", rows[0].verdict)
-        assertEquals(HandoffKind.MAGISK, rows[1].kind)
+        /* Installed but unusable stays a row (2026-11-28): "not found" and
+         * "found but no late-load" must not look the same. */
+        assertEquals(HandoffKind.KSU, rows[1].kind)
         assertFalse(rows[1].feasible)
-        assertEquals("native libs incomplete (missing magiskpolicy)", rows[1].verdict)
+        assertEquals("not suitable", rows[1].verdict)
+        assertEquals(HandoffKind.MAGISK, rows[2].kind)
+        assertFalse(rows[2].feasible)
+        assertEquals("native libs incomplete (missing magiskpolicy)", rows[2].verdict)
     }
 
     @Test

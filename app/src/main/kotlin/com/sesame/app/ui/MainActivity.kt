@@ -28,6 +28,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.sesame.app.GhostlockApplication
 import com.sesame.app.BuildConfig
 import com.sesame.app.R
+import com.sesame.app.data.ManagerScanner
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<GhostlockViewModel> {
@@ -76,6 +77,19 @@ class MainActivity : ComponentActivity() {
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             viewModel.onNotificationPermissionResult(granted)
+        }
+
+    /* The OEM app-list permission (TAF 108-2022) is a normal runtime permission
+     * on Chinese ROMs. A denial that the system will not prompt for again
+     * (shouldShowRequestPermissionRationale == false after a previous ask)
+     * falls back to the app's settings page. */
+    private val appListPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            viewModel.onAppListPermissionResult(
+                granted,
+                canAskAgain = granted ||
+                    shouldShowRequestPermissionRationale(ManagerScanner.APP_LIST_PERMISSION),
+            )
         }
 
 
@@ -208,6 +222,18 @@ class MainActivity : ComponentActivity() {
                 Build.VERSION_CODES.TIRAMISU
             ) {
                 notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+
+            GhostlockEffect.RequestAppListPermission ->
+                appListPermission.launch(ManagerScanner.APP_LIST_PERMISSION)
+
+            GhostlockEffect.OpenAppSettings -> {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", packageName, null),
+                    ),
+                )
             }
 
             is GhostlockEffect.OpenManager -> {

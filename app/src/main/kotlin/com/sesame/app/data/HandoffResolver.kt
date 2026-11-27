@@ -141,28 +141,22 @@ object HandoffResolver {
     }
 
     /**
-     * The picker's rows: every manager the user could act on — a KSU candidate
-     * that passed candidacy, and every installed Magisk — with the resolver's
-     * feasibility and evidence. Unsuitable KSU candidates are not choices (the
-     * run's meta still records them).
+     * The picker's rows: every manager the user could act on — every discovered
+     * KSU candidate (including one installed without a late-load-capable
+     * ksud, so "installed but unusable" is never shown as "not found"), and
+     * every installed Magisk — with the resolver's feasibility and evidence.
      */
     fun choices(resolution: HandoffResolution): List<RootManagerCandidate> =
         resolution.verdicts.mapNotNull { verdict ->
             when (val manager = verdict.manager) {
-                is RootManager.Ksu -> {
-                    if (!manager.suitable) {
-                        null
-                    } else {
-                        RootManagerCandidate(
-                            packageName = manager.packageName,
-                            label = manager.label,
-                            path = manager.ksudPath,
-                            kind = HandoffKind.KSU,
-                            verdict = verdict.reason,
-                            feasible = verdict.state == HandoffState.FEASIBLE,
-                        )
-                    }
-                }
+                is RootManager.Ksu -> RootManagerCandidate(
+                    packageName = manager.packageName,
+                    label = manager.label,
+                    path = manager.ksudPath,
+                    kind = HandoffKind.KSU,
+                    verdict = verdict.reason,
+                    feasible = verdict.state == HandoffState.FEASIBLE,
+                )
 
                 is RootManager.Magisk -> RootManagerCandidate(
                     packageName = manager.packageName,

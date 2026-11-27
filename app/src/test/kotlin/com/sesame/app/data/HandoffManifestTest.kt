@@ -35,4 +35,36 @@ class HandoffManifestTest {
         assertTrue(text.contains("<package android:name=\"com.topjohnwu.magisk\" />"))
         assertTrue(text.contains("<package android:name=\"io.github.vvb2060.magisk\" />"))
     }
+
+    @Test
+    fun `the OEM app-list permission stays declared`() {
+        assertTrue(
+            manifest().contains(
+                "<uses-permission android:name=\"com.android.permission.GET_INSTALLED_APPS\" />",
+            ),
+        )
+    }
+
+    @Test
+    fun `the app-list opt-out meta-data is absent`() {
+        /* Declaring do_not_need_get_installed_apps switches the gate off and
+         * makes the permission unrequestable; it must never be added. The
+         * manifest comment names it, so the assertion looks for the tag. */
+        assertTrue(
+            !manifest().contains(
+                "<meta-data android:name=\"do_not_need_get_installed_apps\"",
+            ),
+        )
+    }
+
+    @Test
+    fun `every probed manager package is declared in queries`() {
+        val text = manifest()
+        for (pkg in ManagerScanner.PROBE_PACKAGES + MagiskStage.PACKAGES) {
+            assertTrue(
+                "missing <queries> entry for $pkg",
+                text.contains("<package android:name=\"$pkg\" />"),
+            )
+        }
+    }
 }

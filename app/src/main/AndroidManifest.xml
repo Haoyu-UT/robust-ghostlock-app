@@ -4,6 +4,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- The OEM app-list runtime permission (TAF 108-2022). On MIUI 13+/HyperOS,
+         ColorOS, OriginOS and HarmonyOS/MagicOS it is an additional gate on top
+         of QUERY_ALL_PACKAGES; declaring it is what makes it requestable, and
+         the app asks whenever the OS defines it. Never add the
+         do_not_need_get_installed_apps meta-data: it switches the gate off. -->
+    <uses-permission android:name="com.android.permission.GET_INSTALLED_APPS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -15,6 +21,9 @@
         <package android:name="com.resukisu.resukisu" />
         <package android:name="org.bakasu.bakasu" />
         <package android:name="com.kowx712.supermanager" />
+        <!-- Known-but-unusable probe target: its bundled ksud has no
+             late-load, so it is listed for the picker's truthful row. -->
+        <package android:name="com.sukisu.ultra" />
         <!-- The Magisk family, detected by the handoff resolver; also keeps
              detection working if QUERY_ALL_PACKAGES is ever removed. -->
         <package android:name="com.topjohnwu.magisk" />
