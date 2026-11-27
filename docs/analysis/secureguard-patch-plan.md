@@ -290,3 +290,48 @@ and stays silent. Leading candidate: KernelSU's exec hook (or an OPPO module abs
 populates that vendor area. This is the next thing to test, not a defect in the patch.
 
 Evidence: `external/port/6.6-kprobe-nested-2026-11-27/` (README, `observations.txt`).
+
+## 11. §10 corrected: the 6.6 rule is caller-based, and QEMU reproduces it (2026-11-27, later)
+
+§10 guessed "a per-task snapshot is not populated". The device's own BTF gives the exact chain:
+
+```
+task_struct.mm        (+0x5a0)
+  -> mm_struct.exe_file (+0x418)
+     -> &file.f_path    (+0xa8)
+        -> d_path(&f_path, buf, 4096)
+```
+
+The guard checks **the executable the exec'ing process was started from**, not the exec target.
+A process whose own exe is under `/data` (outside the exempt prefixes) is flagged when it performs
+any exec — which is why the phone only ever names `/data/adb/ksud` (KernelSU's daemon, exe under
+`/data`, spawning execs). Writing into that chain as a "snapshot filler" corrupts kernel state:
+the attempt oopsed the guest in `__mmput`. The bench instead runs a helper from `/data/adb/ksud`
+and has it exec a second binary.
+
+The guest now reproduces the guard, and the A/B is clean (`external/port/6.6-caller-guard-2026-11-27/`):
+
+| step | guard |
+|---|---|
+| exec `/data/adb/ksud` from `init` (caller exe `/init`) | silent |
+| that process execs `/data/local/tmp/plainbin` | `execve_block`, `need kill! (/data/adb/ksud)` |
+| same, `sgpatch` default (`oplus_exe_block_ret_handler`) | **still fires** |
+| same, `symbol=do_execveat_common_entry_handler` | silent |
+| after unload | fires again |
+
+Two consequences:
+
+- **On 6.6 the neutralisation point is the entry handler.** The default target
+  (`oplus_exe_block_ret_handler`) does not stop the check or its report; the entry handler does.
+  §8's phone A/B patched the entry handler, so it stands. The module should patch the entry
+  handler (or both) when that symbol exists.
+- **The 6.6 kernel does not kill.** `execve_block` and `need kill` are logged, the process
+  continues — in the guest and on the phone. The enforced action is the report to the userspace
+  daemon (ColorOS), not a kernel SIGKILL. That is a generation difference from 5.10, where the
+  kernel killed the exec'd process (F.10 T3B).
+
+QEMU is now usable for the 6.6 mechanism A/B (check → patch → silent → restore), though still not
+for the daemon's action, the locked bootloader, or the real module set.
+
+Evidence: `external/port/6.6-caller-guard-2026-11-27/` (README, `console.txt`, `init.c`,
+`testbin.c`, `hashes.txt`).
