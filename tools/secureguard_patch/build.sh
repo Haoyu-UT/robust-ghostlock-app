@@ -30,7 +30,11 @@ mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
 SRC=$(cd "$(dirname "$0")" && pwd)
 BUILD="$OUT/build"
-mkdir -p "$BUILD"
+WS="$OUT/src"
+mkdir -p "$BUILD" "$WS"
+# Build from a scratch copy of the two sources: kbuild writes its objects next to
+# them, and the tool directory is a git-tracked tree.
+cp "$SRC/Makefile" "$SRC/sgpatch.c" "$WS/"
 cp "$CONFIG" "$BUILD/.config"
 
 sed -i \
@@ -50,8 +54,14 @@ export PATH="$HOME/Android/ondk/r30.1/toolchains/llvm/prebuilt/linux-x86_64/bin:
 # (the step skips without vmlinux).
 PAHOLE_BIN="${PAHOLE:-pahole}"
 
-make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 PAHOLE="$PAHOLE_BIN" olddefconfig
-make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 PAHOLE="$PAHOLE_BIN" modules_prepare
+# CROSS_COMPILE is what gives clang its bare-metal target: a 5.10 tree derives
+# --target from it (without it clang compiles for the host and the arm64 asm
+# fails); 6.x takes the same triple from LLVM=1 defaults, so passing it is
+# canonical for both.
+CROSS_COMPILE=aarch64-linux-gnu-
+export CROSS_COMPILE
+make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE="$CROSS_COMPILE" PAHOLE="$PAHOLE_BIN" olddefconfig
+make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE="$CROSS_COMPILE" PAHOLE="$PAHOLE_BIN" modules_prepare
 # No Module.symvers (the tree is only prepared, never linked): modpost cannot
 # check the imports by name, so let it warn. Every import is EXPORT_SYMBOL and
 # resolves at load; the empty __versions makes the loader warn about CRCs.
@@ -63,8 +73,8 @@ make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 PAHOLE="$PAHOLE_BIN" mod
 # not. Without it the layout is 16 bytes short and the loader writes past our
 # struct (mod_sysfs_setup oops).
 KBUILD_MODPOST_WARN=1 KCFLAGS="-DCONFIG_DEBUG_INFO_BTF_MODULES" \
-make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 PAHOLE="$PAHOLE_BIN" M="$SRC" modules
+make -C "$TREE" O="$BUILD" ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE="$CROSS_COMPILE" PAHOLE="$PAHOLE_BIN" M="$WS" modules
 
-cp "$SRC/sgpatch.ko" "$OUT/sgpatch.ko"
+cp "$WS/sgpatch.ko" "$OUT/sgpatch.ko"
 llvm-strip --strip-debug -o "$OUT/sgpatch-stripped.ko" "$OUT/sgpatch.ko" 2>/dev/null || true
 modinfo "$OUT/sgpatch.ko" | grep -E '^(filename|vermagic|name):'

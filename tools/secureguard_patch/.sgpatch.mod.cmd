@@ -1,1 +1,0 @@
-savedcmd_/home/haoyu/projects/redmi_ultra_k50_root/external/ghostlock-app/tools/secureguard_patch/sgpatch.mod := printf '%s\n'   sgpatch.o | awk '!x[$$0]++ { print("/home/haoyu/projects/redmi_ultra_k50_root/external/ghostlock-app/tools/secureguard_patch/"$$0) }' > /home/haoyu/projects/redmi_ultra_k50_root/external/ghostlock-app/tools/secureguard_patch/sgpatch.mod
