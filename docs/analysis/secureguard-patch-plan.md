@@ -364,3 +364,37 @@ per-build parameters, no behavioural probing on a user device; verification is s
 (anchor, span bytes, readback). Unknown builds fail closed. The reported limits are unchanged:
 tracepoint-based checks need their own rule or avoidance, and the userspace daemon is outside a
 kernel patch's promise.
+
+## 13. The 6.1 generation (the Neo7 module), A/B in QEMU (2026-11-27, last)
+
+The third sample. The store's exact `6.1.134-android14-11-o-gd252f36df142` Image plus the retail
+`oplus_secure_guard.ko` and `oplusboot.ko` (the glcred bench's guest already proves they load and
+arm). Same init as §9, with `/data/x` as the target:
+
+| step | guard | child |
+|---|---|---|
+| T1 root exec, unpatched | `execve_block`; `oplus_exe_block_ret_handler, retval: -1, syscall no: 221, uid: 0` | SIGKILL (`0x9`) |
+| sgpatch default | entry symbol `not present (-2), skipped`; `oplus_exe_block_ret_handler at …004 patched`, readback `d2800000 d65f03c0`; 1 patched | — |
+| T2 patched | silent | runs, exits 0 |
+| unload | 1 restored | — |
+| T3 restored | `execve_block` | SIGKILL (`0x9`) |
+| T4 uid 2000 / T5 `/data/local/tmp/y` | `execve_report` / silent | survive |
+
+No tool change was needed, so the "one default covers all sampled generations" claim now has
+three benches behind it (6.1: `external/port/sgpatch-6.1-2026-11-27/`). Two facts for the record:
+
+- The handler begins at `.text+4` (the kCFI type hash `0x4877830c` occupies `.text+0`) and its
+  entry is `paciasp`; `CONFIG_ARM64_BTI_KERNEL` is off on this kernel, so the two-word patch is
+  the correct form and the hash at entry−4 is preserved.
+- The handler is the §11 caller-exe chain (`task->mm` `0x5a0` → `mm->exe_file` `0x348` → `d_path`)
+  but called from `sys_exit`, after commit, so it names the exec **target**; and it skips when
+  `is_unlocked()` is true (the guest runs `oplusboot.verifiedbootstate=green`, the locked path).
+
+What stays open on 6.1 is not this handler: the per-syscall credential-decrease kill is a
+tracepoint check, untouched by an exec-handler patch.
+
+Build note: `build.sh` refuses `external/ack-6.1.138` here (the tree carries in-tree build
+artifacts), so the bench built against the prepared `/tmp/ackbuild` and its vermagic reads
+`6.1.138`; the guest loader warns (`no symbol version for module_layout`) and loads, and
+`struct module` matches (`this_module` 0x440, the same as `glcred.ko`). Recipe and hashes are in
+the evidence README.
