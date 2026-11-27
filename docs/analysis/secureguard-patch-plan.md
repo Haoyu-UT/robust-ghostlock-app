@@ -390,8 +390,12 @@ three benches behind it (6.1: `external/port/sgpatch-6.1-2026-11-27/`). Two fact
   but called from `sys_exit`, after commit, so it names the exec **target**; and it skips when
   `is_unlocked()` is true (the guest runs `oplusboot.verifiedbootstate=green`, the locked path).
 
-What stays open on 6.1 is not this handler: the per-syscall credential-decrease kill is a
-tracepoint check, untouched by an exec-handler patch.
+What stays open on 6.1 is not this handler. The per-syscall credential-decrease pair is
+**avoided, not patched**, and the chain never trips it: DirtyFrag changes no credentials, and the
+W2 / `leak_cred` plants are kept out of syscalls by the victim spin (decided 2026-11-27; the pair
+exists in all three sampled modules — 6.6 retail at `+0x12d0`/`+0x1330` — but has only ever been
+exercised in the 6.1 glcred bench). Residuals, both non-blocking: the spin's premise, and a
+post-root `su` (a uid→0 change inside an ioctl, outside the set\*id exemption).
 
 Build note: `build.sh` refuses `external/ack-6.1.138` here (the tree carries in-tree build
 artifacts), so the bench built against the prepared `/tmp/ackbuild` and its vermagic reads
