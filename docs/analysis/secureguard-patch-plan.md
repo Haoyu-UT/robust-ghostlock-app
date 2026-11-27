@@ -474,4 +474,13 @@ event classes, which this patch does not touch.
   `oplus_root_check_post_handler`, each `readback=d2800000 d65f03c0`), `3 handler(s) patched`,
   and unload restored 3. The pair is inert on the unlocked unit, so this is not a behavioural
   test; it confirms the third symbol resolves and restores on the target.
+- **6.1 QEMU** (the Neo7's exact `6.1.134-android14-11-o-gd252f36df142` Image + retail
+  `oplus_secure_guard.ko` and `oplusboot.ko`, with the glcred block accommodation because the MTK
+  scheduler that allocates the guard's per-task snapshot is not a guest module): the same
+  three-arm A/B — unpatched ESC (ioctl 29 cred write) → type-0
+  `oplus_root_check_succ, payload:…$$sys_call_number@@29…$$curr_uid@@0…` + `oplus_root_killed,
+  pid = …, uid = 0`, SIGKILL (`0x9`); sgpatch default → entry skipped, exec ret +
+  post patched (`2 handler(s) patched`); patched ESC → survives, `uid=0 euid=0`; unload → `2
+  restored`; restored ESC → the same kill again. Console:
+  `external/port/sgpatch-scope-b-2026-11-28/console-6.1.txt`.
 - The 5.10/6.1 exec A/Bs are unchanged: the third symbol does not touch the exec path.
