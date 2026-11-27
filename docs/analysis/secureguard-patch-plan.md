@@ -355,3 +355,12 @@ Both benches pass with the same source (`external/port/sgpatch-multi-2026-11-27/
 
 The single-symbol default in §1–§3 is superseded; §7's "which handler" statement stands as the
 per-generation rationale.
+
+**Decision (2026-11-27): per-handler, in place, derived at runtime, never unload.** Neutralise
+the functions the guard registered as handlers and keep the module loaded (the community's only
+catastrophic failure is the unload path: the vendor anti-tamper panics the device). The shipped
+procedure derives the handler targets structurally from the module itself — no observed
+per-build parameters, no behavioural probing on a user device; verification is structural
+(anchor, span bytes, readback). Unknown builds fail closed. The reported limits are unchanged:
+tracepoint-based checks need their own rule or avoidance, and the userspace daemon is outside a
+kernel patch's promise.
