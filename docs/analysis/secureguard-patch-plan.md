@@ -484,3 +484,40 @@ event classes, which this patch does not touch.
   restored`; restored ESC → the same kill again. Console:
   `external/port/sgpatch-scope-b-2026-11-28/console-6.1.txt`.
 - The 5.10/6.1 exec A/Bs are unchanged: the third symbol does not touch the exec path.
+
+## 15. Build per KMI, and load only when the guard is armed (2026-11-28)
+
+**Build unit: the KMI, not the patch level.** A GKI KMI (`android12-5.10`, `android14-6.1`,
+`android15-6.6`) fixes the module ABI (`struct module` layout, KCFI hashes, exported-symbol CRCs),
+and sgpatch resolves the guard handlers by symbol name at runtime, so the KMI is the only
+build-varying axis. Three builds are enough for the sampled lines. Verified by loading each build
+on a second patch level of its KMI:
+
+| build (made on) | loaded on | result |
+|---|---|---|
+| 5.10.246 (PPJ110 config) | 5.10.236 Image (diting, no guard) | loader accepted; module init ran; symbols absent; refused; no oops |
+| 6.1.134 (`/tmp/ackbuild`) | 6.1.138 Image (POCO, no guard) | same; the kernel's clang 17 and our clang 21 agree on the ABI |
+| 6.6.66 (phone config) | 6.6.89 Image + 6.6.89 `oplusboot`/guard | all loaded; guard registered; **3 handlers patched** (entry, ret, post) |
+
+Record: `external/port/sgpatch-kmi-2026-11-28/`. The per-target `build.sh` path stays as the
+fallback for a genuine KMI variant (page size, vendor config fork) or a layout-check failure; the
+earlier BTF-off 1024-vs-1088 failure was a config mistake, not a KMI boundary.
+
+**Asset selection and the loading gate.** The shipped assets are
+`sgpatch-android12-5.10.ko`, `sgpatch-android14-6.1.ko`, `sgpatch-android15-6.6.ko`. The root
+script, before the handoff's first sensitive exec, decides:
+
+1. **Presence** — `/proc/modules` contains `oplus_security_guard` / `oplus_secure_guard` /
+   `oplus_secure_guard_new`, or a vendor module dir carries an `oplus_*guard*.ko`. None ⇒ the
+   phone has no SecureGuard (other OEMs/ROMs) ⇒ skip sgpatch entirely.
+2. **Armed** — `ro.boot.verifiedbootstate == orange` (unlocked) ⇒ the guard is inert (6.6 skips
+   its init; 5.10/6.1 return early) ⇒ skip.
+3. **KMI** — `parse_kmi(uname -r)` (the handoff parser) selects the asset; an unknown KMI ⇒ fail
+   closed, never load a mismatched module.
+4. **Load and verify** — stage the asset into `filesDir`, `insmod` it from the root script, and
+   check the sgpatch dmesg readback (`N handler(s) patched`: 2 on 5.10/6.1, 3 on 6.6). A failed or
+   short load ⇒ fail closed (the handoff's non-exempt `/data` exec would be blocked).
+
+The app's preflight can surface the same decision (guard present/armed, KMI, selected asset); the
+root script is the enforcement point because `/proc/modules` and the boot properties are reliable
+there.
