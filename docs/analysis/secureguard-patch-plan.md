@@ -339,7 +339,8 @@ Evidence: `external/port/6.6-caller-guard-2026-11-27/` (README, `console.txt`, `
 ## 12. One default for both generations (2026-11-27, last)
 
 `symbol=` is now a comma-separated list, defaulting to
-`do_execveat_common_entry_handler,oplus_exe_block_ret_handler`. Every entry that resolves and
+`do_execveat_common_entry_handler,oplus_exe_block_ret_handler` (superseded 2026-11-28 by §14,
+which adds `oplus_root_check_post_handler`). Every entry that resolves and
 has a recognised prologue is patched; missing entries are logged and skipped; the load fails only
 when nothing was patched; unload restores every site in reverse. This puts the per-generation
 neutralisation point in one invocation: 6.6 needs the entry handler, 5.10/6.1 the return handler,
@@ -394,11 +395,83 @@ What stays open on 6.1 is not this handler. The per-syscall credential-decrease 
 **avoided, not patched**, and the chain never trips it: DirtyFrag changes no credentials, and the
 W2 / `leak_cred` plants are kept out of syscalls by the victim spin (decided 2026-11-27; the pair
 exists in all three sampled modules — 6.6 retail at `+0x12d0`/`+0x1330` — but has only ever been
-exercised in the 6.1 glcred bench). Residuals, both non-blocking: the spin's premise, and a
-post-root `su` (a uid→0 change inside an ioctl, outside the set\*id exemption).
+exercised in the 6.1 glcred bench). Residuals: the spin's premise, and a
+post-root `su` — now addressed by Scope B (§14): a uid→0 change inside an ioctl, outside the set\*id
+exemption, is exactly the type-0 report the post-handler patch stops.
 
 Build note: `build.sh` refuses `external/ack-6.1.138` here (the tree carries in-tree build
 artifacts), so the bench built against the prepared `/tmp/ackbuild` and its vermagic reads
 `6.1.138`; the guest loader warns (`no symbol version for module_layout`) and loads, and
 `struct module` matches (`this_module` 0x440, the same as `glcred.ko`). Recipe and hashes are in
 the evidence README.
+
+## 14. Scope B: the credential post-handler (2026-11-28)
+
+The §13 residual is a requirement, not a footnote. The PPJ110's `malicious_app_try_to_root_devices`
+reboot is the userspace anti-root dialog acting on a **type-0** report, and the report's source is
+the credential pair: `oplus_root_check_pre/post_handler` compares uid/euid/gid/egid at
+`sys_enter`/`sys_exit` and, on a numeric decrease outside the set\*id span (143–214), calls
+`oplus_root_check_succ` (type 0) + `oplus_root_killed`. A KernelSU `su` is `ioctl 29` and commits
+10xxx/2000→0 — exactly that decrease. QEMU on the PPJ110 Image + retail modules:
+
+| arm | guard | result |
+|---|---|---|
+| NOP ioctl | on | survives |
+| cred ioctl (29), unpatched | on | `oplus_root_check_succ … sys_call_number@@29 curr_uid@@0` + SIGKILL (`0x9`) |
+| same, guard off | off | survives, `uid=0 euid=0` |
+
+(`external/port/ppj110-ioctl-cred-2026-11-27/`.) Without a patch, the handoff still roots the
+phone, but the user's first `su` sends the dialog/15-second reboot (`OplusExSystemService`'s
+`PowerManager.reboot("Malicious app try to root devices")`; `external/port/secureguard-daemons-2026-11-27/`).
+
+### The change
+
+`symbol=`'s default now adds `oplus_root_check_post_handler`:
+
+```
+do_execveat_common_entry_handler,oplus_exe_block_ret_handler,oplus_root_check_post_handler
+```
+
+- Patch the **post** handler, not the pre: the pre only saves the snapshot; the post is the pair's
+  only caller of the type-0 report and `oplus_root_killed` (5.10 0x3e8, 6.1 0x11f0, 6.6 0x1330).
+- Prologues: 5.10 `paciasp` / SCS store, 6.1 and 6.6 `paciasp`; the existing entry check and
+  two-word patch apply, and the KCFI hash at entry−4 is untouched.
+- 6.6: the symbol is present, but the pair was never exercised on the unlocked sample; on a
+  locked unit it may be armed. It stays in the default defensively (a no-op when the pair is not
+  registered).
+- An operator who wants Scope A only can still pass `symbol=do_execveat_common_entry_handler,oplus_exe_block_ret_handler`.
+
+### Gates
+
+- **5.10 QEMU A/B** (exact Image + retail modules, the ioctl bench): unpatched ESC → type-0 +
+  SIGKILL; `sgpatch` default loaded → ESC survives with uid 0 and no `ROOTCHECK-RC` line; unload →
+  the next ESC is killed again (the post handler is restored). The exec handler is patched in the
+  same load and is not exercised by this arm.
+- **6.6 device readback** (unlocked sample, pair inert): the default resolves and patches
+  `oplus_root_check_post_handler`, readback `d2800000 d65f03c0`, restore on unload. No behavioural
+  test is possible on an unlocked unit.
+- The 5.10/6.1 exec A/Bs (§12, §13) are unchanged: adding a third symbol does not alter their
+  readbacks.
+
+### Policy
+
+Scope B blinds the vendor's per-syscall credential-escalation check for every app on the device.
+That is the accepted cost of handing off usable root on a locked 5.10/6.1 OEM unit; the
+alternative is root that reboots on first use. The exec checks (Scope A) remain patched too.
+Residuals: the 6.6 pair's liveness on a locked unit; and the userspace daemon's action on other
+event classes, which this patch does not touch.
+
+### Verified (2026-11-28)
+
+- **5.10 QEMU** (the reporter's exact Image + all four retail modules), one guest with the ioctl
+  bench: unpatched ESC → type-0 report (`sys_call_number@@29`, `curr_uid@@0`) + SIGKILL (`0x9`);
+  `sgpatch` default → entry skipped, `oplus_exe_block_ret_handler` and
+  `oplus_root_check_post_handler` patched (`2 handler(s) patched`); patched ESC → survives with
+  `uid=0 euid=0`, no `ROOTCHECK-RC` line; unload → `2 restored`; restored ESC → the same type-0
+  kill again. Console and hashes: `external/port/sgpatch-scope-b-2026-11-28/`.
+- **6.6 device readback** (OnePlus 13s, 6.6.66, unlocked): the default patched all three symbols
+  (`do_execveat_common_entry_handler`, `oplus_exe_block_ret_handler`,
+  `oplus_root_check_post_handler`, each `readback=d2800000 d65f03c0`), `3 handler(s) patched`,
+  and unload restored 3. The pair is inert on the unlocked unit, so this is not a behavioural
+  test; it confirms the third symbol resolves and restores on the target.
+- The 5.10/6.1 exec A/Bs are unchanged: the third symbol does not touch the exec path.

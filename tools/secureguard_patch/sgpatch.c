@@ -2,11 +2,15 @@
 /*
  * sgpatch — neutralise OPPO/OnePlus secureguard exec handlers in place.
  *
- * The guard family calls one or two module functions from its kretprobe on
- * do_execveat_common. Patch every one that resolves:
+ * Patch every guard handler that resolves: the exec check (called from the
+ * kretprobe/tracepoint path) and, for Scope B, the credential pair's post
+ * handler (called from the sys_enter/sys_exit tracepoints):
  *
  *   do_execveat_common_entry_handler   6.6 `_new` — the check and its userspace report
  *   oplus_exe_block_ret_handler        5.10/6.1  — the block decision and the SIGKILL
+ *   oplus_root_check_post_handler      all three — the credential pair's type-0 report and
+ *                                      SIGKILL (Scope B: keeps an app-uid `su` from tripping
+ *                                      the daemon's anti-root reboot on a locked unit)
  *
  * Symbols resolve through kprobes by name (module symbols are in kallsyms with
  * CONFIG_KALLSYMS_ALL), never through /proc/kallsyms or sysfs. Each entry must be
@@ -31,7 +35,8 @@
 #define MAX_TARGETS 8
 
 static char *symbol =
-	"do_execveat_common_entry_handler,oplus_exe_block_ret_handler";
+	"do_execveat_common_entry_handler,oplus_exe_block_ret_handler,"
+	"oplus_root_check_post_handler";
 module_param(symbol, charp, 0444);
 MODULE_PARM_DESC(symbol, "Comma-separated guard handlers to neutralise");
 
