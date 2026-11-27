@@ -12,7 +12,7 @@ import org.junit.Test
 
 class HandoffWireTest {
     private fun ksu(pkg: String, path: String = "/x/$pkg/libksud.so") =
-        RootManager.Ksu(pkg, pkg, path, interfaceOk = true, suitable = true)
+        RootManager.Ksu(pkg, pkg, path, kmis = emptyList(), suitable = true)
 
     @Test
     fun `a ksu entry carries package origin and kmi`() {

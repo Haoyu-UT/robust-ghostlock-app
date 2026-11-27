@@ -115,7 +115,7 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra("derive_image")?.let { viewModel.runDeriveTest(it) }
         }
         /* Debug-only: `am start --ez scan_test true` runs the root-manager scan
-         * (the copy-and-probe pipeline) and records every verdict. No attack. */
+         * (static only: no exec) and records every verdict. No attack. */
         if (BuildConfig.DEBUG && intent?.hasExtra("scan_test") == true) {
             viewModel.runManagerScanCheck()
         }

@@ -733,13 +733,20 @@ Two consequences the implementation must honour:
 
 1. **List per candidate, static.** The token scan already has the candidate's bytes
    (`ManagerScanner`); collect every `…_kernelsu.ko` occurrence, strip the suffix — the same set
-   `boot-info supported-kmis` prints.
+   `boot-info supported-kmis` prints. The names sit in one blob and are **concatenated with no
+   separator** in the shipped binaries, so the KMI is taken as the rightmost KMI-shaped tail
+   before the suffix, never by a whole-word walk (measured 2026-11-27: a word walk found 0–1 of
+   the 8).
 2. **Current KMI, static.** `System.getProperty("os.version")` (= `uname -r`) → KSU's `parse_kmi`;
    if it fails, read the first `*.ko` under `/vendor/lib/modules` and take its `.modinfo`
    `vermagic=` value (the static equivalent of `modinfo`; world-readable, no exec) → the same
    parser.
-3. **Verdict.** A KSU candidate is feasible iff it is `suitable` by the existing static tokens
-   (`late-load`, `allow-shell`) **and** the current KMI is a member of its list. The reason names
+3. **Verdict.** A KSU candidate is feasible iff it is `suitable` **and** the current KMI is a
+   member of its list. Suitability is the static interface tokens (`late-load`, `allow-shell`)
+   **plus one manager-owned fact** — a KMI asset list or the `supported-kmis` interface token —
+   because the exploit app's own native embeds the handoff script and otherwise matches the
+   tokens (measured 2026-11-27: it was ranked as a candidate; after the rule it is a row, never a
+   choice). The reason names
    both: `provides android12-5.10, android14-6.1; kernel is android15-6.6`. No interface exec.
 4. **The KMI still travels with the target** (`late-load --kmi … --allow-shell`), and the
    post-root re-detection of §7 still replaces it when the core gets a KMI-shaped answer.
@@ -763,6 +770,11 @@ and no probe verdict depends on a vendor kill.
   → `android12-5.10`; `6.1.138-android14-11-g…` → `android14-6.1`; `6.6.66-android15-8-g…`
   → `android15-6.6` — plus a `vermagic` line, a 5.4 qgki release (no `android` token → parse
   failure) and a no-token string.
+- The candidate gate: our own native's script tokens (`late-load`, `--allow-shell`,
+  `kernelsu.ko`, no assets, no `supported-kmis`) are not a manager; a payload with
+  `supported-kmis` and no assets still is.
+- The asset names concatenated with no separator (the shipped shape), behind a preceding
+  string that breaks a whole-word walk.
 - The two managers' observed lists as fixtures (the same eight: `android12-5.10`, `android13-5.10`,
   `android13-5.15`, `android14-5.15`, `android14-6.1`, `android15-6.6`, `android16-6.12`,
   `android17-6.18`; no 5.4, no `android11-5.10`), and that `_susfs_guard_lkm.ko` names and the

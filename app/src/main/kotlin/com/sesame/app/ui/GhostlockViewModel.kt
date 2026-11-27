@@ -2079,10 +2079,10 @@ class GhostlockViewModel(
     }
 
     /**
-     * Debug-only: the root-manager scan without a run (`scan_test`). It
-     * exercises the copy-and-probe path — the probe must execute from the
-     * `/data/local/tmp` copy, never in place under `/data/app` — and records
-     * every candidate's verdict plus the manager's own KMI answer.
+     * Debug-only: the root-manager scan without a run (`scan_test`). It records
+     * every candidate's static KMI asset list, the device's KMI (KSU's own
+     * parser) and the membership verdict — the evidence the on-device accuracy
+     * check reads, with no exec involved.
      */
     fun runManagerScanCheck() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -2093,6 +2093,12 @@ class GhostlockViewModel(
                 out.appendLine(line)
             }
             try {
+                val release = System.getProperty("os.version", "").orEmpty()
+                val current = ManagerScanner.currentKmi(release)
+                record(
+                    "release=$release current=${current.value} source=${current.source} " +
+                        "failure=${current.failure}",
+                )
                 val candidates = ManagerScanner.scan(application)
                 if (candidates.isEmpty()) record("no candidates")
                 for (candidate in candidates) {
@@ -2100,14 +2106,10 @@ class GhostlockViewModel(
                         "${candidate.packageName} ${candidate.path} " +
                             "suitable=${candidate.suitable} ${candidate.verdict}",
                     )
-                    if (candidate.suitable) {
-                        val kmi = runCatching { ManagerScanner.probeKmi(candidate) }
-                            .getOrElse { ManagerScanner.KmiAnswer(null, null, null) }
-                        record(
-                            "  kmi supported=${kmi.supported} current=${kmi.current} " +
-                                "failure=${kmi.failure}",
-                        )
-                    }
+                    record(
+                        "  kmi provides=${candidate.kmis} " +
+                            "member=${current.value != null && current.value in candidate.kmis}",
+                    )
                 }
             } catch (error: CancellationException) {
                 throw error
