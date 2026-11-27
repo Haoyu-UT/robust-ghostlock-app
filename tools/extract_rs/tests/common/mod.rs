@@ -205,14 +205,12 @@ pub fn sidecar_dir_for(meta: &Meta, device: Option<&str>) -> PathBuf {
 fn build_command(bin: &str, meta: &Meta, sidecar_dir: &Path, accepted: Option<&Acceptance>) -> Command {
     let mut command = Command::new(bin);
     command.arg(meta.image());
-    let sidecars = sidecar_args(sidecar_dir);
-    if sidecars.is_empty() {
-        if let Some(phys) = meta.phys {
-            command.arg("--phys").arg(format!("0x{phys:x}"));
-        }
-    } else {
-        command.args(sidecars);
+    /* An entry may need both: a sidecar for the offset (dtbo) and a
+     * meta-stated load the sidecar cannot prove (the tegu Pixel 9a). */
+    if let Some(phys) = meta.phys {
+        command.arg("--phys").arg(format!("0x{phys:x}"));
     }
+    command.args(sidecar_args(sidecar_dir));
     if let Some(accepted) = accepted {
         command
             .arg("--accept-conditioned")

@@ -24,6 +24,9 @@ const ARM64_TEXT_ALIGN: u64 = 0x8_0000; // 512 KiB
 const HEADER_PREFIX_SIZE: usize = 2112;
 /// v4 grows the header to 2128 bytes (`vendor_ramdisk_table_*`, `bootconfig`).
 const MIN_HEADER_SIZE: u32 = 2112;
+/// A header may span pages: the tegu Pixel 9a carries a 2128-byte v4 header on
+/// a 2048-byte page. The sections start at `align(header_size, page_size)`.
+const MAX_HEADER_SIZE: u32 = 1 << 16;
 const MAX_PAGE_SIZE: u32 = 1 << 20;
 
 /// Where `phys_offset` came from.
@@ -54,6 +57,7 @@ pub struct VendorBootPhys {
 
 struct VendorBootHeader {
     page_size: u32,
+    header_size: u32,
     kernel_addr: u64,
     vendor_ramdisk_size: u64,
     dtb_size: u32,
@@ -145,9 +149,10 @@ fn parse_header(data: &[u8]) -> Result<VendorBootHeader> {
         )));
     }
     let header_size = rd_u32(2096);
-    if header_size < MIN_HEADER_SIZE || header_size > page_size {
+    if !(MIN_HEADER_SIZE..=MAX_HEADER_SIZE).contains(&header_size) {
         return Err(ExtractError::new(format!(
-            "vendor_boot header_size={header_size} does not fit page_size={page_size}"
+            "vendor_boot header_size={header_size} is outside \
+             [{MIN_HEADER_SIZE}, {MAX_HEADER_SIZE}]"
         )));
     }
     let dtb_size = rd_u32(2100);
@@ -159,19 +164,28 @@ fn parse_header(data: &[u8]) -> Result<VendorBootHeader> {
     }
     Ok(VendorBootHeader {
         page_size,
+        header_size,
         kernel_addr: u64::from(rd_u32(16)),
         vendor_ramdisk_size: u64::from(rd_u32(24)),
         dtb_size,
     })
 }
 
-/// The dtb section starts on the next page after the vendor ramdisk.
+/// The vendor ramdisk starts at `align(header_size, page_size)` -- the header
+/// occupies the pages it needs (a 2128-byte v4 header on a 2048-byte page takes
+/// two) -- and the dtb section starts on the next page boundary after the
+/// ramdisk.
 fn dtb_section_offset(header: &VendorBootHeader) -> Result<u64> {
     let page = u64::from(header.page_size);
-    let end = page
+    let ramdisk_start = align_page(u64::from(header.header_size), page);
+    let end = ramdisk_start
         .checked_add(header.vendor_ramdisk_size)
         .ok_or_else(|| ExtractError::new("vendor_boot ramdisk size overflows"))?;
-    Ok((end + page - 1) & !(page - 1))
+    Ok(align_page(end, page))
+}
+
+fn align_page(value: u64, page: u64) -> u64 {
+    (value + page - 1) & !(page - 1)
 }
 
 fn resolve(header: &VendorBootHeader, dtb: Option<&[u8]>) -> Result<VendorBootPhys> {
@@ -259,29 +273,41 @@ mod tests {
     const PAGE: usize = 4096;
 
     /// Builds a vendor_boot image with `ramdisk_size` bytes of (uncompressed,
-    /// unparseable) vendor ramdisk followed by an optional dtb section.
-    fn vendor_boot(kernel_addr: u32, ramdisk_size: usize, dtb: Option<&[u8]>) -> Vec<u8> {
-        let mut data = vec![0u8; PAGE];
+    /// unparseable) vendor ramdisk followed by an optional dtb section. The
+    /// ramdisk starts at `align(header_size, page_size)`.
+    fn vendor_boot_with(
+        page: usize,
+        header_size: u32,
+        kernel_addr: u32,
+        ramdisk_size: usize,
+        dtb: Option<&[u8]>,
+    ) -> Vec<u8> {
+        let header_area = ((header_size as usize + page - 1) / page) * page;
+        let mut data = vec![0u8; header_area];
         data[0..8].copy_from_slice(VNDRBOOT_MAGIC);
         data[8..12].copy_from_slice(&4u32.to_le_bytes()); // header_version
-        data[12..16].copy_from_slice(&(PAGE as u32).to_le_bytes());
+        data[12..16].copy_from_slice(&(page as u32).to_le_bytes());
         data[16..20].copy_from_slice(&kernel_addr.to_le_bytes());
         data[20..24].copy_from_slice(&0x66f0_0000u32.to_le_bytes()); // ramdisk_addr
         data[24..28].copy_from_slice(&(ramdisk_size as u32).to_le_bytes());
         data[2076..2080].copy_from_slice(&0x47c8_0000u32.to_le_bytes()); // tags_addr
-        data[2096..2100].copy_from_slice(&2128u32.to_le_bytes()); // header_size
+        data[2096..2100].copy_from_slice(&header_size.to_le_bytes());
         if let Some(dtb) = dtb {
             data[2100..2104].copy_from_slice(&(dtb.len() as u32).to_le_bytes());
             data[2104..2112].copy_from_slice(&0x47c8_0000u64.to_le_bytes()); // dtb_addr
         }
-        data.resize(PAGE + ramdisk_size, 0xAA);
-        while data.len() % PAGE != 0 {
+        data.resize(header_area + ramdisk_size, 0xAA);
+        while data.len() % page != 0 {
             data.push(0);
         }
         if let Some(dtb) = dtb {
             data.extend_from_slice(dtb);
         }
         data
+    }
+
+    fn vendor_boot(kernel_addr: u32, ramdisk_size: usize, dtb: Option<&[u8]>) -> Vec<u8> {
+        vendor_boot_with(PAGE, 2128, kernel_addr, ramdisk_size, dtb)
     }
 
     fn embedded_memory() -> Vec<u8> {
@@ -434,9 +460,20 @@ mod tests {
     }
 
     #[test]
+    fn a_header_spanning_pages_is_accepted() {
+        // tegu (Pixel 9a): a 2128-byte v4 header on a 2048-byte page. The
+        // header takes two pages, so the ramdisk starts at 4096 -- not at
+        // page_size -- and the dtb follows the ramdisk's page.
+        let image = vendor_boot_with(2048, 2128, 0x4000_0000, 100, Some(&embedded_memory()));
+        let phys = parse_vendor_boot(&image).unwrap();
+        assert_eq!(phys.phys_offset, Some(MEMORY_BASE));
+        assert_eq!(phys.source, PhysOffsetSource::EmbeddedDtb);
+    }
+
+    #[test]
     fn inconsistent_header_size_is_rejected() {
         let mut image = vendor_boot(0x4008_0000, 0, None);
-        image[2096..2100].copy_from_slice(&8192u32.to_le_bytes()); // > page_size
+        image[2096..2100].copy_from_slice(&(MAX_HEADER_SIZE + 1).to_le_bytes());
         let err = parse_vendor_boot(&image).unwrap_err().to_string();
         assert!(err.contains("header_size"), "{err}");
     }

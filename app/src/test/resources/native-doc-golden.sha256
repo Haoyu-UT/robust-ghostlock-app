@@ -77,6 +77,9 @@
 # Re-frozen 2026-11-28 (scratch consensus): tcp_zerocopy no longer vetoes the
 # shared W1 scratch, so the 16 6.1 profiles regain theirs; the nine of those
 # this fixture carries moved, the other seven are not rows here.
+# Re-frozen 2026-11-28 (tegu): the Pixel 9a entry gained its sidecars and the
+# pair the native's Google family assumes (load = offset = DRAM base), so its
+# in-anchor scratch (0x2255d00) enters; only that row moved.
 5.10.66-android12-9-00001-g41ff3fa8fff9-ab8171928 b0be5478c3d142a0bafb8208b40458c80c3527ef6a77f316d39a659cecd05938
 5.10.81-android12-9-00001-g6cd504626bae-ab8485363 298d92ea9d40bd32f9fa1e625d5d794fd515d3ddf5c246ac718af17a2a2430c1
 5.10.101-android12-9-00005-ga829d48e78bd-ab9206161 6c3fe4ab014535174e233f3778288374b40d9dd9cdc75b4137ab82327fb502ca
@@ -99,7 +102,7 @@
 6.1.145-android14-11-g09f1c0074ad7-ab14226177 5859d7fde878377b53864fe6135b4990aafb9153554b756cd4bd3fc9df10b450
 6.1.145-android14-11-g74d1702dab4d-ab14669069 cb66e99223f260998d63a2a4386df112342cbdadcbeedc70d1977b0432e0b4f2
 6.1.145-android14-11-geaa643a2c0ee-ab14763719 2287ef1b9b275cc3084186020230ae1f3485cf5398700b838e70ebf2e73d961a
-6.1.157-android14-11-gbd23337e42e7-ab14791245 9941cbaf4ead66679f2eec22bd5e54bb3ce3c37c18dd1a3f47963ff5cbb6b398
+6.1.157-android14-11-gbd23337e42e7-ab14791245 0074bb8bf191693f55e1a25d98cc6f380cdb488c8959b93e624d78dc83b9d8c4
 6.1.162-android14-11-gce140c0e5bf5-ab15450923 fddbcd6bef92e89bdf8f71b38606b4b4010b2955f88758c4ec06db3057fc3ba2
 6.12.23-android16-5-g16e473de48a3-abogki462654244-4k 733f695ea691fcaf7576ad465fbbeac3964796dcef919a6c0c94bf7a60f09690
 6.12.23-android16-5-g75e9b1c7ae7c-abogki463945075-4k f637d62f242459691a6ee0e41de9dd70c158e893ad9b1bf8571f309e8929aa06
