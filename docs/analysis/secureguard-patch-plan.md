@@ -253,3 +253,40 @@ check caused its `malicious_app_try_to_root_devices` reboot — both remain devi
 
 Evidence: `external/port/sgpatch-f10-2026-11-27/` (README, `console.txt`, `init.c`,
 `hashes.txt`).
+
+## 10. The 6.6 QEMU contradiction, resolved with root (2026-11-27)
+
+§7's open contradiction — the guard logging success while its handlers were never invoked — was a
+**measurement artifact, not a guest-versus-device difference**. The guard's handlers are called
+from inside kprobe context (`pre_handler_kretprobe`), and arm64 does not run a probe's handler for
+a nested breakpoint: `reenter_kprobe()` counts it as missed and single-steps
+(`arch/arm64/kernel/probes/kprobes.c:227-249`, from `kprobe_breakpoint_handler` :309-330). A
+kprobe on a function invoked from a kprobe handler can never fire — in QEMU or on the phone.
+
+Measured on the device with root (kptr_restrict raised, debugfs mounted, armed guard):
+
+- A trace with probes at `do_execveat_common`, the entry handler, the report function and the
+  return handler records only `do_execveat_common`; the guard's own
+  `oplus_report_execveat_new … /data/adb/ksud result execve_block` appears in dmesg in the same
+  window. The message is printed inside `oplus_report_execveat_new`, whose only caller is
+  `do_execveat_common_entry_handler` — the handler ran, its kprobe did not.
+- The breakpoint is genuinely in the text: a reader module sees `d4200080` (brk #4) at the entry
+  with the original `sub sp, sp, #0xd0` at +4.
+- Probes at `+0x20` inside the entry, report and return functions also never fire.
+- Control: a kprobe on KernelSU's `ksu_sys_enter_handler` fires 1,803 times in a one-command
+  window — module-text probing works.
+- The static `do_execveat_common_kretprobe` object (poisoned list node, `handler = NULL`) is a
+  template, not the registration the kernel used; its "inert" look misled the QEMU tripwire.
+
+So §7's tripwire verdict is withdrawn as evidence; the QEMU experiments that probed the guard's
+handlers were uninformative by construction. The device A/B in §8 used the guard's own log, not a
+probe, and stands.
+
+**What actually differs in the guest** is one step further out: the handler reads its path from a
+per-task snapshot (`task+0x5a0 → +0x418 → +0xa8`, then a 4 KiB copy and a `/data` prefix compare).
+On the phone that area carries a path — the guard's events name only `/data/adb/ksud`, the exec
+KernelSU makes — while in the minimal guest it is empty/garbage, so the guard has nothing to match
+and stays silent. Leading candidate: KernelSU's exec hook (or an OPPO module absent from the guest)
+populates that vendor area. This is the next thing to test, not a defect in the patch.
+
+Evidence: `external/port/6.6-kprobe-nested-2026-11-27/` (README, `observations.txt`).
