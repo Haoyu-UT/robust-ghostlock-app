@@ -215,3 +215,41 @@ Two limits on what this proves, kept explicit:
 
 Evidence: `external/port/secureguard-patch-device-2026-11-27/` (README, `guard-dmesg.txt`,
 `ab-events.txt`, `state.txt`).
+
+## 9. The 5.10 generation (the reporter's module), A/B in QEMU (2026-11-27)
+
+The reporter's Reno11 Pro runs the **5.10** `oplus_security_guard` + `oplus_secure_harden` chain,
+which cannot be loaded on our phones (6.6; and the diting is Qualcomm/Xiaomi while these are
+OPPO/MediaTek builds). The F.10 QEMU bench — the reporter's exact `Image` and all four retail
+modules — already reproduces the guard's user-visible action, so the mechanism can be tested
+there. It passes:
+
+| step | guard | child |
+|---|---|---|
+| root exec of `/data/app/testbin`, guard alone | `execve_block`, retval −1 | **SIGKILL** (`status=0x9`) |
+| load sgpatch (resolves `oplus_exe_block_ret_handler` at `ffffffc001a41744`, `paciasp` → `d2800000 d65f03c0`) | — | — |
+| the same exec, patched | none | **survives** (`0`) |
+| `rmmod sgpatch` (originals restored) | — | — |
+| the same exec | `execve_block` | **SIGKILL** (`0x9`) |
+| a uid-2000 exec | `execve_report` | survives |
+
+So on this generation the whole block (decision and kill) is in `oplus_exe_block_ret_handler`;
+patching it is sufficient, and the non-root report path is untouched.
+
+Build notes for 5.10 (the build script now covers them):
+
+- Tree `android12-5.10.245_r00` with `SUBLEVEL` set to 246; the target's own IKCONFIG; the
+  config's `CONFIG_TRIM_UNUSED_KSYMS` must be cleared (`UNUSED_KSYMS_WHITELIST` names a vendor
+  build-host path).
+- `CROSS_COMPILE=aarch64-linux-gnu-` is required — 5.10 derives clang's `--target` from it; the
+  script now passes it for every line.
+- Layout verified against the vendor module: `this_module` 0x400, init/cleanup relocations at
+  0x190/0x3c0.
+- The loader warns `no symbol version for module_layout` (empty `__versions`); the guest accepts
+  it, and a stricter loader needs `MODULE_INIT_IGNORE_MODVERSIONS`.
+
+Still not covered: the reporter's **locked** phone (loader, policy, the real daemon) and which
+check caused its `malicious_app_try_to_root_devices` reboot — both remain device questions.
+
+Evidence: `external/port/sgpatch-f10-2026-11-27/` (README, `console.txt`, `init.c`,
+`hashes.txt`).
