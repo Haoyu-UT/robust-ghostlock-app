@@ -202,7 +202,7 @@ pub fn sidecar_dir_for(meta: &Meta, device: Option<&str>) -> PathBuf {
     meta.dir.clone()
 }
 
-fn build_command(bin: &str, meta: &Meta, sidecar_dir: &Path) -> Command {
+fn build_command(bin: &str, meta: &Meta, sidecar_dir: &Path, accepted: Option<&Acceptance>) -> Command {
     let mut command = Command::new(bin);
     command.arg(meta.image());
     let sidecars = sidecar_args(sidecar_dir);
@@ -213,7 +213,68 @@ fn build_command(bin: &str, meta: &Meta, sidecar_dir: &Path) -> Command {
     } else {
         command.args(sidecars);
     }
+    if let Some(accepted) = accepted {
+        command
+            .arg("--accept-conditioned")
+            .arg(format!("{}/{}", accepted.anchor, accepted.scratch));
+    }
     command
+}
+
+/// An operator acceptance of a conditioned page-free pair, recorded in the
+/// device's `plan.txt` (or the entry's `meta.txt` for a legacy single set).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Acceptance {
+    pub anchor: String,
+    pub scratch: String,
+}
+
+/// The `accept = <anchor> + <scratch>` line of a plan record. The values are
+/// never recorded here: the extractor re-derives them from the Image.
+pub fn parse_acceptance(text: &str) -> Option<Acceptance> {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "accept" {
+            continue;
+        }
+        let (anchor, scratch) = value.trim().split_once('+')?;
+        let anchor = anchor.trim();
+        let scratch = scratch.trim();
+        if anchor.is_empty() || scratch.is_empty() {
+            return None;
+        }
+        return Some(Acceptance {
+            anchor: anchor.to_string(),
+            scratch: scratch.to_string(),
+        });
+    }
+    None
+}
+
+/// The acceptance recorded for one device: `devices/<codename>/plan.txt`,
+/// then the entry root, then `meta.txt`.
+pub fn plan_acceptance(meta: &Meta, device: Option<&str>) -> Option<Acceptance> {
+    let mut candidates = Vec::new();
+    if let Some(device) = device {
+        candidates.push(meta.dir.join("devices").join(device).join("plan.txt"));
+    }
+    candidates.push(meta.dir.join("plan.txt"));
+    for path in candidates {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Some(acceptance) = parse_acceptance(&text) {
+                return Some(acceptance);
+            }
+        }
+    }
+    std::fs::read_to_string(meta.dir.join("meta.txt"))
+        .ok()
+        .and_then(|text| parse_acceptance(&text))
 }
 
 /// The store's single golden per kernel: the option superset document.
@@ -232,6 +293,35 @@ pub fn options_path(meta: &Meta) -> PathBuf {
 pub fn run_options(bin: &str, meta: &Meta, out: &Path) -> Run {
     if meta.devices.is_empty() {
         return run_options_one(bin, meta, &meta.dir, None, out);
+    }
+    /* The document carries one shared anchor/scratch, so an acceptance is a
+     * claim about every device the document names. The merged shared sections
+     * come from the first device's run, so the acceptance must be there and
+     * the other devices must carry the same one. */
+    let acceptances: Vec<Option<Acceptance>> = meta
+        .devices
+        .iter()
+        .map(|device| plan_acceptance(meta, Some(device)))
+        .collect();
+    if let Some(first) = &acceptances[0] {
+        for (device, acceptance) in meta.devices.iter().zip(&acceptances) {
+            assert_eq!(
+                acceptance.as_ref(),
+                Some(first),
+                "{}: device {device} does not carry the same page-free acceptance as {} \
+                 (the document has one shared scratch)",
+                meta.release,
+                meta.devices[0]
+            );
+        }
+    } else if let Some(index) = acceptances.iter().skip(1).position(|a| a.is_some()) {
+        panic!(
+            "{}: device {} carries a page-free acceptance but the first device ({}) does not; \
+             the document's shared sections come from the first device",
+            meta.release,
+            meta.devices[index + 1],
+            meta.devices[0]
+        );
     }
     let mut base: Option<serde_json::Value> = None;
     let mut analysis: Vec<serde_json::Value> = Vec::new();
@@ -341,7 +431,8 @@ fn without_devices(document: &serde_json::Value) -> serde_json::Value {
 }
 
 fn run_options_one(bin: &str, meta: &Meta, sidecars: &Path, device: Option<&str>, out: &Path) -> Run {
-    let mut command = build_command(bin, meta, sidecars);
+    let accepted = plan_acceptance(meta, device);
+    let mut command = build_command(bin, meta, sidecars, accepted.as_ref());
     let profile = out.with_extension("conf.tmp");
     command
         .arg("--format")
@@ -371,7 +462,8 @@ fn run_options_one(bin: &str, meta: &Meta, sidecars: &Path, device: Option<&str>
 /// family constant leaking into another family's profile).
 pub fn run_no_disasm(bin: &str, meta: &Meta, route: &str) -> Run {
     let dir = sidecar_dir_for(meta, meta.device.as_deref());
-    let mut command = build_command(bin, meta, &dir);
+    /* The control forces a page W1: an acceptance must not leak into it. */
+    let mut command = build_command(bin, meta, &dir, None);
     command
         .arg("--format")
         .arg("conf")

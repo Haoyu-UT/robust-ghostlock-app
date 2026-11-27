@@ -28,6 +28,35 @@ use crate::pipeline::{PipelineFacts, PipelineOption};
 
 pub const SCHEMA_VERSION: u32 = 3;
 
+/// An operator acceptance of a conditioned page-free pair
+/// (`--accept-conditioned`). The pair is named, never addressed: the anchor
+/// and scratch values are re-derived from the Image on every run, so a changed
+/// image fails the acceptance instead of carrying a stale window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Acceptance {
+    pub anchor: String,
+    pub scratch: String,
+}
+
+impl Acceptance {
+    /// `"<anchor>/<scratch>"` — the CLI spelling.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let invalid = || {
+            format!("--accept-conditioned {text}: expected <anchor>/<scratch> (e.g. dump_skip.zeroes/s3c24xx_serial_ports)")
+        };
+        let (anchor, scratch) = text.split_once('/').ok_or_else(invalid)?;
+        let anchor = anchor.trim();
+        let scratch = scratch.trim();
+        if anchor.is_empty() || scratch.is_empty() || scratch.contains('/') {
+            return Err(invalid());
+        }
+        Ok(Self {
+            anchor: anchor.to_string(),
+            scratch: scratch.to_string(),
+        })
+    }
+}
+
 /// Named anchor/scratch classes, in policy order, with the operator's
 /// `conditioned` flag. The scan verdict stays in the entry as evidence.
 const NAMED: [(&str, bool); 5] = [
@@ -224,6 +253,9 @@ pub struct Input<'a> {
     pub geometry: &'a BTreeMap<(String, String), BTreeMap<String, i64>>,
     /// `selinux_state.initialized`; `None` fails the scratch arithmetic closed.
     pub initialized: Option<u32>,
+    /// An operator acceptance of a conditioned page-free pair. It may select a
+    /// plan the automatic chain refuses; the values are still derived here.
+    pub accepted: Option<&'a Acceptance>,
     pub kernel: &'a [u8],
     pub rel_symbols: &'a BTreeMap<String, BTreeSet<u64>>,
     /// The shared profile facts (symbols, structs, credential layout, the
@@ -232,8 +264,10 @@ pub struct Input<'a> {
 }
 
 /// Build the superset. Deterministic: candidates in `NAMED` order, routes in
-/// verdict order, maps as `BTreeMap`.
-pub fn build(input: &Input<'_>) -> Superset {
+/// verdict order, maps as `BTreeMap`. Fails when the operator's acceptance
+/// names a pair no feasible route offers (a silently ignored acceptance is the
+/// failure the mechanism exists to prevent).
+pub fn build(input: &Input<'_>) -> Result<Superset, String> {
     let candidates = scan_candidates(&CandidateInput {
         kernel: input.kernel,
         rel_symbols: input.rel_symbols,
@@ -247,6 +281,9 @@ pub fn build(input: &Input<'_>) -> Superset {
             continue;
         }
         plans.push(plans_for(verdict.route, &candidates));
+    }
+    if let Some(accepted) = input.accepted {
+        check_acceptance(&plans, accepted)?;
     }
     let routes: Vec<RouteOption> = input
         .verdicts
@@ -293,7 +330,7 @@ pub fn build(input: &Input<'_>) -> Superset {
         plans: plans.clone(),
     }];
     let document = scene_document(input, &routes, &plans);
-    Superset {
+    Ok(Superset {
         schema_version: SCHEMA_VERSION,
         release: input.release.to_string(),
         kernel_major: input.kernel_major,
@@ -305,7 +342,51 @@ pub fn build(input: &Input<'_>) -> Superset {
         document,
         device_analysis,
         timer_analysis: None,
+    })
+}
+
+/// The operator's acceptance must name a pair some feasible route offers, or
+/// it would be a silent no-op. The message lists the pairs the image does
+/// offer so a typo or a moved region is actionable.
+pub fn check_acceptance(plans: &[RoutePlans], accepted: &Acceptance) -> Result<(), String> {
+    let offered = || {
+        let mut pairs: Vec<String> = plans
+            .iter()
+            .flat_map(|route_plans| route_plans.page_free.iter())
+            .filter_map(|plan| {
+                Some(format!(
+                    "{}/{}",
+                    plan.anchor_name.as_deref()?,
+                    plan.scratch_source.as_deref()?
+                ))
+            })
+            .collect();
+        pairs.sort();
+        pairs.dedup();
+        pairs
+    };
+    if plans
+        .iter()
+        .any(|route_plans| route_plans.page_free.iter().any(|plan| pair_is(plan, accepted)))
+    {
+        return Ok(());
     }
+    let pairs = offered();
+    Err(format!(
+        "--accept-conditioned {}/{}: no feasible route offers this pair; offered: {}",
+        accepted.anchor,
+        accepted.scratch,
+        if pairs.is_empty() {
+            "none".to_string()
+        } else {
+            pairs.join(", ")
+        }
+    ))
+}
+
+fn pair_is(plan: &Plan, accepted: &Acceptance) -> bool {
+    plan.anchor_name.as_deref() == Some(accepted.anchor.as_str())
+        && plan.scratch_source.as_deref() == Some(accepted.scratch.as_str())
 }
 
 /// The inputs the candidate scan needs. Shared by the superset builder and
@@ -373,21 +454,37 @@ fn family_stride() -> u64 {
     crate::family::ANCHOR_STRIDE
 }
 
-/// The default plan for a route: the first safe (unconditioned) page-free
-/// option, else the safe anchor with a page W1, else page. The CLI renders
-/// this; the app applies the user-facing rules over the full list.
-pub fn auto_plan(route: &str, candidates: &[CandidateOption]) -> Plan {
-    let plans = plans_for(route, candidates);
+/// The plan a route runs: the operator-accepted conditional pair when one is
+/// given and this route offers it, else the first safe (unconditioned)
+/// page-free option, else the safe anchor with a page W1, else page. The
+/// document and the CLI's `--format conf --anchor` both use this, so they
+/// cannot disagree.
+pub fn select_plan<'a>(plans: &'a RoutePlans, accepted: Option<&Acceptance>) -> &'a Plan {
+    if let Some(accepted) = accepted {
+        if let Some(plan) = plans
+            .page_free
+            .iter()
+            .find(|plan| pair_is(plan, accepted))
+        {
+            return plan;
+        }
+    }
     plans
         .page_free
         .iter()
         .find(|plan| !plan.conditioned)
-        .cloned()
-        .or_else(|| plans.anchor_only.clone())
-        .unwrap_or(plans.page)
+        .or(plans.anchor_only.as_ref())
+        .unwrap_or(&plans.page)
 }
 
-fn plans_for(route: &str, candidates: &[CandidateOption]) -> RoutePlans {
+/// The automatic chain (`select_plan` with no acceptance); kept for the CLI's
+/// default and the tests. The app applies the user-facing rules over the full
+/// list.
+pub fn auto_plan(route: &str, candidates: &[CandidateOption]) -> Plan {
+    select_plan(&plans_for(route, candidates), None).clone()
+}
+
+pub fn plans_for(route: &str, candidates: &[CandidateOption]) -> RoutePlans {
     let page = Plan {
         route: route.to_string(),
         anchor: None,
@@ -501,13 +598,7 @@ fn scene_document(
         let Some(route_plans) = plans.iter().find(|entry| entry.route == option.route) else {
             continue;
         };
-        let plan = route_plans
-            .page_free
-            .iter()
-            .find(|plan| !plan.conditioned)
-            .or(route_plans.anchor_only.as_ref())
-            .unwrap_or(&route_plans.page);
-        chosen.push((option, plan));
+        chosen.push((option, select_plan(route_plans, input.accepted)));
     }
     if chosen.is_empty() {
         return crate::document::Node::Null;
@@ -564,8 +655,15 @@ fn scene_document(
                 == (anchor.image, anchor.bytes, anchor.stride)
         })
     });
+    /* A route that cannot be page-free (tcp_zerocopy's fake lock is a crafted
+     * object) carries no scratch and does not get a vote: one None here used
+     * to collapse the shared scratch for every image with a feasible tcp
+     * route. The anchor consensus above already filters routes without an
+     * anchor the same way. Two page-free routes that disagree still yield
+     * null -- the document has one shared field. */
     let shared_scratch = chosen
         .iter()
+        .filter(|(_, plan)| plan.page_free)
         .map(|(_, plan)| plan.scratch.as_ref().map(|scratch| scratch.image))
         .reduce(|left, right| if left == right { left } else { None })
         .flatten()
@@ -717,6 +815,7 @@ mod tests {
             pipeline_order: &["ghostlock".to_string()],
             geometry: &BTreeMap::new(),
             initialized: None,
+            accepted: None,
             kernel: &[],
             rel_symbols: &BTreeMap::new(),
             facts: &facts,
@@ -738,6 +837,106 @@ mod tests {
         assert!(text.contains("anchor {"), "{text}");
         assert!(text.contains("image = \"0x1000\""), "{text}");
         assert!(text.contains("scratch = \"0x2000\""), "{text}");
+    }
+
+    #[test]
+    fn the_scratch_consensus_ignores_routes_that_cannot_carry_one() {
+        use std::collections::BTreeMap;
+        let page_free_plan = |route: &str, scratch: u64| Plan {
+            route: route.to_string(),
+            anchor: Some(AnchorTriple {
+                image: 0x1000,
+                bytes: 0x400,
+                stride: 32,
+            }),
+            scratch: Some(placement(scratch, false)),
+            page_free: true,
+            conditioned: false,
+            anchor_name: Some("dump_skip.zeroes".to_string()),
+            scratch_source: Some("bm_pmd".to_string()),
+            reason: String::new(),
+        };
+        let page_plan = |route: &str| Plan {
+            route: route.to_string(),
+            anchor: None,
+            scratch: None,
+            page_free: false,
+            conditioned: false,
+            anchor_name: None,
+            scratch_source: None,
+            reason: "page".to_string(),
+        };
+        let option = |route: &str| RouteOption {
+            route: route.to_string(),
+            carrier: "native".to_string(),
+            verdict: "feasible".to_string(),
+            reason: String::new(),
+            numbers: BTreeMap::new(),
+            anchor_capable: route != "tcp_zerocopy",
+            geometry: BTreeMap::new(),
+            alternatives: Vec::new(),
+        };
+        let facts = facts("6.1.138-x");
+        let input = Input {
+            release: "6.1.138-x",
+            kernel_major: Some(6),
+            phys_load: None,
+            phys_offset: None,
+            phys_source: "unset",
+            image_base: None,
+            device: None,
+            verdicts: &[],
+            pipeline_facts: &crate::pipeline::PipelineFacts::default(),
+            pipelines: &[],
+            pipeline_order: &["ghostlock".to_string()],
+            geometry: &BTreeMap::new(),
+            initialized: None,
+            accepted: None,
+            kernel: &[],
+            rel_symbols: &BTreeMap::new(),
+            facts: &facts,
+        };
+
+        /* The live tcp plan is the page plan: no anchor, no scratch. It used
+         * to veto the scratch the select route derives (every sampled 6.1
+         * build lost its W1 scratch this way). */
+        let routes = vec![option("tcp_zerocopy"), option("select_stack")];
+        let plans = vec![
+            RoutePlans {
+                route: "tcp_zerocopy".to_string(),
+                page: page_plan("tcp_zerocopy"),
+                anchor_only: None,
+                page_free: Vec::new(),
+            },
+            RoutePlans {
+                route: "select_stack".to_string(),
+                page: page_plan("select_stack"),
+                anchor_only: None,
+                page_free: vec![page_free_plan("select_stack", 0x2000)],
+            },
+        ];
+        let text = crate::document::render_hocon(&scene_document(&input, &routes, &plans));
+        assert!(text.contains("scratch = \"0x2000\""), "{text}");
+
+        /* Two page-free routes that derive different scratches cannot be
+         * represented by one shared field; the document states null. */
+        let routes = vec![option("select_stack"), option("sigreturn")];
+        let plans = vec![
+            RoutePlans {
+                route: "select_stack".to_string(),
+                page: page_plan("select_stack"),
+                anchor_only: None,
+                page_free: vec![page_free_plan("select_stack", 0x2000)],
+            },
+            RoutePlans {
+                route: "sigreturn".to_string(),
+                page: page_plan("sigreturn"),
+                anchor_only: None,
+                page_free: vec![page_free_plan("sigreturn", 0x3000)],
+            },
+        ];
+        let text = crate::document::render_hocon(&scene_document(&input, &routes, &plans));
+        assert!(text.contains("scratch = null"), "{text}");
     }
 
     #[test]
@@ -807,6 +1006,65 @@ mod tests {
         assert!(auto.page_free);
         assert_eq!(auto.anchor_name.as_deref(), Some("dump_skip.zeroes"));
         assert_eq!(auto.scratch.as_ref().unwrap().image, 0x1000);
+    }
+
+    #[test]
+    fn conditioned_plans_enter_only_through_an_acceptance() {
+        /* The conditioned-scratch shape: an unconditioned anchor, a
+         * conditioned second region (the 5.10.101-ga829 case). */
+        let candidates = vec![
+            candidate("dump_skip.zeroes", false, false, false),
+            candidate("s3c24xx_serial_ports", true, false, true),
+        ];
+        let plans = plans_for("select_stack", &candidates);
+        /* The automatic chain refuses the conditioned pair and stays on the
+         * anchor lock with a page W1. */
+        let auto = select_plan(&plans, None);
+        assert!(!auto.page_free);
+        assert!(auto.scratch.is_none());
+        /* The operator's acceptance selects exactly that pair. */
+        let accepted = Acceptance {
+            anchor: "dump_skip.zeroes".into(),
+            scratch: "s3c24xx_serial_ports".into(),
+        };
+        assert!(check_acceptance(&[plans.clone()], &accepted).is_ok());
+        let chosen = select_plan(&plans, Some(&accepted));
+        assert!(chosen.page_free);
+        assert!(chosen.conditioned);
+        assert_eq!(chosen.anchor_name.as_deref(), Some("dump_skip.zeroes"));
+        assert_eq!(
+            chosen.scratch_source.as_deref(),
+            Some("s3c24xx_serial_ports")
+        );
+        assert_eq!(chosen.scratch.as_ref().unwrap().image, 0x2000);
+    }
+
+    #[test]
+    fn an_acceptance_must_name_an_offered_pair() {
+        let candidates = vec![candidate("dump_skip.zeroes", true, true, false)];
+        let plans = vec![plans_for("select_stack", &candidates)];
+        let ok = Acceptance {
+            anchor: "dump_skip.zeroes".into(),
+            scratch: "in-anchor".into(),
+        };
+        assert!(check_acceptance(&plans, &ok).is_ok());
+        let bad = Acceptance {
+            anchor: "dump_skip.zeroes".into(),
+            scratch: "bm_pmd".into(),
+        };
+        let err = check_acceptance(&plans, &bad).unwrap_err();
+        assert!(err.contains("no feasible route offers this pair"), "{err}");
+        assert!(err.contains("dump_skip.zeroes/in-anchor"), "{err}");
+    }
+
+    #[test]
+    fn acceptance_parses_the_cli_spelling() {
+        let parsed = Acceptance::parse("dump_skip.zeroes/s3c24xx_serial_ports").unwrap();
+        assert_eq!(parsed.anchor, "dump_skip.zeroes");
+        assert_eq!(parsed.scratch, "s3c24xx_serial_ports");
+        assert!(Acceptance::parse("no-slash").is_err());
+        assert!(Acceptance::parse("/scratch").is_err());
+        assert!(Acceptance::parse("a/b/c").is_err());
     }
 
     #[test]

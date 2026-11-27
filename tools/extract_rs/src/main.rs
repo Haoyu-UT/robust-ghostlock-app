@@ -173,6 +173,11 @@ struct Cli {
     /// serial8250_ports, s3c24xx_serial_ports); requires --anchor
     #[arg(long)]
     w1_scratch_symbol: Option<String>,
+    /// operator acceptance of a conditioned page-free pair, named
+    /// `<anchor>/<scratch>` (e.g. dump_skip.zeroes/s3c24xx_serial_ports);
+    /// the addresses are re-derived and must match a feasible route's plan
+    #[arg(long)]
+    accept_conditioned: Option<String>,
     /// working directory for payload extraction and temp files; defaults to
     /// the system temp dir (pass an app-writable dir when running on Android)
     #[arg(long)]
@@ -343,6 +348,15 @@ fn selinux_layout(
 }
 
 fn run(cli: &Cli) -> Result<i32> {
+    let accepted = match cli.accept_conditioned.as_deref() {
+        Some(text) => Some(options::Acceptance::parse(text).map_err(ExtractError::new)?),
+        None => None,
+    };
+    if accepted.is_some() && cli.options_out.is_none() && !cli.anchor {
+        return Err(ExtractError::new(
+            "--accept-conditioned affects the superset document or the conf cut; pass --options-out or --anchor",
+        ));
+    }
     let mut boot_path = cli.image.clone();
     let mut xbl_path = cli.xbl_config.clone();
     let mut uefi_path = cli.uefi.clone();
@@ -1410,7 +1424,11 @@ fn run(cli: &Cli) -> Result<i32> {
                                 phys_offset: kernel_phys_offset,
                                 initialized,
                             });
-                            let plan = options::auto_plan(route, &candidates);
+                            let plan = options::select_plan(
+                                &options::plans_for(route, &candidates),
+                                accepted.as_ref(),
+                            )
+                            .clone();
                             match plan.anchor {
                                 Some(anchor) => {
                                     let name = candidates
@@ -1837,11 +1855,12 @@ fn run(cli: &Cli) -> Result<i32> {
                 pipeline_order: &pipeline_order,
                 geometry: &all_geometry,
                 initialized,
+                accepted: accepted.as_ref(),
                 kernel: &boot.kernel,
                 rel_symbols: &rel_symbols,
                 facts: &inputs,
             };
-            let mut superset = options::build(&input);
+            let mut superset = options::build(&input).map_err(ExtractError::new)?;
             if let Some(fragment) = timer_fragment.as_ref() {
                 document::merge(&mut superset.document, fragment);
             }

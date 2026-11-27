@@ -90,6 +90,41 @@ def entry_devices(meta, directory):
     return devices
 
 
+def entry_acceptance(directory, devices):
+    """The operator acceptance of a conditioned page-free pair, if recorded:
+    `devices/<first>/plan.txt`, then the entry root, then `meta.txt`.
+
+    The record names the pair (`accept = <anchor> + <scratch>`); the addresses
+    are never recorded, the extractor re-derives them from the Image.
+    """
+    paths = []
+    if devices:
+        paths.append(os.path.join(directory, "devices", devices[0], "plan.txt"))
+    paths.append(os.path.join(directory, "plan.txt"))
+    paths.append(os.path.join(directory, "meta.txt"))
+    for path in paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                if key.strip() != "accept":
+                    continue
+                anchor, separator, scratch = value.partition("+")
+                anchor, scratch = anchor.strip(), scratch.strip()
+                if not separator or not anchor or not scratch:
+                    continue
+                return {
+                    "anchor": anchor,
+                    "scratch": scratch,
+                    "device": devices[0] if devices else "",
+                }
+    return None
+
+
 def read_options(directory):
     superset = None
     for path in sorted(glob.glob(os.path.join(directory, "options-*.json"))):
@@ -370,6 +405,7 @@ def validate(entry):
         devices=devices,
         routes=feasible_route_names(options),
         stride=mm_struct_stride(entry["directory"], entry["meta"]),
+        acceptance=entry_acceptance(entry["directory"], devices),
     )
     entry["feasible_pipelines"] = feasible_pipelines(options)
     return entry
@@ -412,8 +448,14 @@ def asset_text(entry):
         "# SHIPPED GOLDEN -- test-kernels golden (QEMU tier); generated, do not edit.\n"
         f"# store: {entry['release']}; routes: {route_label}; "
         f"devices: {', '.join(entry['devices'])}\n"
-        "# maintained by external/ghostlock-app/tools/ship_golden_profiles.py\n"
     )
+    acceptance = entry.get("acceptance")
+    if acceptance:
+        header += (
+            f"# page-free: {acceptance['anchor']} + {acceptance['scratch']} "
+            f"(conditioned, operator-accepted; {acceptance['device']})\n"
+        )
+    header += "# maintained by external/ghostlock-app/tools/ship_golden_profiles.py\n"
     return header + body
 
 
