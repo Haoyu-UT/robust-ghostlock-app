@@ -521,3 +521,15 @@ script, before the handoff's first sensitive exec, decides:
 The app's preflight can surface the same decision (guard present/armed, KMI, selected asset); the
 root script is the enforcement point because `/proc/modules` and the boot properties are reliable
 there.
+
+## 16. Phone end-to-end (2026-11-28)
+
+Build 958 + the armed guard (`is_unlocked` forced to 0) + the three-symbol sgpatch on the OnePlus
+13s. An app-uid `su` under the armed guard produced only the exec **type-3** report — no type-0,
+no kill, no dialog, no reboot — so the 6.6 credential pair is not live on this Qualcomm build; the
+post-handler patch is defensive here. With sgpatch loaded the same `su` produced no guard event.
+The app's run (store `20261128-005030`, direct entry) completed (`state=completed`, `W1-only`,
+Enforcing); the only guard event during it was a **type-13** sepolicy-reload audit
+(`current_name@@load_policy`) from the DirtyFrag policy load, recorded by the daemon with no
+action. Cleanup reloaded the retail module (`detected unlocked, init do noting`). Record:
+`external/port/secureguard-phone-e2e-2026-11-28/`.
