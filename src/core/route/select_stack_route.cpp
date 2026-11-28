@@ -726,11 +726,14 @@ namespace ghostlock::route::select_stack {
             race->consumer_stop.store(0);
             uint32_t delay_usec = route::route_delay_usec(this, attempt);
             race->route_delay_usec.store(delay_usec);
-            race->consumer_go.store(attempt);
-
+            /* Logged BEFORE the release: between consumer_go and the pselect
+             * copy every instruction is inside the walk window (2026-11-28 --
+             * the tcp route's consumer log of the same shape lost the write on
+             * every attempt; this one was only absorbed by the enter delay). */
             pr_info("pselect pre-select attempt=%d/%d compact=%d +%.0fms\n",
                     attempt, attempts, layout.compact_waiter.value_or(0),
                     route::fops_elapsed_ms(&route_t0));
+            race->consumer_go.store(attempt);
             errno = 0;
             if (layout.compact_waiter.value_or(0)) {
                 uint32_t timeout_us = profile.select_timeout_us();

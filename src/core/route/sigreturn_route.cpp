@@ -554,15 +554,18 @@ namespace ghostlock::route::sigreturn {
             race->consumer_calls.store(0);
             race->consumer_success.store(0);
             race->consumer_stop.store(0);
-            race->route_delay_usec.store(kWalkDelayUs);
-            race->consumer_go.store(attempt);
-
             const int32_t patched_before = g_patched;
+            /* Logged BEFORE the release: between consumer_go and the trigger's
+             * copy every instruction is inside the walk window, and this route
+             * gives the consumer only kWalkDelayUs (5 ms) to be held off
+             * (2026-11-28, the same class as the tcp consumer log). */
             pr_info("sigreturn pre-stamp attempt=%d/%d off_sve=0x%zx off_plain=0x%zx "
                     "lock=0x%llx +%lldms\n",
                     attempt, kAttempts, geometry.off_sve, geometry.off_plain,
                     static_cast<unsigned long long>(lock_word),
                     static_cast<long long>(now_us_since(route_t0) / 1000));
+            race->route_delay_usec.store(kWalkDelayUs);
+            race->consumer_go.store(attempt);
             stamp_window(route_t0);
             /* The walk reads this thread's stack and outlives the window; drain
              * it before anything writes over that stack. */

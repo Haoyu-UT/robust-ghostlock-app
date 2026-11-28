@@ -194,9 +194,23 @@ namespace ghostlock::race {
             race->owner_stop.store(1);
             return nullptr;
         }
-        pr_info("consumer thread running on cpu=%d\n", sched_getcpu());
+        /* The pre-walk fact is logged HERE, at thread start, never inside the
+         * release path: a write(2) to the run-log pipe costs milliseconds, and a
+         * log line between the route's release and `consumer_inflight` makes
+         * the first call miss a release window that is only microseconds wide
+         * (measured 2026-11-28: the tcp route's first release was missed on
+         * every attempt, the route then won on a second walk, and the write was
+         * lost -- clean=1/1, "route returned clean but the write did not
+         * verify", then a kernel panic). */
+        {
+            cpu_set_t allowed;
+            char mask[128] = "unreadable";
+            if (cpu_affinity::read_mask(&allowed))
+                cpu_affinity::format_mask(allowed, mask, sizeof(mask));
+            pr_info("consumer thread tid=%ld running on cpu=%d allowed=%s\n",
+                    static_cast<long>(syscall(SYS_gettid)), sched_getcpu(), mask);
+        }
         int32_t seen = 0;
-        bool walk_logged = false;
         while (!race->consumer_stop.load()) {
             int32_t seq = race->consumer_go.load();
             if (seq == 0 || seq == seen) {
@@ -225,16 +239,6 @@ namespace ghostlock::race {
                      * started call before inflight was set, run close(fd) (a
                      * syscall on the waiter's stack) and clobber the stamp
                      * under the walk -- the G1n gate caught it. */
-                    if (!walk_logged) {
-                        cpu_set_t allowed;
-                        char mask[128] = "unreadable";
-                        if (cpu_affinity::read_mask(&allowed))
-                            cpu_affinity::format_mask(allowed, mask, sizeof(mask));
-                        pr_info("consumer pre-walk tid=%ld cpu=%d allowed=%s\n",
-                                static_cast<long>(syscall(SYS_gettid)),
-                                sched_getcpu(), mask);
-                        walk_logged = true;
-                    }
                     race->consumer_inflight.store(1);
                     race->consumer_calls.fetch_add(1);
                     errno = 0;
