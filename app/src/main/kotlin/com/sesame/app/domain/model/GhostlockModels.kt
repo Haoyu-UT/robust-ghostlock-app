@@ -232,6 +232,20 @@ data class AnchorGeometry(
 )
 
 /**
+ * The lock/W1 facts parsed from the current document for one picker open or
+ * one render. Capability is a property of the document, not app state: it is
+ * parsed on demand and never persisted. The only state is the user's choice
+ * (a per-release preference), carried here as [choice] for convenience.
+ */
+data class LockState(
+    val anchorPresent: Boolean,
+    val scratchPresent: Boolean,
+    /** The remembered choice, valid for an anchor-capable route; null when the
+     *  route cannot use an anchor (tcp_zerocopy) or no placement exists. */
+    val choice: String?,
+)
+
+/**
  * A route the resolved profile can run on this device. Viability is a pure
  * profile parse (the block is present and passes the static guards); the picker
  * displays exactly these, with no ranking.

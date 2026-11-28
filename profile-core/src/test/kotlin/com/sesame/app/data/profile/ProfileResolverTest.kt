@@ -515,4 +515,21 @@ class ProfileResolverTest {
         assertNull(neutral["devices"])
     }
 
+    @Test
+    fun `a null anchor scratch is absent, not the string null`() {
+        val text = """
+            ghostlock {
+              anchor {
+                image = "0x2a3a590"
+                bytes = 4096
+                stride = 32
+                scratch = null
+              }
+            }
+        """.trimIndent()
+        val parsed = com.sesame.app.data.HoconSupport.parseValue(text).asValueMap()
+        val scratch = ProfileResolver.anchorScratchOf(requireNotNull(parsed))
+        assertNull("parsed scratch=${parsed?.get("ghostlock")}", scratch)
+    }
+
 }

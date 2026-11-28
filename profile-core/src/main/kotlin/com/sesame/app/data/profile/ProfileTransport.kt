@@ -21,8 +21,9 @@ object ProfileTransport {
         carrier: String? = null,
         pipeline: String? = null,
         safeMode: Boolean = false,
+        lockSource: String? = null,
     ): String = ProfileDocument.renderJson(
-        document(resolved, route, carrier, pipeline, safeMode),
+        document(resolved, route, carrier, pipeline, safeMode, lockSource),
     )
 
     /** The transport document tree (run keys included). */
@@ -32,6 +33,7 @@ object ProfileTransport {
         carrier: String? = null,
         pipeline: String? = null,
         safeMode: Boolean = false,
+        lockSource: String? = null,
     ): Map<String, Any?> {
         val document = resolved.copyValue().asValueMap() ?: ValueMap()
         document["mode"] = pipeline
@@ -40,6 +42,15 @@ object ProfileTransport {
         if (ghostlock != null) {
             if (route != null) ghostlock["syscall"] = route
             if (carrier != null) ghostlock["carrier"] = carrier
+            /* The run's lock/W1 delivery, applied to the copy: page-free is the
+             * document as generated, anchor+page clears the scratch, page
+             * clears the anchor. The document itself is never rewritten. */
+            when (lockSource) {
+                LockSources.AnchorPage ->
+                    ghostlock["anchor"].asValueMap()?.let { it["scratch"] = null }
+                LockSources.Page -> ghostlock["anchor"] = null
+                else -> Unit // PageFree, or no override
+            }
             val syscall = route ?: (ghostlock["syscall"] as? String)
             ghostlock["execution"] = execution(ghostlock["execution"].asValueMap(), syscall)
         }

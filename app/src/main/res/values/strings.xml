@@ -57,6 +57,10 @@
     <string name="carrier_choice_title">Carrier</string>
     <string name="carrier_choice_native_label">native (64-bit)</string>
     <string name="carrier_choice_compat_label">compat (32-bit)</string>
+    <string name="lock_source_choice_title">Lock</string>
+    <string name="lock_source_page_free">No page — anchor + scratch</string>
+    <string name="lock_source_anchor_page">Anchor lock + page</string>
+    <string name="lock_source_page">Page lock + page</string>
     <string name="dirtyfrag_choice_title">DirtyFrag</string>
     <string name="timer_reboot_first_title">Reboot first</string>
     <string name="timer_reboot_first_message">A timer attempt already ran on this boot; reboot and try again.</string>

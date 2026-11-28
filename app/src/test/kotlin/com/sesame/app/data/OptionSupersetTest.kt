@@ -10,8 +10,8 @@ import org.junit.Test
 /**
  * The `--options-out` contract: the app reads every option and applies the
  * display rules itself (auto-take one safe option, offer several without page,
- * offer page only when nothing safe exists). The cut selects the route, carrier
- * and plan inside the extractor's cleaned document; it assembles nothing.
+ * offer page only when nothing safe exists). The generation flow chooses the
+ * one shared anchor; the route stays the home picker's at run time.
  */
 class OptionSupersetTest {
     private val release = "6.1.138-android14-11-g44bda9e8f6e9-ab13792638"
@@ -194,56 +194,50 @@ class OptionSupersetTest {
     }
 
     @Test
-    fun `the cut carries the document's dirtyfrag verdict`() {
+    fun `the anchor step reads a route that can use an anchor`() {
         val superset = sample()
-        val plan = superset.plansFor("select_stack")!!.safeOptions[0]
-        val cut = requireNotNull(superset.cut("select_stack", plan))
-        /* The fixed ladder is the document's own verdict, not a list. */
-        assertTrue(cut.contains("dirtyfrag = \"feasible\""))
-        assertFalse(cut.contains("pipeline ="))
+        assertTrue(requireNotNull(superset.route("select_stack")).anchorCapable)
+        assertFalse(requireNotNull(superset.route("tcp_zerocopy")).anchorCapable)
+        /* The plan lists are route-independent, so a capable route's list is
+         * the document's list even when the report named tcp first. */
+        val plans = requireNotNull(superset.anchorPlans())
+        assertEquals("select_stack", plans.route)
+        assertEquals(2, plans.safeOptions.size)
+        assertNotNull(plans.anchorOnly)
     }
 
     @Test
-    fun `carrier alternatives are exposed and the cut selects one`() {
+    fun `a report with no anchor-capable route offers no plan`() {
+        /* tcp_zerocopy's placements are derived like every route's, but the
+         * route cannot lock on a zeroed anchor: offering one would write an
+         * anchor into a document that can never use it. */
         val superset = sample()
-        val route = requireNotNull(superset.route("select_stack"))
-        assertEquals("native", route.carrier)
-        val compat = route.alternatives.single()
-        assertEquals("compat", compat.carrier)
-        val plan = superset.plansFor("select_stack")!!.safeOptions[0]
-        val native = requireNotNull(superset.cut("select_stack", plan))
-        assertTrue(native.contains("carrier = \"native\""))
-        /* The catalogue lists every carrier block; the run-time carrier picks. */
-        assertTrue(native.contains("compat {"))
-        val chosen = requireNotNull(superset.cut("select_stack", plan, carrier = "compat"))
-        assertTrue(chosen.contains("carrier = \"compat\""))
-        assertTrue(chosen.contains("waiter_home = 432"))
-        assertTrue(chosen.contains("dst_depth = 480"))
-        assertTrue(chosen.contains("futex_abi = \"time32\""))
-        assertNull(superset.cut("select_stack", plan, carrier = "bogus"))
+        val tcpOnly = superset.copy(
+            routes = listOf(requireNotNull(superset.route("tcp_zerocopy"))),
+        )
+        assertNull(tcpOnly.anchorPlans())
     }
 
     @Test
-    fun `cut materializes the selected route and plan`() {
+    fun `withAnchor changes only the shared anchor block`() {
         val superset = sample()
-        val plan = superset.plansFor("select_stack")!!.safeOptions[0]
-        val cut = requireNotNull(superset.cut("select_stack", plan))
-        assertTrue(cut.contains("release = \"$release\""))
-        assertTrue(cut.contains("waiter_shift = 1"))
-        assertTrue(cut.contains("shape = \"compact\""))
-        assertTrue(cut.contains("image = \"0x2224cd0\""))
-        assertTrue(cut.contains("scratch = \"0x21d1000\""))
-        assertTrue(cut.contains("selinux_state {"))
-        assertTrue(cut.contains("prio = 1"))
-        val page = requireNotNull(superset.cut("select_stack", superset.plansFor("select_stack")!!.page))
+        val plans = requireNotNull(superset.plansFor("select_stack"))
+        val pageFree = requireNotNull(superset.withAnchor(plans.safeOptions[0]))
+        /* Every route branch survives: the route is the run-time choice. */
+        assertTrue(pageFree.contains("select_stack {"))
+        assertTrue(pageFree.contains("tcp_zerocopy {"))
+        assertTrue(pageFree.contains("sigreturn = null"))
+        assertTrue(pageFree.contains("image = \"0x2224cd0\""))
+        assertTrue(pageFree.contains("scratch = \"0x21d1000\""))
+        /* Page mode clears the shared block and leaves everything else alone. */
+        val page = requireNotNull(superset.withAnchor(plans.page))
         assertTrue(page.contains("anchor = null"))
-        assertNull(superset.cut("sigreturn", plan))
+        assertTrue(page.contains("tcp_zerocopy {"))
     }
 
     @Test
-    fun `a superset without a document cannot cut`() {
+    fun `withAnchor needs a document`() {
         val superset = sample().copy(document = null)
-        val plan = superset.plansFor("select_stack")!!.safeOptions[0]
-        assertNull(superset.cut("select_stack", plan))
+        assertNull(superset.withAnchor(superset.plansFor("select_stack")!!.safeOptions[0]))
     }
 }

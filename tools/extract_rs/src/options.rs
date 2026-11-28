@@ -307,7 +307,7 @@ pub fn build(input: &Input<'_>) -> Result<Superset, String> {
                 verdict: verdict.verdict.label().to_string(),
                 reason: verdict.reason.clone(),
                 numbers: verdict.numbers.clone(),
-                anchor_capable: verdict.route != "tcp_zerocopy",
+                anchor_capable: route_anchor_capable(verdict.route),
                 geometry: geometry(carrier),
                 alternatives: verdict
                     .alternatives
@@ -349,9 +349,13 @@ pub fn build(input: &Input<'_>) -> Result<Superset, String> {
 /// it would be a silent no-op. The message lists the pairs the image does
 /// offer so a typo or a moved region is actionable.
 pub fn check_acceptance(plans: &[RoutePlans], accepted: &Acceptance) -> Result<(), String> {
-    let offered = || {
-        let mut pairs: Vec<String> = plans
+    let capable = || {
+        plans
             .iter()
+            .filter(|route_plans| route_anchor_capable(&route_plans.route))
+    };
+    let offered = || {
+        let mut pairs: Vec<String> = capable()
             .flat_map(|route_plans| route_plans.page_free.iter())
             .filter_map(|plan| {
                 Some(format!(
@@ -365,10 +369,12 @@ pub fn check_acceptance(plans: &[RoutePlans], accepted: &Acceptance) -> Result<(
         pairs.dedup();
         pairs
     };
-    if plans
-        .iter()
-        .any(|route_plans| route_plans.page_free.iter().any(|plan| pair_is(plan, accepted)))
-    {
+    if capable().any(|route_plans| {
+        route_plans
+            .page_free
+            .iter()
+            .any(|plan| pair_is(plan, accepted))
+    }) {
         return Ok(());
     }
     let pairs = offered();
@@ -454,12 +460,29 @@ fn family_stride() -> u64 {
     crate::family::ANCHOR_STRIDE
 }
 
+/// Whether a route can lock on a zeroed anchor region. `tcp_zerocopy` cannot:
+/// its fake lock is a crafted object (`owner`, `waiters.rb_leftmost`), so a
+/// zero anchor makes the walk take the uncontended arm and never write
+/// (anchor-family-and-tcp-anchor-plan.md, closed 2026-10-28).
+///
+/// The derivation is route-independent — the plan list describes the image's
+/// placements — so this is the one place the capability enters plan selection.
+pub fn route_anchor_capable(route: &str) -> bool {
+    route != "tcp_zerocopy"
+}
+
 /// The plan a route runs: the operator-accepted conditional pair when one is
 /// given and this route offers it, else the first safe (unconditioned)
 /// page-free option, else the safe anchor with a page W1, else page. The
 /// document and the CLI's `--format conf --anchor` both use this, so they
 /// cannot disagree.
+///
+/// A route that cannot lock on a zeroed anchor always takes the page plan: the
+/// list is shared, the choice is the route's.
 pub fn select_plan<'a>(plans: &'a RoutePlans, accepted: Option<&Acceptance>) -> &'a Plan {
+    if !route_anchor_capable(&plans.route) {
+        return &plans.page;
+    }
     if let Some(accepted) = accepted {
         if let Some(plan) = plans
             .page_free
@@ -484,6 +507,9 @@ pub fn auto_plan(route: &str, candidates: &[CandidateOption]) -> Plan {
     select_plan(&plans_for(route, candidates), None).clone()
 }
 
+/// The image's anchor/scratch placements. Route-independent on purpose: which
+/// of them a route can use is the route's own statement (`anchor_capable`,
+/// [`route_anchor_capable`]), applied by `select_plan`.
 pub fn plans_for(route: &str, candidates: &[CandidateOption]) -> RoutePlans {
     let page = Plan {
         route: route.to_string(),
@@ -495,14 +521,6 @@ pub fn plans_for(route: &str, candidates: &[CandidateOption]) -> RoutePlans {
         scratch_source: None,
         reason: "page".to_string(),
     };
-    if route == "tcp_zerocopy" {
-        return RoutePlans {
-            route: route.to_string(),
-            page,
-            anchor_only: None,
-            page_free: Vec::new(),
-        };
-    }
     let mut page_free = Vec::new();
     for anchor in candidates
         .iter()
@@ -655,12 +673,12 @@ fn scene_document(
                 == (anchor.image, anchor.bytes, anchor.stride)
         })
     });
-    /* A route that cannot be page-free (tcp_zerocopy's fake lock is a crafted
-     * object) carries no scratch and does not get a vote: one None here used
-     * to collapse the shared scratch for every image with a feasible tcp
-     * route. The anchor consensus above already filters routes without an
-     * anchor the same way. Two page-free routes that disagree still yield
-     * null -- the document has one shared field. */
+    /* `select_plan` gives a route that cannot be page-free (tcp_zerocopy: its
+     * fake lock is a crafted object) the page plan, so its `page_free` vote is
+     * false and it does not collapse the scratch -- one such None used to
+     * collapse it for every image with a feasible tcp route. Two page-free
+     * routes that disagree still yield null -- the document has one shared
+     * field. */
     let shared_scratch = chosen
         .iter()
         .filter(|(_, plan)| plan.page_free)
@@ -940,6 +958,51 @@ mod tests {
     }
 
     #[test]
+    fn a_tcp_only_document_states_no_anchor() {
+        use std::collections::BTreeMap;
+        let option = |route: &str| RouteOption {
+            route: route.to_string(),
+            carrier: "native".to_string(),
+            verdict: "feasible".to_string(),
+            reason: String::new(),
+            numbers: BTreeMap::new(),
+            anchor_capable: route_anchor_capable(route),
+            geometry: BTreeMap::new(),
+            alternatives: Vec::new(),
+        };
+        let facts = facts("6.1.138-x");
+        let input = Input {
+            release: "6.1.138-x",
+            kernel_major: Some(6),
+            phys_load: None,
+            phys_offset: None,
+            phys_source: "unset",
+            image_base: None,
+            device: None,
+            verdicts: &[],
+            pipeline_facts: &crate::pipeline::PipelineFacts::default(),
+            pipelines: &[],
+            pipeline_order: &["ghostlock".to_string()],
+            geometry: &BTreeMap::new(),
+            initialized: None,
+            accepted: None,
+            kernel: &[],
+            rel_symbols: &BTreeMap::new(),
+            facts: &facts,
+        };
+        let candidates = vec![candidate("dump_skip.zeroes", false, true, false)];
+        /* The derivation is the image's, so the tcp plan list is populated; the
+         * selection is the route's, so its chosen plan is the page and the
+         * document states no anchor. */
+        let plans = vec![plans_for("tcp_zerocopy", &candidates)];
+        assert!(!plans[0].page_free.is_empty());
+        let routes = vec![option("tcp_zerocopy")];
+        let text = crate::document::render_hocon(&scene_document(&input, &routes, &plans));
+        assert!(!text.contains("anchor {"), "{text}");
+        assert!(!text.contains("scratch = \"0x"), "{text}");
+    }
+
+    #[test]
     fn an_empty_catalogue_has_no_document() {
         let superset = Superset {
             schema_version: SCHEMA_VERSION,
@@ -1138,12 +1201,17 @@ mod tests {
     }
 
     #[test]
-    fn tcp_has_no_page_free_options() {
+    fn tcp_derives_the_same_plans_but_selects_the_page() {
         let candidates = vec![candidate("dump_skip.zeroes", false, true, false)];
         let plans = plans_for("tcp_zerocopy", &candidates);
-        assert!(plans.page_free.is_empty());
-        assert!(plans.anchor_only.is_none());
-        assert!(!auto_plan("tcp_zerocopy", &candidates).page_free);
+        /* The derivation describes the image, so tcp gets the same placements
+         * as every route; only the selection is the route's. */
+        assert!(!plans.page_free.is_empty());
+        assert!(plans.anchor_only.is_some());
+        let auto = auto_plan("tcp_zerocopy", &candidates);
+        assert!(!auto.page_free);
+        assert!(auto.anchor.is_none());
+        assert!(!route_anchor_capable("tcp_zerocopy"));
+        assert!(route_anchor_capable("select_stack"));
     }
-
 }

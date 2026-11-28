@@ -3,7 +3,8 @@ package com.sesame.app.data
 /**
  * The extractor's `--options-out` document: every route, anchor candidate and
  * page-free plan for one image, plus the cleaned v3 profile document. One
- * parse produces it; a runnable profile is a **cut** of that document.
+ * parse produces it; the generation flow writes its chosen anchor plan into the
+ * document and leaves the route choice to the home picker.
  *
  * The extractor omits nothing. The UI applies the display rules over the full
  * list ([RoutePlans.safeOptions] / [RoutePlans.conditionalOptions]): a single
@@ -40,27 +41,16 @@ data class OptionPlan(
         }
 }
 
-/** One non-primary carrier of a route. */
-data class OptionRouteVariant(
-    val carrier: String,
-    val verdict: String,
-)
-
 data class OptionRoute(
     val route: String,
     val verdict: String,
-    /** The primary carrier: `native` or `compat`. */
-    val carrier: String = "native",
-    /** The route's other feasible carriers (the carrier × route matrix). */
-    val alternatives: List<OptionRouteVariant> = emptyList(),
-)
-
-/** One `device_analysis[]` record: the sidecar set the derivations were made
- * for. The pair itself lives in the document (`devices.<codename>.phys`).
- */
-data class OptionDevice(
-    /** Codename; null when the pass had no device sidecar set. */
-    val device: String?,
+    /**
+     * The route can use the shared lock anchor. `tcp_zerocopy` cannot: its fake
+     * lock is a crafted object, so a zeroed region never drives its walk. The
+     * extractor states this per route; a document written before the field
+     * existed falls back to the same rule.
+     */
+    val anchorCapable: Boolean = true,
 )
 
 data class RoutePlans(
@@ -104,53 +94,47 @@ data class OptionSuperset(
     val routes: List<OptionRoute>,
     val plans: List<RoutePlans>,
     /** The cleaned v3 profile document the extractor rendered for this image:
-     * the route-superset form. A cut selects the route, carrier, anchor and
-     * device inside it; nothing is assembled from blocks. Null when the image
+     * the route-superset form. Only the shared anchor is chosen here; the route
+     * (and its carrier) is the home picker's at run time. Null when the image
      * has no feasible route. */
     val document: ValueMap?,
-    /** The device sidecar sets the extractor derived (`device_analysis[]`). */
-    val devices: List<OptionDevice> = emptyList(),
 ) {
-    /** The device key this superset was generated for, when it has one. */
-    val device: String? get() = devices.firstOrNull()?.device
-
     fun route(name: String): OptionRoute? = routes.firstOrNull { it.route == name }
 
     fun plansFor(name: String): RoutePlans? = plans.firstOrNull { it.route == name }
 
     /**
-     * Materialize a runnable profile: the extractor's document with the
-     * chosen route, carrier and plan anchor applied and narrowed to the
-     * chosen device's pair. No derivation happens here.
+     * The plan list the generation flow's anchor step reads.
+     *
+     * The document carries one shared `ghostlock.anchor`, and the extractor
+     * derives the same placements for every route — the plan list depends on
+     * the image's anchor/scratch candidates, and only the capability is per
+     * route. So the first anchor-capable feasible route's list *is* the
+     * document's list: which route a report happens to name first must not
+     * decide whether the user gets the anchor choice.
+     *
+     * Null when no feasible route can use an anchor (`tcp_zerocopy` only): the
+     * document states no anchor, and offering a plan would write one the route
+     * cannot lock with.
      */
-    fun cut(
-        route: String,
-        plan: OptionPlan,
-        device: String? = null,
-        carrier: String? = null,
-    ): String? {
-        val routeOption = routes.firstOrNull { it.route == route && it.verdict == Feasible }
-            ?: return null
+    fun anchorPlans(): RoutePlans? =
+        routes.firstOrNull { it.verdict == Feasible && it.anchorCapable }
+            ?.let { plansFor(it.route) }
+
+    /**
+     * Writes the chosen anchor plan into the extractor's document and renders
+     * it.
+     *
+     * Only the shared `ghostlock.anchor` block changes: the schema has one, so
+     * it is the single profile fact the generation flow must choose. Every
+     * `ghostlock.syscalls` branch is left intact — the route stays a superset,
+     * chosen by the home picker at run time. A page plan (`anchor == null`)
+     * clears the block, which is the anchor-less page mode.
+     */
+    fun withAnchor(plan: OptionPlan): String? {
         val base = document?.copyValue()?.asValueMap() ?: return null
         val ghostlock = base["ghostlock"].asValueMap() ?: return null
         fun hex(value: Long?): String? = value?.let { "0x" + it.toULong().toString(16) }
-        /* The carrier choice is a geometry choice inside the route; the primary
-         * carrier is the default, and an absent or unknown carrier fails
-         * closed. */
-        val declared = (
-            listOf(routeOption.carrier) +
-                routeOption.alternatives
-                    .filter { it.verdict == Feasible }
-                    .map { it.carrier }
-            ).distinct()
-        val selectedCarrier = when {
-            carrier != null -> if (carrier in declared) carrier else return null
-            "compat" in declared && "native" !in declared -> "compat"
-            "native" in declared -> "native"
-            else -> null
-        }
-        ghostlock["syscall"] = route
-        ghostlock["carrier"] = selectedCarrier
         ghostlock["anchor"] = plan.anchor?.let { anchor ->
             linkedMapOf<String, Any?>(
                 "image" to hex(anchor.image),
@@ -159,23 +143,14 @@ data class OptionSuperset(
                 "scratch" to plan.scratch?.let { scratch -> hex(scratch.image) },
             )
         }
-        /* The document already states the pair for the device it was generated
-         * for (`devices.<codename>.phys`); a multi-device document is narrowed
-         * to the chosen codename. A pass with no device key keeps the document
-         * as rendered (the pair is null and the native default applies). */
-        val declaredDevices = base["devices"].asValueMap()
-        val wanted = device ?: declaredDevices?.keys?.firstOrNull()
-        if (declaredDevices != null && wanted != null) {
-            declaredDevices.entries
-                .firstOrNull { (name, _) -> name.equals(wanted, ignoreCase = true) }
-                ?.let { (name, entry) -> base["devices"] = linkedMapOf<String, Any?>(name to entry) }
-        }
-        base["release"] = release
         return HoconSupport.render(base) + "\n"
     }
 
     companion object {
         const val Feasible = "feasible"
+
+        /** The one route whose fake lock is a crafted object, so no anchor. */
+        const val TcpRoute = "tcp_zerocopy"
 
         fun parse(text: String): OptionSuperset? = runCatching {
             val root = HoconSupport.parseValue(text).asValueMap() ?: return@runCatching null
@@ -183,19 +158,11 @@ data class OptionSuperset(
             val routes = root["routes"].asValueList().orEmpty().mapNotNull { entry ->
                 val map = entry.asValueMap() ?: return@mapNotNull null
                 val route = map["route"] as? String ?: return@mapNotNull null
-                val alternatives = map["alternatives"].asValueList().orEmpty().mapNotNull { alt ->
-                    val altMap = alt.asValueMap() ?: return@mapNotNull null
-                    val carrier = altMap["carrier"] as? String ?: return@mapNotNull null
-                    OptionRouteVariant(
-                        carrier = carrier,
-                        verdict = altMap["verdict"] as? String ?: "",
-                    )
-                }
                 OptionRoute(
                     route = route,
                     verdict = map["verdict"] as? String ?: "",
-                    carrier = map["carrier"] as? String ?: "native",
-                    alternatives = alternatives,
+                    anchorCapable = (map["anchor_capable"] as? Boolean)
+                        ?: (route != TcpRoute),
                 )
             }
             /* The per-device evidence: the plans are derived against the
@@ -217,15 +184,11 @@ data class OptionSuperset(
                             .mapNotNull { plan(it) },
                     )
                 }
-            val devices = analysis.map { map ->
-                OptionDevice(device = map["device"] as? String)
-            }
             OptionSuperset(
                 release = root["release"] as? String ?: return@runCatching null,
                 routes = routes,
                 plans = plans,
                 document = document,
-                devices = devices,
             )
         }.getOrNull()
 

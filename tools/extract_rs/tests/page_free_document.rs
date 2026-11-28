@@ -99,6 +99,28 @@ fn documents_carry_the_scratch_their_plans_derive() {
         let Some(plans) = device.get("plans").and_then(Value::as_array) else {
             continue;
         };
+        /* The plan list is the image's; the route states whether it can use an
+         * anchor. A route that cannot always selects the page plan, so it does
+         * not take part in the document's scratch consensus. */
+        let anchor_capable: BTreeMap<String, bool> = value
+            .get("routes")
+            .and_then(Value::as_array)
+            .map(|routes| {
+                routes
+                    .iter()
+                    .filter_map(|route| {
+                        Some((
+                            route.get("route").and_then(Value::as_str)?.to_string(),
+                            route
+                                .get("anchor_capable")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(true),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let capable = |route: &str| anchor_capable.get(route).copied().unwrap_or(true);
         /* An operator acceptance makes one conditioned pair selectable. The
          * document must carry that pair's derived anchor and scratch, and the
          * record must cover every device the document names (one shared
@@ -108,6 +130,12 @@ fn documents_carry_the_scratch_their_plans_derive() {
         {
             let mut derived: Vec<(u64, u64)> = Vec::new();
             for plan in plans {
+                let Some(route) = plan.get("route").and_then(Value::as_str) else {
+                    continue;
+                };
+                if !capable(route) {
+                    continue;
+                }
                 let Some(page_free) = plan.get("page_free").and_then(Value::as_array) else {
                     continue;
                 };
@@ -181,6 +209,9 @@ fn documents_carry_the_scratch_their_plans_derive() {
             let Some(route) = plan.get("route").and_then(Value::as_str) else {
                 continue;
             };
+            if !capable(route) {
+                continue;
+            }
             let Some(page_free) = plan.get("page_free").and_then(Value::as_array) else {
                 continue;
             };

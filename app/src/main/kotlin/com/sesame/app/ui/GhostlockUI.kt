@@ -387,7 +387,7 @@ private fun GhostlockDialog(
         },
         content = {
             when (dialog) {
-                is AppDialog.RouteMatrix -> RouteMatrixContent(state, actions)
+                is AppDialog.RouteMatrix -> RouteMatrixContent(state, actions, dialog.lock)
 
                 is AppDialog.ListDialog -> {
                     if (dialog.messageRes != 0) {

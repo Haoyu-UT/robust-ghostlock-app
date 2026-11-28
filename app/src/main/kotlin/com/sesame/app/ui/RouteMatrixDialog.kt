@@ -42,8 +42,10 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.sesame.app.R
+import com.sesame.app.data.profile.LockSources
 import com.sesame.app.data.profile.RouteCarriers
 import com.sesame.app.data.profile.Timer98260
+import com.sesame.app.domain.model.LockState
 import com.sesame.app.ui.state.OverlayActions
 import com.sesame.app.ui.state.SessionState
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -61,6 +63,7 @@ private data class RouteMatrixDraft(
     val backend: String,
     val syscall: String?,
     val carrier: String?,
+    val lockSource: String?,
     val dirtyFragOn: Boolean,
 )
 
@@ -77,7 +80,11 @@ private const val GhostLockBackend = "ghostlock"
  * 保存 applies it (and closes the sheet); there is no cancel button.
  */
 @Composable
-internal fun RouteMatrixContent(state: SessionState, actions: OverlayActions) {
+internal fun RouteMatrixContent(
+    state: SessionState,
+    actions: OverlayActions,
+    lock: LockState?,
+) {
     val support = state.support
     val nativeRoutes = support.routeCandidates.filterNot { it.timer }
     val timerCandidate = support.routeCandidates.firstOrNull { it.timer }
@@ -87,6 +94,16 @@ internal fun RouteMatrixContent(state: SessionState, actions: OverlayActions) {
     fun carriersOf(syscall: String?): List<String> =
         nativeRoutes.firstOrNull { it.name == syscall }?.carriers?.takeIf { it.isNotEmpty() }
             ?: support.carrierCandidates
+
+    /* The lock/W1 placements a route can run, parsed from the document when
+     * the sheet opened. One entry means there is no choice and the row stays
+     * hidden. */
+    fun lockSourcesFor(syscall: String?): List<String> =
+        if (lock != null && LockSources.routeCapable(syscall)) {
+            LockSources.options(lock.anchorPresent, lock.scratchPresent)
+        } else {
+            emptyList()
+        }
 
     /* The DirtyFrag values the pipeline can express: on when it names
      * dirtyfrag, off when it names ghostlock. */
@@ -104,6 +121,8 @@ internal fun RouteMatrixContent(state: SessionState, actions: OverlayActions) {
                 syscall = initialSyscall,
                 carrier = support.selectedCarrier?.takeIf { it in carriersOf(initialSyscall) }
                     ?: carriersOf(initialSyscall).firstOrNull(),
+                lockSource = lock?.choice?.takeIf { it in lockSourcesFor(initialSyscall) }
+                    ?: lockSourcesFor(initialSyscall).firstOrNull(),
                 dirtyFragOn = support.dirtyFragOn,
             ),
         )
@@ -137,11 +156,14 @@ internal fun RouteMatrixContent(state: SessionState, actions: OverlayActions) {
                     selected = draft.syscall,
                     onSelect = { name ->
                         val carriers = carriersOf(name)
+                        val locks = lockSourcesFor(name)
                         draft = draft.copy(
                             backend = GhostLockBackend,
                             syscall = name,
                             carrier = draft.carrier?.takeIf { it in carriers }
                                 ?: carriers.firstOrNull(),
+                            lockSource = draft.lockSource?.takeIf { it in locks }
+                                ?: locks.firstOrNull(),
                         )
                     },
                 )
@@ -153,6 +175,21 @@ internal fun RouteMatrixContent(state: SessionState, actions: OverlayActions) {
                         draft = draft.copy(backend = GhostLockBackend, carrier = carrier)
                     },
                 )
+                /* Three placements when the document states an anchor + scratch:
+                 * page-free, anchor + page, and page. A route without anchor
+                 * capability (tcp) or a document without an anchor has no
+                 * choice, so the row is not drawn. */
+                val lockOptions = lockSourcesFor(draft.syscall)
+                if (lockOptions.size > 1) {
+                    FoldedRow(
+                        label = stringResource(R.string.lock_source_choice_title),
+                        options = lockOptions.map { it to lockSourceLabel(it) },
+                        selected = draft.lockSource,
+                        onSelect = { value ->
+                            draft = draft.copy(backend = GhostLockBackend, lockSource = value)
+                        },
+                    )
+                }
                 FoldedRow(
                     label = stringResource(R.string.dirtyfrag_choice_title),
                     options = dirtyFragOptions.map { on ->
@@ -199,6 +236,7 @@ internal fun RouteMatrixContent(state: SessionState, actions: OverlayActions) {
                     syscall = draft.syscall,
                     carrier = draft.carrier,
                     dirtyFragOn = draft.dirtyFragOn,
+                    lockSource = draft.lockSource,
                 )
             },
         )
@@ -382,5 +420,14 @@ private fun carrierLabel(carrier: String): String = stringResource(
         R.string.carrier_choice_compat_label
     } else {
         R.string.carrier_choice_native_label
+    },
+)
+
+@Composable
+private fun lockSourceLabel(value: String): String = stringResource(
+    when (value) {
+        LockSources.PageFree -> R.string.lock_source_page_free
+        LockSources.AnchorPage -> R.string.lock_source_anchor_page
+        else -> R.string.lock_source_page
     },
 )

@@ -92,6 +92,7 @@ interface OverlayActions {
         syscall: String?,
         carrier: String?,
         dirtyFragOn: Boolean?,
+        lockSource: String?,
     )
     fun onStrideOptionSelected(value: Int)
     fun onStrideUse()

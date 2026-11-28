@@ -331,7 +331,10 @@ class GhostlockViewModel(
             syscall: String?,
             carrier: String?,
             dirtyFragOn: Boolean?,
-        ) = this@GhostlockViewModel.onRouteMatrixSave(backend, syscall, carrier, dirtyFragOn)
+            lockSource: String?,
+        ) = this@GhostlockViewModel.onRouteMatrixSave(
+            backend, syscall, carrier, dirtyFragOn, lockSource,
+        )
         override fun onStrideOptionSelected(value: Int) =
             this@GhostlockViewModel.onStrideOptionSelected(value)
 
@@ -1380,9 +1383,16 @@ class GhostlockViewModel(
     fun chooseRoute() {
         val profile = resolvedProfile ?: return
         /* One entry on the home row; the sheet renders the backend banners and
-         * applies each choice as it is tapped. */
+         * applies each choice as it is tapped. The lock capability is parsed
+         * here, on open, so it cannot go stale with a previous selection. */
         mutableState.update {
-            it.copy(overlay = it.overlay.copy(dialog = AppDialog.RouteMatrix))
+            it.copy(
+                overlay = it.overlay.copy(
+                    dialog = AppDialog.RouteMatrix(
+                        profileController.lockState(profile.release),
+                    ),
+                ),
+            )
         }
     }
 
@@ -1398,6 +1408,7 @@ class GhostlockViewModel(
         syscall: String?,
         carrier: String?,
         dirtyFragOn: Boolean?,
+        lockSource: String?,
     ) {
         val snapshot = kernelSnapshot ?: return
         val release = snapshot.kernelRelease
@@ -1415,6 +1426,9 @@ class GhostlockViewModel(
                 if (dirtyFragOn != null) {
                     runCatching { profileController.selectDirtyFrag(release, dirtyFragOn) }
                 }
+                if (lockSource != null) {
+                    runCatching { profileController.selectLockSource(release, lockSource) }
+                }
             }
             runCatching { profileController.selectRoute(release, selected) }
             withContext(Dispatchers.Main) {
@@ -1424,6 +1438,9 @@ class GhostlockViewModel(
                 appendLog("route: $selected")
                 if (syscall != null && carrier != null && selected != Timer98260.BLOCK_KEY) {
                     appendLog("carrier: $syscall $carrier")
+                }
+                if (lockSource != null && selected != Timer98260.BLOCK_KEY) {
+                    appendLog("lock source: $lockSource")
                 }
                 if (dirtyFragOn != null) {
                     appendLog(
@@ -2431,19 +2448,19 @@ class GhostlockViewModel(
                     /* Page-based: the lock-source choice still applies when a
                      * safe anchor exists. */
                     if (plans.anchorOnly != null && showLockDialog(parse)) return
-                    val cut = options.cut(plans.route, plans.page, options.device)
+                    val applied = options.withAnchor(plans.page)
                         ?: return
                     appendLog("option: page (no page-free)")
-                    viewModelScope.launch { continueParsed(parse, cut) }
+                    viewModelScope.launch { continueParsed(parse, applied) }
                     return
                 }
                 val plan = choices.getOrNull(index - if (pageOffered) 1 else 0) ?: return
-                val cut = options.cut(plans.route, plan, options.device)
+                val applied = options.withAnchor(plan)
                     ?: return
                 appendLog(
                     "option: " + plan.label + if (plan.conditioned) " (needs review)" else "",
                 )
-                viewModelScope.launch { continueParsed(parse, cut) }
+                viewModelScope.launch { continueParsed(parse, applied) }
             }
 
             is ParseStep.Lock -> {
@@ -3071,39 +3088,33 @@ class GhostlockViewModel(
         appendLog("profile generated: ${result.releases.joinToString()}")
         appendLog("result: profile generated; export it to use it")
         val options = result.options
-        /* Multi-route superset: export the document as generated. The route
-         * choice belongs to the home picker at run time, not to a generation
-         * cut. A single-route profile keeps the page/anchor plan step below. */
         val feasibleRoutes = options?.routes?.count { it.verdict == OptionSuperset.Feasible } ?: 0
+        /* The route stays a superset: every feasible branch is exported and the
+         * home picker chooses at run time. The anchor is not deferrable — the
+         * document schema carries one shared block — so the plan step below
+         * runs for a multi-route document too. Skipping it left multi-anchor
+         * images with the extractor's first pick and made a conditioned anchor
+         * impossible to choose. */
         if (feasibleRoutes > 1) {
             appendLog(
                 "result: route superset ($feasibleRoutes routes); " +
                     "the home picker chooses at run time",
             )
-            continueParsed(result, document)
-            return
         }
         /* Page-free options first, per the operator rule: one safe option is
          * taken automatically, several are offered without a page row, and
-         * page is offered only when no safe option exists. */
-        val plans = options?.let { superset ->
-            val route = result.route
-                ?: superset.routes.firstOrNull { it.verdict == OptionSuperset.Feasible }?.route
-            route?.let { superset.plansFor(it) }
-        }
+         * page is offered only when no safe option exists. The plans are
+         * route-independent, so the step reads a route that can use an anchor
+         * regardless of which route the report named first. */
+        val plans = options?.anchorPlans()
         if (options != null && plans != null) {
             when (val decision = plans.decision()) {
                 is OptionDecision.Auto -> {
-                    val cut = options.cut(
-                        plans.route,
-                        decision.plan,
-                        options.device,
-                    )
-                    if (cut != null) {
-                        appendLog("option: ${decision.plan.label} (auto)")
-                        continueParsed(result, cut)
-                        return
-                    }
+                    /* The extractor already wrote this plan into the document;
+                     * export its own text so every route branch survives. */
+                    appendLog("option: ${decision.plan.label} (auto)")
+                    continueParsed(result, document)
+                    return
                 }
                 is OptionDecision.Offer -> {
                     showPlanDialog(result, plans, decision)
@@ -3122,9 +3133,7 @@ class GhostlockViewModel(
         if (!result.hasAnchor) return false
         parseStep = ParseStep.Lock(result)
         val options = result.options
-        val route = result.route
-            ?: options?.routes?.firstOrNull { it.verdict == OptionSuperset.Feasible }?.route
-        val anchorOnly = route?.let { options?.plansFor(it)?.anchorOnly }
+        val anchorOnly = options?.anchorPlans()?.anchorOnly
         val anchorSafety = anchorOnly?.let {
             RegionSafety.classify(it.anchorName, it.scratchSource, Build.MANUFACTURER)
         }

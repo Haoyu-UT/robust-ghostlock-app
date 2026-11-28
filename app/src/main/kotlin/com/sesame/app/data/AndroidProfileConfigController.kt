@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.os.Build
 import androidx.core.content.edit
 import com.sesame.app.BuildConfig
+import com.sesame.app.data.profile.LockSources
 import com.sesame.app.data.profile.MeasuredOverlay
 import com.sesame.app.data.profile.ModuleBlock
 import com.sesame.app.data.profile.OverlayFact
@@ -15,6 +16,7 @@ import com.sesame.app.data.profile.ProfileTransport
 import com.sesame.app.data.profile.Timer98260
 import com.sesame.app.domain.model.AnchorGeometry
 import com.sesame.app.domain.model.ExecutionFieldValue
+import com.sesame.app.domain.model.LockState
 import com.sesame.app.domain.model.ProfileConfig
 import com.sesame.app.domain.model.ProfileImportResult
 import com.sesame.app.domain.model.ProfileDiffRow
@@ -87,18 +89,7 @@ internal class AndroidProfileConfigController(
         }
         val candidates = viableRoutes(full)
         val chosen = resolveRouteChoice(release, candidates)
-        /* The native document/editor always target a native syscall. When the
-         * picker chose the timer, the last native syscall the user picked is
-         * the subject (remembered per release, self-healing against the viable
-         * set); the first viable native syscall is the fallback. */
-        val storedNative = preferences.getString(nativeRouteChoiceKey(release), null)
-            ?.takeIf { name -> candidates.any { !it.timer && it.name == name } }
-        if (storedNative == null && preferences.contains(nativeRouteChoiceKey(release))) {
-            preferences.edit { remove(nativeRouteChoiceKey(release)) }
-        }
-        val route = chosen?.takeIf { it in ProfileConfig.Routes }
-            ?: storedNative
-            ?: candidates.firstOrNull { !it.timer }?.name
+        val route = selectedNativeRoute(release, candidates, chosen)
         val pipelineOrder = ProfileResolver.pipelineOrder(full)
         val needsW1 = ProfileResolver.requiresW1(pipelineOrder)
         /* The module chain's pair manifest, when the document carries it. A
@@ -201,6 +192,37 @@ internal class AndroidProfileConfigController(
         return true
     }
 
+    override fun selectLockSource(release: String, value: String): Boolean {
+        if (value !in LockSources.All) {
+            preferences.edit { remove(lockSourceChoiceKey(release)) }
+            return false
+        }
+        preferences.edit { putString(lockSourceChoiceKey(release), value) }
+        return true
+    }
+
+    /**
+     * The current selection's lock/W1 facts, parsed on demand. The picker calls
+     * it when it opens and the render calls it when it writes the document, so
+     * a capability is never carried as app state (a stale support snapshot
+     * showed the wrong options after an import).
+     */
+    override fun lockState(release: String): LockState? {
+        val full = resolve(release).profile ?: return null
+        val candidates = viableRoutes(full)
+        val route = selectedNativeRoute(release, candidates, resolveRouteChoice(release, candidates))
+        val anchorPresent = ProfileResolver.anchorOf(full)?.first != null
+        val scratchPresent = ProfileResolver.anchorScratchOf(full) != null
+        if (!LockSources.routeCapable(route)) {
+            /* tcp_zerocopy cannot use an anchor: no choice, and the render must
+             * leave the document alone. The stored choice is kept for the next
+             * anchored route. */
+            return LockState(anchorPresent, scratchPresent, choice = null)
+        }
+        val available = LockSources.options(anchorPresent, scratchPresent)
+        return LockState(anchorPresent, scratchPresent, resolveLockSourceChoice(release, available))
+    }
+
     private fun routeChoiceKey(release: String): String = "route_choice_$release"
 
     private fun nativeRouteChoiceKey(release: String): String =
@@ -210,6 +232,27 @@ internal class AndroidProfileConfigController(
         "carrier_choice_${release}_$route"
 
     private fun dirtyFragChoiceKey(release: String): String = "dirtyfrag_choice_$release"
+
+    private fun lockSourceChoiceKey(release: String): String = "lock_source_$release"
+
+    /**
+     * The remembered lock source, self-healing against the document. A forced
+     * mode (fewer than two options) stores nothing, so a later profile that
+     * gains an anchor starts from the best mode rather than a stale "page";
+     * a choice the document no longer supports is cleared.
+     */
+    private fun resolveLockSourceChoice(release: String, available: List<String>): String {
+        if (available.size <= 1) {
+            preferences.edit { remove(lockSourceChoiceKey(release)) }
+            return available.firstOrNull() ?: LockSources.Page
+        }
+        val stored = preferences.getString(lockSourceChoiceKey(release), null)
+        val valid = stored?.takeIf { it in available }
+        if (stored != null && valid == null) {
+            preferences.edit { remove(lockSourceChoiceKey(release)) }
+        }
+        return valid ?: available.first()
+    }
 
     /**
      * The remembered carrier for one route, self-healing like the route
@@ -267,6 +310,27 @@ internal class AndroidProfileConfigController(
             preferences.edit { remove(routeChoiceKey(release)) }
         }
         return valid ?: names.first()
+    }
+
+    /**
+     * The native syscall the document/editor target: the picker's native choice
+     * when it named one, else the last native syscall the user picked (the
+     * timer backend leaves it as the subject), else the first viable native
+     * one. Shared by `load()` and `lockState()` so both read one answer.
+     */
+    private fun selectedNativeRoute(
+        release: String,
+        candidates: List<RouteCandidate>,
+        chosen: String?,
+    ): String? {
+        val storedNative = preferences.getString(nativeRouteChoiceKey(release), null)
+            ?.takeIf { name -> candidates.any { !it.timer && it.name == name } }
+        if (storedNative == null && preferences.contains(nativeRouteChoiceKey(release))) {
+            preferences.edit { remove(nativeRouteChoiceKey(release)) }
+        }
+        return chosen?.takeIf { it in ProfileConfig.Routes }
+            ?: storedNative
+            ?: candidates.firstOrNull { !it.timer }?.name
     }
 
     /**
@@ -605,6 +669,7 @@ internal class AndroidProfileConfigController(
                 carrier = config.selectedCarrier,
                 pipeline = pipeline,
                 safeMode = safeMode,
+                lockSource = lockState(config.release)?.choice,
             ).toByteArray(Charsets.UTF_8),
             overlay = overlay.records,
         )

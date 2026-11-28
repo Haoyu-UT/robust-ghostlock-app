@@ -2,6 +2,7 @@ package com.sesame.app.domain.repository
 
 import com.sesame.app.data.profile.OverlayFact
 import com.sesame.app.data.profile.OverlayRecord
+import com.sesame.app.domain.model.LockState
 import com.sesame.app.domain.model.ProfileConfig
 import com.sesame.app.domain.model.ProfileImportResult
 import com.sesame.app.domain.model.ProfileDiffRow
@@ -36,6 +37,21 @@ interface ProfileConfigController {
      * ladder does not offer the choice (both DirtyFrag and GhostLock).
      */
     fun selectDirtyFrag(release: String, on: Boolean): Boolean
+
+    /**
+     * Stores the lock/W1 source for [release]. Returns false for a value outside
+     * [com.sesame.app.data.profile.LockSources.All]; the load self-heals a
+     * choice the document no longer supports.
+     */
+    fun selectLockSource(release: String, value: String): Boolean
+
+    /**
+     * Parses the current selection's lock/W1 facts for [release]: whether the
+     * document states an anchor and a scratch, and the remembered choice
+     * (best available when unset or stale). Called when the picker opens and
+     * when a run renders — capability is never app state.
+     */
+    fun lockState(release: String): LockState?
 
     /** Renders the active document as the HOCON an export writes. */
     fun renderResolved(release: String): String?

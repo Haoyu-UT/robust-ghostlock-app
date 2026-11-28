@@ -862,6 +862,12 @@ object ProfileResolver {
         )
     }
 
+    /** The anchor's W1 scratch (image offset); null when the anchor is absent
+     * or its scratch is unset (a page-W1 placement). */
+    fun anchorScratchOf(document: Map<String, Any?>): Long? =
+        ((document[GhostlockKey] as? Map<*, *>)?.get("anchor") as? Map<*, *>)
+            ?.let { number(it["scratch"]) }
+
     private fun releaseIsCompactWaiter(release: String?): Boolean {
         val parts = release?.split('.') ?: return false
         val major = parts.getOrNull(0)?.toIntOrNull() ?: return false

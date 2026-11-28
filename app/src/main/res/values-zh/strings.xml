@@ -57,6 +57,10 @@
     <string name="carrier_choice_title">载体</string>
     <string name="carrier_choice_native_label">原生（64 位）</string>
     <string name="carrier_choice_compat_label">兼容（32 位）</string>
+    <string name="lock_source_choice_title">锁</string>
+    <string name="lock_source_page_free">免页面 — 锚点 + scratch</string>
+    <string name="lock_source_anchor_page">锚点锁 + 回收页</string>
+    <string name="lock_source_page">回收页锁 + 回收页</string>
     <string name="dirtyfrag_choice_title">DirtyFrag</string>
     <string name="timer_reboot_first_title">请先重启</string>
     <string name="timer_reboot_first_message">本次开机已跑过定时器路线，请重启后再试。</string>

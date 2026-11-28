@@ -1,6 +1,7 @@
 package com.sesame.app.ui
 
 import com.sesame.app.R
+import com.sesame.app.domain.model.LockState
 import com.sesame.app.domain.model.ProfileLayers
 
 /**
@@ -44,11 +45,11 @@ sealed interface AppDialog {
 
     /**
      * The route matrix: the backend banners (GhostLock, with its syscall /
-     * carrier / DirtyFrag choices, and the timer). The content reads the live
-     * support state and applies each choice as it is tapped; this type is only
-     * the overlay marker.
+     * carrier / lock / DirtyFrag choices, and the timer). [lock] is parsed from
+     * the current document when the sheet opens — capability is not app state —
+     * and the sheet's edits are a draft until 保存.
      */
-    data object RouteMatrix : AppDialog {
+    data class RouteMatrix(val lock: LockState?) : AppDialog {
         override val titleRes: Int = R.string.route_choice_title
     }
 
