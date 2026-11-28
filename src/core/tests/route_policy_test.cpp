@@ -153,6 +153,13 @@ int32_t main(void) {
         profile_with(profile::kRouteSelectStack, 0, /*scratch=*/false, /*anchor=*/true);
     assert(!page_free(pf_no_scratch));
     assert(std::string_view(page_free_reason(pf_no_scratch)) == "no-scratch");
+    /* A page-mode document clears the anchor, and the scratch lives in the
+     * anchor block: the anchor is the first missing conjunct, so the run reads
+     * "no-anchor", distinct from anchor-only. */
+    const profile::TargetProfile pf_page =
+        profile_with(profile::kRouteSelectStack, 0, /*scratch=*/false, /*anchor=*/false);
+    assert(!page_free(pf_page));
+    assert(std::string_view(page_free_reason(pf_page)) == "no-anchor");
     const profile::TargetProfile pf_tcp =
         profile_with(profile::kRouteTcpZerocopy, 0, /*scratch=*/true, /*anchor=*/true);
     assert(!page_free(pf_tcp));

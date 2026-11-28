@@ -257,15 +257,18 @@ namespace ghostlock::route {
      * contract. Every anchored route stores its anchor in the same geometry
      * fields, so one layout check covers all three routes. */
     [[nodiscard]] inline bool page_free(const profile::TargetProfile &profile) noexcept {
-        if (!profile.w1_scratch_image().has_value()) return false;
         if (!profile.select_stack_layout().lock_anchor_image.has_value()) return false;
+        if (!profile.w1_scratch_image().has_value()) return false;
         return route_capability(profile, [](auto policy) {
             return std::decay_t<decltype(policy)>::page_free_capable;
         });
     }
 
     /* The first missing conjunct, for the run's one-line evidence: what the
-     * effective flag is and why. */
+     * effective flag is and why. The anchor is checked before the scratch so a
+     * page-mode document (anchor cleared, and with it the scratch, which lives
+     * in the anchor block) reports "no-anchor" instead of reading like an
+     * anchor-only document's "no-scratch". */
     [[nodiscard]] inline const char *page_free_reason(
         const profile::TargetProfile &profile) noexcept {
         if (!route_capability(profile, [](auto policy) {
@@ -273,8 +276,8 @@ namespace ghostlock::route {
             })) {
             return "route-not-capable";
         }
-        if (!profile.w1_scratch_image().has_value()) return "no-scratch";
         if (!profile.select_stack_layout().lock_anchor_image.has_value()) return "no-anchor";
+        if (!profile.w1_scratch_image().has_value()) return "no-scratch";
         return "policy+scratch+anchor";
     }
 
